@@ -94,7 +94,9 @@ All generated builtin options use long form (`set --local`, `set --append`,
 | `${var}` | `$var` (braces stripped when no operator is present) |
 | `$?` `$$` `$!` `$BASHPID` | `$status` `$fish_pid` `$last_pid` `$fish_pid` |
 | `$#` | `$(count $argv)` |
-| `$0` `${BASH_SOURCE[0]}` `$BASH_SOURCE` | `$(status filename)` |
+| `$0` `${BASH_SOURCE[0]}` `$BASH_SOURCE` `$BASH_ARGV0` | `$(status filename)` |
+| `$BASH` | `$(status fish-path)` |
+| `$BASH_COMMAND` | `$(status current-command)` |
 | `$FUNCNAME` `${FUNCNAME[0]}` | `$(status current-function)` |
 | `$UID` `$EUID` | `$(id -u)` |
 | `$GROUPS` `${GROUPS[0]}` | `$(id -g)` |
@@ -103,6 +105,8 @@ All generated builtin options use long form (`set --local`, `set --append`,
 | `$OSTYPE` | `$(uname -s \| string lower)` |
 | `$PIPESTATUS` `${PIPESTATUS[@]}` `${PIPESTATUS[N]}` | `$pipestatus` `$pipestatus` `$pipestatus[N+1]` |
 | `$RANDOM` | `$(random 0 32767)` |
+| `$SRANDOM` | `$(random)` |
+| `$EPOCHSECONDS` | `$(date +%s)` |
 | `$1`…`${N}` | `$argv[1]`…`$argv[N]` (both are 1-based; no off-by-one) |
 | `"$@"`, `$*`, `"${arr[@]}"`, `${arr[*]}` 🟡 | `$arr` / `$argv` (quotes dropped, see differences) |
 | `${#var}` / `${#arr[@]}` | `$(string length -- $var)` / `$(count $arr)` |
@@ -113,6 +117,26 @@ All generated builtin options use long form (`set --local`, `set --append`,
 | `${arr[@]:1:2}`, `${arr[@]:2}` | `$arr[2..3]`, `$arr[3..-1]` |
 | `${arr[i]%.txt}` (index + strip) | composed `string replace … -- $arr[i+1]` |
 | `${arr[-1]}` | `$arr[-1]` (negative indices match; no shift) |
+
+### Unsupported / unmapped shell variables
+
+Bash defines numerous shell-specific variables that do not map directly to Fish due to architectural differences. These are left verbatim or require refactoring:
+
+| Variable | Status / Fish alternative | Reason |
+|---|---|---|
+| `$SECONDS` | Not mapped | Seconds since shell startup; Fish lacks a built-in background elapsed timer |
+| `$PPID` | Not mapped | Parent PID; Fish provides `$fish_pid` for self, but parent PID requires external `ps -o ppid= -p $fish_pid` |
+| `$LINENO` | Not mapped | Script line number; Fish's `(status line-number)` inside command substitutions reports the subshell's line (`1`), not caller position |
+| `$DIRSTACK` | Not mapped | Directory stack; in Bash `${DIRSTACK[0]}` is `$PWD` (length $N+1$), whereas Fish `$dirstack` only holds pushed entries (length $N$) |
+| `$BASH_REMATCH` | Not mapped | Array of regex capture groups from `[[ =~ ]]`; in Fish, regex capture is handled via `string match -r` |
+| `$BASH_VERSION`, `$BASH_VERSINFO` | Not mapped | Identifies Bash interpreter version; in Fish, use `$version` or `$FISH_VERSION` |
+| `$BASH_LINENO`, `$BASH_ARGC`, `$BASH_ARGV` | Not mapped | Extended execution call stack arrays from `shopt -s extdebug` |
+| `$BASHOPTS`, `$SHELLOPTS`, `$BASH_ALIASES`, `$BASH_CMDS` | Not mapped | Bash-internal option lists and hash/alias tables |
+| `COMP_*`, `COMPREPLY` | Not mapped | Bash programmable completion variables; Fish uses its own declarative `complete -c` subsystem |
+| `HIST*`, `histchars`, `FCEDIT` | Not mapped | Interactive history and readline configuration |
+| `PROMPT_*`, `PS0`…`PS4` | Not mapped | Interactive prompt variables; Fish uses `fish_prompt` and `fish_right_prompt` functions |
+| `OPTARG`, `OPTIND` | Not mapped | Option parsing via `getopts`; Fish scripts use the `argparse` builtin |
+| `COPROC` | Not mapped | Asynchronous coprocess file descriptor array; coprocesses are unsupported |
 
 ### Arithmetic
 

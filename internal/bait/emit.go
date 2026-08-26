@@ -1552,8 +1552,12 @@ func (e *emitter) paramReplacements(pe *syntax.ParamExp) []syntax.WordPart {
 		return []syntax.WordPart{namedParam("fish_pid")}
 	case "#":
 		return []syntax.WordPart{substPart("count", "$argv")}
-	case "0", "BASH_SOURCE":
+	case "0", "BASH_SOURCE", "BASH_ARGV0":
 		return []syntax.WordPart{substPart("status", "filename")}
+	case "BASH":
+		return []syntax.WordPart{substPart("status", "fish-path")}
+	case "BASH_COMMAND":
+		return []syntax.WordPart{substPart("status", "current-command")}
 	case "FUNCNAME":
 		return []syntax.WordPart{substPart("status", "current-function")}
 	case "UID", "EUID":
@@ -1566,10 +1570,16 @@ func (e *emitter) paramReplacements(pe *syntax.ParamExp) []syntax.WordPart {
 		return []syntax.WordPart{substPart("uname", "-m")}
 	case "PIPESTATUS":
 		return []syntax.WordPart{namedParam("pipestatus")}
+	case "DIRSTACK":
+		return []syntax.WordPart{namedParam("dirstack")}
 	case "OSTYPE":
 		return []syntax.WordPart{pipeSubstPart([]string{"uname", "-s"}, []string{"string", "lower"})}
 	case "RANDOM":
 		return []syntax.WordPart{substPart("random", "0", "32767")}
+	case "SRANDOM":
+		return []syntax.WordPart{substPart("random")}
+	case "EPOCHSECONDS":
+		return []syntax.WordPart{substPart("date", "+%s")}
 	}
 	if isDigits(name) {
 		// bash positional params are 1-based like fish list indices;
@@ -2124,6 +2134,9 @@ func (e *emitter) varName(name string) string {
 	}
 	if name == "PIPESTATUS" {
 		return "pipestatus"
+	}
+	if name == "DIRSTACK" {
+		return "dirstack"
 	}
 	return name
 }

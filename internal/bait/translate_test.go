@@ -682,6 +682,11 @@ func TestBashFishEquivalence(t *testing.T) {
 				"esac\n",
 		},
 		{
+			name: "epochseconds and srandom",
+			src: "echo \"epoch_ok: $([ $EPOCHSECONDS -gt 1000000000 ] && echo yes)\"\n" +
+				"echo \"srandom_ok: $([ $SRANDOM -ge 0 ] && echo yes)\"\n",
+		},
+		{
 			name: "empty command prefix",
 			src: "prefix=\"\"\n" +
 				"$prefix echo running without prefix\n",
@@ -944,6 +949,26 @@ func TestTier2Params(t *testing.T) {
 			"OSTYPE maps to uname -s lower",
 			"echo $OSTYPE \"${OSTYPE}\"\n",
 			"echo $(uname -s | string lower) \"$(uname -s | string lower)\"\n",
+		},
+		{
+			"BASH and BASH_ARGV0 maps to status",
+			"echo $BASH $BASH_ARGV0\n",
+			"echo $(status fish-path) $(status filename)\n",
+		},
+		{
+			"BASH_COMMAND maps to status current-command",
+			"echo $BASH_COMMAND\n",
+			"echo $(status current-command)\n",
+		},
+		{
+			"DIRSTACK maps to dirstack",
+			"echo $DIRSTACK ${DIRSTACK[0]} ${DIRSTACK[@]} ${#DIRSTACK[@]}\n",
+			"echo $dirstack $dirstack[1] $dirstack $(count $dirstack)\n",
+		},
+		{
+			"EPOCHSECONDS and SRANDOM maps to date and random",
+			"echo $EPOCHSECONDS $SRANDOM\n",
+			"echo $(date +%s) $(random)\n",
 		},
 	}
 
