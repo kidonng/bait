@@ -39,8 +39,8 @@ anything bait cannot translate is emitted unchanged plus a warning.
 | `if/then/elif/else/fi` | `if` / `else if` / `else` / `end` |
 | `while cond; do … done` | `while cond … end` |
 | `until cond; do … done` | `while not cond … end` |
-| `for x in …; do … done` | `for x in … … end`; bare `for x` iterates `$argv` |
-| `case x in p) …;; esac` | `switch x` / `case p` / `end` |
+| `for x in …; do … done` | `for x in … … end`; bare `for x` iterates `$argv`; unquoted `for x in $var` uses `(string match -ra '\S+' -- "$var")` to preserve POSIX whitespace word-splitting |
+| `case x in p) …;; esac` | `switch x` / `case 'p'` / `end` |
 | `f() { … }`, `function f { … }` | `function f … end` |
 | `{ … }` groups, `( … )` subshells 🟡 | `begin … end` |
 | structural command substitutions `$(if …)`, `$( (…); )` | emitted through the translator; nested structure becomes valid fish |
@@ -121,8 +121,10 @@ parentheses, and the corresponding compound assignments.
 |---|---|
 | `set -- a b` and the flagless `set a b` form | `set argv a b` — bash positional parameters map onto fish's argv list |
 | `set --` | `set argv` (clears positional parameters / argv) |
+| `shift`, `shift 1` | `set --erase argv[1]` |
+| `shift N` | `set --erase argv[1..N]` |
 | `set -e`, `set -u`, `set +x`, `set -o name`, … | dropped; a warning is reported — fish has no shell option flags |
-| bare `set` | dropped; a warning is reported — bash dumps shell state, which has no fish meaning |
+| `bare set` | dropped; a warning is reported — bash dumps shell state, which has no fish meaning |
 
 Values are emitted as written, so quoting and command substitutions are
 preserved (`set -- "$(cmd)"` stays `set argv "$(cmd)"`).
@@ -183,7 +185,7 @@ natively:
 - Case-modification operators `${v^}` `${v^^}` `${v,}` `${v,,}`
 - `$@` / `$*` embedded inside larger words
 - bash-only builtins with no fish equivalent: `hash`, `unset`,
-  `shift`, `let`, `getopts`, `shopt`, `unalias`, `caller`, `compgen`,
+  `let`, `getopts`, `shopt`, `unalias`, `caller`, `compgen`,
   `compopt`, `enable`, `fc` — emitted verbatim with a hint (fish ships
   POSIX functions/builtins for `export`, `alias`, `pushd`, `popd`,
   `dirs`, `trap`, `umask`, and `ulimit`)

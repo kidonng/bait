@@ -192,6 +192,10 @@ func (e *emitter) lines(s string) {
 // fish.
 func (e *emitter) simple(s *syntax.Stmt) {
 	if c, ok := s.Cmd.(*syntax.CallExpr); ok {
+		if len(c.Assigns) == 0 && len(c.Args) > 0 && isLitWord(c.Args[0], "shift") {
+			e.shiftCmd(s, c)
+			return
+		}
 		e.warnBashOnlyBuiltin(s, c)
 		if len(c.Assigns) == 0 && e.isSetBuiltin(c) {
 			if e.setCmd(s, c) {
@@ -201,6 +205,12 @@ func (e *emitter) simple(s *syntax.Stmt) {
 		if hasStructuralCmdSubst(s) {
 			e.emitSimpleFish(s, c)
 			return
+		}
+		if len(c.Assigns) == 0 && len(c.Args) > 0 {
+			if _, ok := singleBareParam(c.Args[0]); ok {
+				e.lines("eval " + e.render(s))
+				return
+			}
 		}
 	}
 	e.lines(e.render(s))
@@ -212,7 +222,6 @@ func (e *emitter) simple(s *syntax.Stmt) {
 var bashOnlyBuiltins = map[string]string{
 	"hash":    "use 'command -v' or 'type -q' instead",
 	"unset":   "use 'set --erase NAME' instead",
-	"shift":   "reassign $argv instead (e.g. 'set --erase argv[1]')",
 	"let":     "use 'math' instead",
 	"getopts": "use 'argparse' inside functions instead",
 	"shopt":   "fish has no shell options",
@@ -247,6 +256,24 @@ func (e *emitter) isSetBuiltin(c *syntax.CallExpr) bool {
 		return false
 	}
 	return e.render(c.Args[0]) == "set"
+}
+
+func (e *emitter) shiftCmd(s *syntax.Stmt, c *syntax.CallExpr) {
+	tail := e.tails(s)
+	if len(c.Args) <= 1 {
+		e.printf("set --erase argv[1]%s", tail)
+		return
+	}
+	arg := e.render(c.Args[1])
+	if n, err := strconv.Atoi(arg); err == nil {
+		if n <= 1 {
+			e.printf("set --erase argv[1]%s", tail)
+		} else {
+			e.printf("set --erase argv[1..%d]%s", n, tail)
+		}
+		return
+	}
+	e.printf("set --erase argv[1..%s]%s", arg, tail)
 }
 
 // setCmd rewrites bash's set builtin. `set --` and bash's flagless
@@ -576,6 +603,14 @@ func (e *emitter) chainSideText(st *syntax.Stmt) string {
 func (e *emitter) chainLeaf(st *syntax.Stmt) string {
 	c, ok := st.Cmd.(*syntax.CallExpr)
 	if !ok || len(c.Args) != 0 || len(c.Assigns) == 0 {
+		if c != nil && len(c.Args) > 0 && isLitWord(c.Args[0], "shift") {
+			return e.inlineStmtText(st)
+		}
+		if c != nil && len(c.Assigns) == 0 && len(c.Args) > 0 {
+			if _, ok := singleBareParam(c.Args[0]); ok {
+				return "eval " + e.render(st)
+			}
+		}
 		if hasStructuralCmdSubst(st) {
 			return e.inlineStmtText(st)
 		}
@@ -663,6 +698,19 @@ func (e *emitter) forClause(s *syntax.Stmt, f *syntax.ForClause) {
 	}
 	items := make([]string, len(iter.Items))
 	for i, w := range iter.Items {
+		if pe, ok := singleBareParam(w); ok {
+			name := pe.Param.Value
+			if name == "@" || name == "*" || name == "argv" {
+				items[i] = "$argv"
+				continue
+			}
+			if name == "PATH" {
+				items[i] = "$PATH"
+				continue
+			}
+			items[i] = `(string match -ra '\S+' -- "$` + name + `")`
+			continue
+		}
 		items[i] = e.render(w)
 	}
 	if !iter.InPos.IsValid() {
@@ -1124,6 +1172,8 @@ func (e *emitter) paramReplacements(pe *syntax.ParamExp) []syntax.WordPart {
 		return []syntax.WordPart{pe}
 	}
 	switch name {
+	case "@", "*":
+		return []syntax.WordPart{argvParam()}
 	case "?":
 		return []syntax.WordPart{namedParam("status")}
 	case "!":
@@ -1217,6 +1267,17 @@ func matchesAnySpecial(pe *syntax.ParamExp, names []string) bool {
 		}
 	}
 	return false
+}
+
+func singleBareParam(w *syntax.Word) (*syntax.ParamExp, bool) {
+	if len(w.Parts) != 1 {
+		return nil, false
+	}
+	pe, ok := w.Parts[0].(*syntax.ParamExp)
+	if !ok || !bareParam(pe) || pe.Param == nil {
+		return nil, false
+	}
+	return pe, true
 }
 
 // --- arithmetic translation ---

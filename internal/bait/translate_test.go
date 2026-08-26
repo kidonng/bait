@@ -337,11 +337,6 @@ func TestWarnings(t *testing.T) {
 			"bash builtin",
 		},
 		{
-			"shift passthrough",
-			"shift 2\n",
-			"bash builtin",
-		},
-		{
 			"let passthrough",
 			"let a=1+2\n",
 			"let statement",
@@ -537,6 +532,14 @@ func TestBashFishEquivalence(t *testing.T) {
 			files: map[string]string{"a.txt": "", "b.txt": ""},
 			src: "for f in *.txt; do\n" +
 				"\techo \"${f%.txt}\"\n" +
+				"done\n",
+		},
+		{
+			name: "shift in while loop",
+			args: []string{"a", "b", "c"},
+			src: "while [ $# -gt 0 ]; do\n" +
+				"\techo \"arg:$1\"\n" +
+				"\tshift\n" +
 				"done\n",
 		},
 		{
@@ -1044,6 +1047,34 @@ func TestSetBuiltin(t *testing.T) {
 			}
 			if string(got) != tc.want {
 				t.Errorf("set mismatch\n in: %q\n got: %q\n want: %q",
+					tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestShiftBuiltin(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"bare shift", "shift\n", "set --erase argv[1]\n"},
+		{"shift 1", "shift 1\n", "set --erase argv[1]\n"},
+		{"shift 2", "shift 2\n", "set --erase argv[1..2]\n"},
+		{"shift dynamic", "shift $n\n", "set --erase argv[1..$n]\n"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, warnings, err := Translate([]byte(tc.in))
+			if err != nil {
+				t.Fatalf("Translate(%q) error: %v", tc.in, err)
+			}
+			if len(warnings) != 0 {
+				t.Errorf("unexpected warnings: %v", warnings)
+			}
+			if string(got) != tc.want {
+				t.Errorf("shift mismatch\n in: %q\n got: %q\n want: %q",
 					tc.in, got, tc.want)
 			}
 		})
