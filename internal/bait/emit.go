@@ -1761,17 +1761,17 @@ const baitWordsHelper = `function __bait_words
     if test (count $argv) -eq 0
         return 0
     end
-    if set -q BAIT_IFS; and test -z "$BAIT_IFS"
+    if set --query BAIT_IFS; and test -z "$BAIT_IFS"
         for a in $argv
             echo $a
         end
         return 0
     end
-    if set -q BAIT_IFS; and test -n "$BAIT_IFS"
-        string split -n -- "$BAIT_IFS" $argv
+    if set --query BAIT_IFS; and test -n "$BAIT_IFS"
+        string split --no-empty -- "$BAIT_IFS" $argv
         return 0
     end
-    string match -ra '\S+' -- $argv
+    string match --regex --all '\S+' -- $argv
 end
 
 `
@@ -1783,14 +1783,14 @@ const baitExecHelper = `function __bait_exec
     if test (count $argv) -eq 0
         return 0
     end
-    if type -q -- $argv[1]
+    if type --query -- $argv[1]
         $argv[1] $argv[2..-1]
         return $status
     end
-    set -l words (string match -ra '\S+' -- $argv[1])
+    set --local words (string match --regex --all '\S+' -- $argv[1])
     if test (count $words) -gt 0
-        set -l cmd $words[1]
-        set -l cmd_args $words[2..-1]
+        set --local cmd $words[1]
+        set --local cmd_args $words[2..-1]
         $cmd $cmd_args $argv[2..-1]
         return $status
     end
