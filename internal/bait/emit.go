@@ -239,6 +239,10 @@ func (e *emitter) simple(s *syntax.Stmt) {
 			e.shiftCmd(s, c)
 			return
 		}
+		if len(c.Assigns) == 0 && len(c.Args) > 0 && isLitWord(c.Args[0], "unset") {
+			e.unsetCmd(s, c)
+			return
+		}
 		e.warnBashOnlyBuiltin(s, c)
 		if len(c.Assigns) == 0 && e.isSetBuiltin(c) {
 			if e.setCmd(s, c) {
@@ -266,7 +270,6 @@ func (e *emitter) simple(s *syntax.Stmt) {
 // with a warning: silent passthrough would only fail at runtime.
 var bashOnlyBuiltins = map[string]string{
 	"hash":    "use 'command -v' or 'type -q' instead",
-	"unset":   "use 'set --erase NAME' instead",
 	"let":     "use 'math' instead",
 	"getopts": "use 'argparse' inside functions instead",
 	"shopt":   "fish has no shell options",
@@ -320,8 +323,67 @@ func (e *emitter) shiftCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 	}
 	e.printf("set --erase argv[1..%s]%s", arg, tail)
 }
+func (e *emitter) unsetCmd(s *syntax.Stmt, c *syntax.CallExpr) {
+	tail := e.tails(s)
+	isFunc := false
+	var names []string
+	stopFlags := false
+	for _, argWord := range c.Args[1:] {
+		arg := e.render(argWord)
+		unquoted := unquoteArg(arg)
+		if !stopFlags && strings.HasPrefix(arg, "-") {
+			if arg == "--" {
+				stopFlags = true
+				continue
+			}
+			if strings.Contains(arg, "f") {
+				isFunc = true
+			}
+			if strings.Contains(arg, "v") {
+				isFunc = false
+			}
+			continue
+		}
+		if isFunc {
+			names = append(names, unquoted)
+		} else {
+			names = append(names, e.shiftArrayIndex(unquoted))
+		}
+	}
+	if len(names) == 0 {
+		return
+	}
+	if isFunc {
+		e.printf("functions --erase %s%s", strings.Join(names, " "), tail)
+	} else {
+		e.printf("set --erase %s%s", strings.Join(names, " "), tail)
+	}
+}
 
-// setCmd rewrites bash's set builtin. `set --` and bash's flagless
+func unquoteArg(arg string) string {
+	if (strings.HasPrefix(arg, "'") && strings.HasSuffix(arg, "'")) ||
+		(strings.HasPrefix(arg, `"`) && strings.HasSuffix(arg, `"`)) {
+		if len(arg) >= 2 {
+			return arg[1 : len(arg)-1]
+		}
+	}
+	return arg
+}
+
+func (e *emitter) shiftArrayIndex(name string) string {
+	idxStart := strings.IndexByte(name, '[')
+	idxEnd := strings.LastIndexByte(name, ']')
+	if idxStart != -1 && idxEnd > idxStart {
+		arrName := name[:idxStart]
+		sub := name[idxStart+1 : idxEnd]
+		if n, err := strconv.Atoi(sub); err == nil {
+			if n >= 0 {
+				return fmt.Sprintf("%s[%d]", arrName, n+1)
+			}
+		}
+	}
+	return name
+}
 // `set args...` form assign fish's argv list; option forms and the bare
 // `set` state dump have no fish equivalent and are dropped. Reports
 // whether the statement was fully handled; when false, c.Args has been
@@ -569,14 +631,14 @@ func (e *emitter) binary(s *syntax.Stmt) {
 			e.chainSideText(bcmd.Y), e.tails(s))
 		return
 	}
-	if chainHasAssignment(bcmd) {
+	if chainNeedsRewrite(bcmd) {
 		e.emitChain(bcmd)
 		return
 	}
 	e.simple(s)
 }
 
-func chainHasAssignment(b *syntax.BinaryCmd) bool {
+func chainNeedsRewrite(b *syntax.BinaryCmd) bool {
 	found := false
 	syntax.Walk(b, func(n syntax.Node) bool {
 		c, ok := n.(*syntax.CallExpr)
@@ -586,6 +648,16 @@ func chainHasAssignment(b *syntax.BinaryCmd) bool {
 		if len(c.Args) == 0 && len(c.Assigns) > 0 {
 			found = true
 			return false
+		}
+		if len(c.Args) > 0 && (isLitWord(c.Args[0], "shift") || isLitWord(c.Args[0], "unset")) {
+			found = true
+			return false
+		}
+		if len(c.Assigns) == 0 && len(c.Args) > 0 {
+			if _, ok := singleBareParam(c.Args[0]); ok {
+				found = true
+				return false
+			}
 		}
 		return true
 	})
@@ -651,7 +723,7 @@ func (e *emitter) chainSideText(st *syntax.Stmt) string {
 func (e *emitter) chainLeaf(st *syntax.Stmt) string {
 	c, ok := st.Cmd.(*syntax.CallExpr)
 	if !ok || len(c.Args) != 0 || len(c.Assigns) == 0 {
-		if c != nil && len(c.Args) > 0 && isLitWord(c.Args[0], "shift") {
+		if c != nil && len(c.Args) > 0 && (isLitWord(c.Args[0], "shift") || isLitWord(c.Args[0], "unset")) {
 			return e.inlineStmtText(st)
 		}
 		if c != nil && len(c.Assigns) == 0 && len(c.Args) > 0 {

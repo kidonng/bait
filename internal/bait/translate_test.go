@@ -332,11 +332,6 @@ func TestWarnings(t *testing.T) {
 			"set flags",
 		},
 		{
-			"unset passthrough",
-			"unset myvar\n",
-			"bash builtin",
-		},
-		{
 			"let passthrough",
 			"let a=1+2\n",
 			"let statement",
@@ -606,6 +601,23 @@ func TestBashFishEquivalence(t *testing.T) {
 				"cat <<EOF\n" +
 				"val is $VAL\n" +
 				"EOF\n",
+		},
+		{
+			name: "unset variable and function",
+			src: "FOO=\"hello\"\n" +
+				"unset FOO\n" +
+				"echo \"foo:${FOO:-empty}\"\n" +
+				"f() { echo hi; }\n" +
+				"unset -f f\n",
+		},
+		{
+			name: "unset array element",
+			src: "items=(first second third)\n" +
+				"unset 'items[1]'\n" +
+				"echo \"count:${#items[@]}\"\n" +
+				"for x in \"${items[@]}\"; do\n" +
+				"\techo \"item:$x\"\n" +
+				"done\n",
 		},
 		{
 			name: "empty command prefix",
@@ -1299,6 +1311,38 @@ func TestHeredocAndHerestring(t *testing.T) {
 			"cat <<'EOF'\nline 1 $NOEXPAND\nEOF\n",
 			"printf '%s\\n' 'line 1 $NOEXPAND' | cat\n",
 		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, warnings, err := Translate([]byte(tc.in))
+			if err != nil {
+				t.Fatalf("Translate(%q) error: %v", tc.in, err)
+			}
+			if len(warnings) > 0 {
+				t.Errorf("unexpected warnings: %v", warnings)
+			}
+			if string(got) != tc.want {
+				t.Errorf("mismatch\n in: %q\n got: %q\n want: %q",
+					tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestUnsetBuiltin(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"unset variable", "unset x\n", "set --erase x\n"},
+		{"unset multiple variables", "unset a b c\n", "set --erase a b c\n"},
+		{"unset with -v flag", "unset -v x y\n", "set --erase x y\n"},
+		{"unset function", "unset -f my_func\n", "functions --erase my_func\n"},
+		{"unset multiple functions", "unset -f f1 f2\n", "functions --erase f1 f2\n"},
+		{"unset array element", "unset 'arr[0]'\n", "set --erase arr[1]\n"},
+		{"unset array element unquoted", "unset arr[2]\n", "set --erase arr[3]\n"},
+		{"unset in chain", "test -n \"$x\" && unset x\n", "test -n \"$x\" && set --erase x\n"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -126,7 +126,7 @@ Fish deliberately does not perform implicit word splitting on unquoted variable 
 | `for x in $var; do … done` (unquoted) | `for x in (__bait_words $var) … end` | Splits on whitespace or `$BAIT_IFS` matching POSIX field splitting |
 | `$cmd` (dynamic command string), `$sudo tar …` | `__bait_exec $cmd`, `__bait_exec $sudo tar …` | Evaporates empty leading prefixes (`sudo=""`) and parses command flags while strictly preserving argument boundaries |
 
-### The `set` builtin
+### Builtin rewrites (`set`, `shift`, `unset`)
 
 | bash | fish |
 |---|---|
@@ -134,9 +134,11 @@ Fish deliberately does not perform implicit word splitting on unquoted variable 
 | `set --` | `set argv` (clears positional parameters / argv) |
 | `shift`, `shift 1` | `set --erase argv[1]` |
 | `shift N` | `set --erase argv[1..N]` |
+| `unset x`, `unset -v x y` | `set --erase x`, `set --erase x y` |
+| `unset -f func` | `functions --erase func` |
+| `unset 'arr[0]'` | `set --erase arr[1]` (constant indices shifted +1) |
 | `set -e`, `set -u`, `set +x`, `set -o name`, … | dropped; a warning is reported — fish has no shell option flags |
 | `bare set` | dropped; a warning is reported — bash dumps shell state, which has no fish meaning |
-
 Values are emitted as written, so quoting and command substitutions are
 preserved (`set -- "$(cmd)"` stays `set argv "$(cmd)"`).
 
@@ -195,10 +197,10 @@ natively:
 - `export` flags such as `export -n` (not supported by fish's wrapper)
 - Case-modification operators `${v^}` `${v^^}` `${v,}` `${v,,}`
 - `$@` / `$*` embedded inside larger words
-- bash-only builtins with no fish equivalent: `hash`, `unset`,
+- bash-only builtins with no fish equivalent: `hash`,
   `let`, `getopts`, `shopt`, `unalias`, `caller`, `compgen`,
   `compopt`, `enable`, `fc` — emitted verbatim with a hint (fish ships
-  `functions -e`, `set -e`, `builtin`, `argparse`, `status` instead).
+  `builtin`, `argparse`, `status` instead).
 
 ## Real-world scripts under test
 
