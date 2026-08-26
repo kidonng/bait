@@ -39,7 +39,7 @@ anything bait cannot translate is emitted unchanged plus a warning.
 | `if/then/elif/else/fi` | `if` / `else if` / `else` / `end` |
 | `while cond; do … done` | `while cond … end` |
 | `until cond; do … done` | `while not cond … end` |
-| `for x in …; do … done` | `for x in … … end`; bare `for x` iterates `$argv`; unquoted `for x in $var` uses `(string match -ra '\S+' -- "$var")` to preserve POSIX whitespace word-splitting |
+| `for x in …; do … done` | `for x in … … end`; bare `for x` iterates `$argv` |
 | `case x in p) …;; esac` | `switch x` / `case 'p'` / `end` |
 | `f() { … }`, `function f { … }` | `function f … end` |
 | `{ … }` groups, `( … )` subshells 🟡 | `begin … end` |
