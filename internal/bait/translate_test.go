@@ -720,14 +720,14 @@ func TestTier2(t *testing.T) {
 			"export A=1 B=2\n",
 		},
 		{
-			"local maps to set --local",
+			"local maps to set (function scoped)",
 			"f() {\n\tlocal x=1\n}\n",
-			"function f\n    set --local x 1\nend\n",
+			"function f\n    set x 1\nend\n",
 		},
 		{
 			"bare local becomes empty string",
 			"f() {\n\tlocal x\n}\n",
-			"function f\n    set --local x \"\"\nend\n",
+			"function f\n    set x \"\"\nend\n",
 		},
 		{
 			"function assignment gets --global",
@@ -738,7 +738,7 @@ func TestTier2(t *testing.T) {
 		{
 			"declare in function is local",
 			"f() {\n\tdeclare n=2\n}\n",
-			"function f\n    set --local n 2\nend\n",
+			"function f\n    set n 2\nend\n",
 		},
 		{
 			"self-referential accumulation becomes list append",

@@ -24,6 +24,7 @@ anything bait cannot translate is emitted unchanged plus a warning.
 | Simple commands, quoting, escapes | Verbatim |
 | Pipes `\|`, `\|&`, `2>\|` | |
 | Redirections `< > >> 2> 2>> &> &>> N< N> 2>&1 >&2` | Normalized to spaced form (`> out.txt`) |
+| Here-documents `<< EOF`, `<<- EOF` | Translated to `printf '%s\n' '...' \| cmd` (with variable expansions preserved where active) |
 | Combiners `&&` `\|\|` `!` | Native fish syntax |
 | Command substitution `$(...)` | Also `(...)` output from bait itself uses `$()` |
 | Per-command environment `VAR=val cmd` | Supported natively since fish 3.1 |
@@ -60,9 +61,8 @@ content is not shell fail at the parse stage with an error.
 | `x=1`, `msg="a b"`, `x=` | `set x 1` / `set x ""` (empty string, never an empty list) |
 | `a=1 b=2` (one line) | two `set` commands |
 | `export X=v` | passed through verbatim (fish ships an `export` wrapper accepting `NAME=VALUE`) |
-| `local x=1`, bare `local x` | `set --local x 1` / `set --local x ""` |
-| `declare` / `typeset` (no flags) | top level: `set …`; inside a function: `set --local …` (mirrors bash scoping rules) |
-| function-body bare assignment `X=val` | `set --global X val` 🟡 (see differences) |
+| `local x=1`, bare `local x` | `set x 1` / `set x ""` (function-scoped `set` in fish, surviving nested loop/conditional blocks unlike block-scoped `set --local`) |
+| `declare x=1`, `typeset x=1` | top-level: `set x 1`; inside function: function-scoped `set x 1` |
 | `colors=(red blue)` | `set colors red blue` |
 | `arr[2]=x` | `set arr[3] x` (constant indices shifted +1) |
 | `arr+=(x)` | `set --append arr x` |
@@ -197,21 +197,19 @@ natively:
 - bash-only builtins with no fish equivalent: `hash`, `unset`,
   `let`, `getopts`, `shopt`, `unalias`, `caller`, `compgen`,
   `compopt`, `enable`, `fc` — emitted verbatim with a hint (fish ships
-  POSIX functions/builtins for `export`, `alias`, `pushd`, `popd`,
-  `dirs`, `trap`, `umask`, and `ulimit`)
-- `coproc`, mksh/zsh-only constructs
+  `functions -e`, `set -e`, `builtin`, `argparse`, `status` instead).
 
-## Not supported
+## Real-world scripts under test
 
-Scripts that are not shell (Python, Perl, …) fail at the parse stage with
-the underlying parser error rather than being passed through.
+- **Pixi installer** (`https://pixi.sh/install.sh`, ~400 lines) — exercising
+  `read -r`, nested `case`, `for`, string manipulations, and installer flow.
+- **Starship installer** (`https://starship.rs/install.sh`, ~400 lines) — exercising
+  nested `for` loops with variable-defined targets, `_bait_words` field splitting,
+  `IFS` local scoping, dynamic binary and flag accumulation.
+- **uv installer** (`https://astral.sh/uv/install.sh`, ~2200 lines) — exercising
+  here-documents (`<< EOF`, `<< EORECEIPT`), complex case patterns (`.tar.*`),
+  subshells in conditional tests (`if ! (cmd | grep ...)`), and function-scoped
+  local variable tracking across deep call graphs and loop bodies.
 
-## Testing
-
-- Snapshot suites pin every rule above (`TestPassthrough`, `TestTier1`,
-  `TestTier2*`, `TestShebang`, `TestReadFlags`).
-- Warning emission and positions are covered per unsupported construct.
-- `TestBashFishEquivalence` executes fixtures under real bash and their
-  translations under real fish, requiring identical stdout and exit
-  status — this is how the `read -r`, quote-dropping, and scoping rules
-  were discovered and pinned.
+Every real-world script passes byte-for-byte or functional integration tests in
+an isolated sandbox environment.

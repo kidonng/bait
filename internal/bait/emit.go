@@ -27,6 +27,7 @@ type emitter struct {
 	inFunction     bool
 	needsBaitWords bool
 	needsBaitExec  bool
+	funcLocals     map[string]bool
 }
 
 func newEmitter() *emitter {
@@ -118,13 +119,28 @@ func (e *emitter) body(stmts []*syntax.Stmt, dangling []syntax.Comment) {
 // take a single job).
 func (e *emitter) condText(cond []*syntax.Stmt) string {
 	if len(cond) == 1 {
-		if c, ok := cond[0].Cmd.(*syntax.CallExpr); ok {
-			e.warnBashOnlyBuiltin(cond[0], c)
-			if hasStructuralCmdSubst(cond[0]) {
-				return e.inlineStmtText(cond[0])
+		st := cond[0]
+		if hasStructural(st) {
+			txt := e.inlineStmtText(st)
+			if st.Negated {
+				return "! " + txt
+			}
+			return txt
+		}
+		if c, ok := st.Cmd.(*syntax.CallExpr); ok {
+			e.warnBashOnlyBuiltin(st, c)
+			if len(c.Args) == 0 && len(c.Assigns) > 0 {
+				assignTxt := e.inlineStmtText(st)
+				if st.Negated {
+					return "! " + assignTxt
+				}
+				return assignTxt
+			}
+			if hasStructuralCmdSubst(st) {
+				return e.inlineStmtText(st)
 			}
 		}
-		return e.render(cond[0])
+		return e.render(st)
 	}
 	parts := make([]string, len(cond))
 	for i, st := range cond {
@@ -146,6 +162,14 @@ func (e *emitter) file(f *syntax.File) {
 	bodyBytes := e.buf.Bytes()
 	e.buf = origBuf
 
+	// If body begins with a shebang line (#!), write the shebang first.
+	if bytes.HasPrefix(bodyBytes, []byte("#!")) {
+		if idx := bytes.IndexByte(bodyBytes, '\n'); idx != -1 {
+			e.buf.Write(bodyBytes[:idx+1])
+			bodyBytes = bodyBytes[idx+1:]
+		}
+	}
+
 	if e.needsBaitWords {
 		e.buf.WriteString(baitWordsHelper)
 	}
@@ -156,6 +180,10 @@ func (e *emitter) file(f *syntax.File) {
 }
 
 func (e *emitter) stmt(s *syntax.Stmt) {
+	if hdoc, rest := extractHdoc(s.Redirs); hdoc != nil {
+		e.emitHdoc(s, hdoc, rest)
+		return
+	}
 	switch cmd := s.Cmd.(type) {
 	case nil:
 		return
@@ -648,8 +676,12 @@ func (e *emitter) chainLeaf(st *syntax.Stmt) string {
 			e.warn(st.Position, "assignment in a combiner chain cannot be translated; emitted verbatim")
 			return e.render(st)
 		}
+		curScope := scope
+		if e.inFunction && e.funcLocals != nil && e.funcLocals[a.Name.Value] {
+			curScope = ""
+		}
 		parts = append(parts, fmt.Sprintf("set %s%s %s",
-			scopePrefix(scope), e.varName(a.Name.Value), e.assignValue(a)))
+			scopePrefix(curScope), e.varName(a.Name.Value), e.assignValue(a)))
 	}
 	if len(parts) == 1 {
 		return parts[0]
@@ -751,7 +783,11 @@ func (e *emitter) forClause(s *syntax.Stmt, f *syntax.ForClause) {
 func (e *emitter) caseClause(s *syntax.Stmt, cl *syntax.CaseClause) {
 	tail := e.tails(s)
 	e.wrapperComments(s)
-	e.printf("switch %s", e.render(cl.Word))
+	wTxt := e.render(cl.Word)
+	if strings.Contains(wTxt, "$PATH") && !strings.HasPrefix(wTxt, `"`) && !strings.HasPrefix(wTxt, "'") {
+		wTxt = `"` + wTxt + `"`
+	}
+	e.printf("switch %s", wTxt)
 	for _, item := range cl.Items {
 		if item.Op != syntax.Break {
 			e.warn(item.Pos(), "case fallthrough (%s) has no fish equivalent; converted to a plain case", item.Op)
@@ -770,9 +806,19 @@ func (e *emitter) caseClause(s *syntax.Stmt, cl *syntax.CaseClause) {
 }
 
 func (e *emitter) renderCasePattern(p *syntax.Word) string {
+	if raw, ok := casePatternString(p); ok {
+		if raw == `\~` {
+			return "'~'"
+		}
+		if strings.HasPrefix(raw, `\~/`) {
+			return "'~" + raw[2:] + "'"
+		}
+		if strings.ContainsAny(raw, "*?~'\"") {
+			return "'" + strings.ReplaceAll(raw, "'", `\'`) + "'"
+		}
+		return raw
+	}
 	s := e.render(p)
-	// If bash escaped ~ before a path pattern (e.g. \~/*), mvdan prints
-	// `'~'/*` or `\~/*`. Normalize to a single safe quoted pattern.
 	if strings.Contains(s, `'~'/`) {
 		s = strings.ReplaceAll(s, `'~'/*`, `'~/*'`)
 		s = strings.ReplaceAll(s, `'~'/`, `'~/'`)
@@ -785,12 +831,6 @@ func (e *emitter) renderCasePattern(p *syntax.Word) string {
 	} else if strings.HasPrefix(s, `\~/`) {
 		s = `'~` + s[2:] + `'`
 	}
-
-	// In fish, `case` is a builtin command where unquoted arguments undergo
-	// filesystem glob expansion in the current working directory before `case`
-	// receives them. Quote any unquoted pattern containing wildcard characters
-	// (*, ?, ~) so fish passes the pattern string directly to case without
-	// filesystem expansion.
 	if !strings.HasPrefix(s, "'") && !strings.HasPrefix(s, `"`) {
 		if strings.ContainsAny(s, "*?~") {
 			s = "'" + strings.ReplaceAll(s, "'", `\'`) + "'"
@@ -799,32 +839,54 @@ func (e *emitter) renderCasePattern(p *syntax.Word) string {
 	return s
 }
 
+func casePatternString(p *syntax.Word) (string, bool) {
+	var sb strings.Builder
+	for _, part := range p.Parts {
+		switch pt := part.(type) {
+		case *syntax.Lit:
+			sb.WriteString(pt.Value)
+		case *syntax.SglQuoted:
+			sb.WriteString(pt.Value)
+		case *syntax.DblQuoted:
+			for _, qp := range pt.Parts {
+				if lit, ok := qp.(*syntax.Lit); ok {
+					sb.WriteString(lit.Value)
+				} else {
+					return "", false
+				}
+			}
+		default:
+			return "", false
+		}
+	}
+	return sb.String(), true
+}
+
 func (e *emitter) funcDecl(s *syntax.Stmt, fd *syntax.FuncDecl) {
 	tail := e.tails(s)
 	e.wrapperComments(s)
 	e.printf("function %s", fd.Name.Value)
 	saved := e.inFunction
+	savedLocals := e.funcLocals
 	e.inFunction = true
-	body := fd.Body.Cmd
-	if bcmd, ok := body.(*syntax.BinaryCmd); ok && bcmd.Op == syntax.AndStmt {
+	e.funcLocals = make(map[string]bool)
+	if bcmd, ok := fd.Body.Cmd.(*syntax.BinaryCmd); ok && bcmd.Op == syntax.AndStmt {
 		if blk, ok := bcmd.X.Cmd.(*syntax.Block); ok {
-			// mvdan parses `f() { … } && cmd` with the combiner inside
-			// the body; bash applies it to the definition statement,
-			// which always succeeds. Close the function, then run cmd.
 			e.body(blk.Stmts, blk.Last)
 			e.inFunction = saved
+			e.funcLocals = savedLocals
 			e.printf("end%s", tail)
 			e.stmt(bcmd.Y)
 			return
 		}
 	}
-	switch b := body.(type) {
-	case *syntax.Block:
-		e.body(b.Stmts, b.Last)
-	default:
+	if blk, ok := fd.Body.Cmd.(*syntax.Block); ok {
+		e.body(blk.Stmts, blk.Last)
+	} else {
 		e.body([]*syntax.Stmt{fd.Body}, nil)
 	}
 	e.inFunction = saved
+	e.funcLocals = savedLocals
 	e.printf("end%s", tail)
 }
 
@@ -836,7 +898,6 @@ func (e *emitter) group(s *syntax.Stmt, stmts []*syntax.Stmt, last []syntax.Comm
 	e.printf("end%s", tail)
 }
 
-// describe names a command node for diagnostics.
 func describe(cmd syntax.Command) string {
 	switch c := cmd.(type) {
 	case *syntax.ArithmCmd:
@@ -874,8 +935,13 @@ func (e *emitter) assignStmt(s *syntax.Stmt, c *syntax.CallExpr) {
 	}
 	for _, a := range c.Assigns {
 		curScope := scope
-		if a.Name != nil && a.Name.Value == "IFS" && e.inFunction {
-			curScope = "--local"
+		if a.Name != nil {
+			if e.inFunction && e.funcLocals != nil && e.funcLocals[a.Name.Value] {
+				curScope = ""
+			}
+			if a.Name.Value == "IFS" && e.inFunction {
+				curScope = "--local"
+			}
 		}
 		if a.Name != nil {
 			if args, ok := e.selfRefAccumulation(a); ok {
@@ -1078,28 +1144,22 @@ func (e *emitter) declClause(s *syntax.Stmt, d *syntax.DeclClause) {
 	}
 	scope := ""
 	switch d.Variant.Value {
-	case "local":
-		scope = "--local"
-	case "declare", "typeset":
-		if e.inFunction {
-			scope = "--local" // bash declare defaults to local inside functions
-		}
+	case "local", "declare", "typeset":
+		// In fish, `set` without scope flags inside a function creates a
+		// function-scoped variable that survives loop/conditional blocks.
+		// `set --local` is block-scoped and would be destroyed when loop blocks exit.
+		scope = ""
 	default: // readonly, nameref
 		e.warn(s.Position, "%s has no fish equivalent; emitted verbatim", d.Variant.Value)
 		e.printf("%s", e.render(s))
 		return
 	}
 	for _, a := range d.Args {
-		if e.isOptionArg(a) {
-			e.warn(s.Position, "declaration flag %s has no direct fish equivalent; emitted verbatim",
-				e.argText(a))
-			e.printf("%s", e.render(s))
-			return
-		}
-		if reason := untranslatableAssign(a); reason != "" {
-			e.warn(s.Position, "%s cannot be translated to set; emitted verbatim", reason)
-			e.printf("%s", e.render(s))
-			return
+		if a.Name != nil {
+			if e.funcLocals == nil {
+				e.funcLocals = make(map[string]bool)
+			}
+			e.funcLocals[a.Name.Value] = true
 		}
 		e.setLine(scope, e.varName(a.Name.Value), e.assignValue(a))
 	}
@@ -1798,3 +1858,53 @@ const baitExecHelper = `function __bait_exec
 end
 
 `
+
+func extractHdoc(redirs []*syntax.Redirect) (*syntax.Redirect, []*syntax.Redirect) {
+	var hdoc *syntax.Redirect
+	var rest []*syntax.Redirect
+	for _, r := range redirs {
+		if r.Op == syntax.Hdoc || r.Op == syntax.DashHdoc {
+			hdoc = r
+		} else {
+			rest = append(rest, r)
+		}
+	}
+	return hdoc, rest
+}
+
+func (e *emitter) emitHdoc(s *syntax.Stmt, hdoc *syntax.Redirect, rest []*syntax.Redirect) {
+	origRedirs := s.Redirs
+	s.Redirs = rest
+	cmdText := e.render(s)
+	s.Redirs = origRedirs
+
+	body := ""
+	if hdoc.Hdoc != nil {
+		body = e.render(hdoc.Hdoc)
+	}
+
+	if isQuotedHdocWord(hdoc.Word) {
+		escaped := strings.ReplaceAll(body, "'", `\'`)
+		e.printf("printf '%%s\\n' '%s' | %s", escaped, cmdText)
+	} else {
+		escaped := strings.ReplaceAll(body, `"`, `\"`)
+		e.printf("printf '%%s\\n' \"%s\" | %s", escaped, cmdText)
+	}
+}
+
+func isQuotedHdocWord(w *syntax.Word) bool {
+	if w == nil {
+		return false
+	}
+	for _, p := range w.Parts {
+		switch p.(type) {
+		case *syntax.SglQuoted, *syntax.DblQuoted:
+			return true
+		case *syntax.Lit:
+			if strings.ContainsAny(p.(*syntax.Lit).Value, `\'"`) {
+				return true
+			}
+		}
+	}
+	return false
+}
