@@ -1144,11 +1144,12 @@ func (e *emitter) declClause(s *syntax.Stmt, d *syntax.DeclClause) {
 	}
 	scope := ""
 	switch d.Variant.Value {
-	case "local", "declare", "typeset":
-		// In fish, `set` without scope flags inside a function creates a
-		// function-scoped variable that survives loop/conditional blocks.
-		// `set --local` is block-scoped and would be destroyed when loop blocks exit.
-		scope = ""
+	case "local":
+		scope = "--function"
+	case "declare", "typeset":
+		if e.inFunction {
+			scope = "--function"
+		}
 	default: // readonly, nameref
 		e.warn(s.Position, "%s has no fish equivalent; emitted verbatim", d.Variant.Value)
 		e.printf("%s", e.render(s))

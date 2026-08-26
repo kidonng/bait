@@ -61,8 +61,8 @@ content is not shell fail at the parse stage with an error.
 | `x=1`, `msg="a b"`, `x=` | `set x 1` / `set x ""` (empty string, never an empty list) |
 | `a=1 b=2` (one line) | two `set` commands |
 | `export X=v` | passed through verbatim (fish ships an `export` wrapper accepting `NAME=VALUE`) |
-| `local x=1`, bare `local x` | `set x 1` / `set x ""` (function-scoped `set` in fish, surviving nested loop/conditional blocks unlike block-scoped `set --local`) |
-| `declare x=1`, `typeset x=1` | top-level: `set x 1`; inside function: function-scoped `set x 1` |
+| `local x=1`, bare `local x` | `set --function x 1` / `set --function x ""` (uses fish's `--function` scope flag so variables survive nested loop/conditional blocks without leaking globally) |
+| `declare x=1`, `typeset x=1` | top-level: `set x 1`; inside function: `set --function x 1` |
 | `colors=(red blue)` | `set colors red blue` |
 | `arr[2]=x` | `set arr[3] x` (constant indices shifted +1) |
 | `arr+=(x)` | `set --append arr x` |
