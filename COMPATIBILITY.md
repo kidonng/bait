@@ -92,9 +92,15 @@ All generated builtin options use long form (`set --local`, `set --append`,
 | bash | fish |
 |---|---|
 | `${var}` | `$var` (braces stripped when no operator is present) |
-| `$?` `$$` `$!` | `$status` `$fish_pid` `$last_pid` |
+| `$?` `$$` `$!` `$BASHPID` | `$status` `$fish_pid` `$last_pid` `$fish_pid` |
 | `$#` | `$(count $argv)` |
-| `$0` | `$(status filename)` |
+| `$0` `${BASH_SOURCE[0]}` `$BASH_SOURCE` | `$(status filename)` |
+| `$FUNCNAME` `${FUNCNAME[0]}` | `$(status current-function)` |
+| `$UID` `$EUID` | `$(id -u)` |
+| `$GROUPS` `${GROUPS[0]}` | `$(id -g)` |
+| `$HOSTNAME` | `$hostname` |
+| `$HOSTTYPE` `$MACHTYPE` | `$(uname -m)` |
+| `$RANDOM` | `$(random 0 32767)` |
 | `$1`…`${N}` | `$argv[1]`…`$argv[N]` (both are 1-based; no off-by-one) |
 | `"$@"`, `$*`, `"${arr[@]}"`, `${arr[*]}` 🟡 | `$arr` / `$argv` (quotes dropped, see differences) |
 | `${#var}` / `${#arr[@]}` | `$(string length -- $var)` / `$(count $arr)` |

@@ -655,6 +655,17 @@ func TestBashFishEquivalence(t *testing.T) {
 				"done < <(printf \"one\\ntwo\\n\")\n",
 		},
 		{
+			name: "special variables uid euid hostname funcname",
+			src: "echo \"uid_positive: $([ $UID -gt 0 ] && echo yes)\"\n" +
+				"echo \"euid_positive: $([ $EUID -gt 0 ] && echo yes)\"\n" +
+				"echo \"host_set: $([ -n \"$HOSTNAME\" ] && echo yes)\"\n" +
+				"echo \"arch_set: $([ -n \"$HOSTTYPE\" ] && echo yes)\"\n" +
+				"my_func() {\n" +
+				"\techo \"func: $FUNCNAME, ${FUNCNAME[0]}\"\n" +
+				"}\n" +
+				"my_func\n",
+		},
+		{
 			name: "empty command prefix",
 			src: "prefix=\"\"\n" +
 				"$prefix echo running without prefix\n",
@@ -900,6 +911,14 @@ func TestTier2Params(t *testing.T) {
 			"run $argv\n",
 		},
 		{"unquoted star becomes argv", "run $*\n", "run $argv\n"},
+		{"UID and EUID maps to id -u", "echo $UID $EUID ${UID}\n", "echo $(id -u) $(id -u) $(id -u)\n"},
+		{"GROUPS maps to id -g", "echo $GROUPS ${GROUPS[0]}\n", "echo $(id -g) $(id -g)\n"},
+		{"HOSTNAME maps to hostname", "echo \"host: $HOSTNAME ${HOSTNAME}\"\n", "echo \"host: $hostname $hostname\"\n"},
+		{"HOSTTYPE and MACHTYPE maps to uname -m", "echo $HOSTTYPE $MACHTYPE\n", "echo $(uname -m) $(uname -m)\n"},
+		{"RANDOM maps to random", "echo $RANDOM ${RANDOM}\n", "echo $(random 0 32767) $(random 0 32767)\n"},
+		{"BASH_SOURCE maps to status filename", "echo \"${BASH_SOURCE[0]}\" $BASH_SOURCE\n", "echo \"$(status filename)\" $(status filename)\n"},
+		{"FUNCNAME maps to status current-function", "echo \"$FUNCNAME\" \"${FUNCNAME[0]}\"\n", "echo \"$(status current-function)\" \"$(status current-function)\"\n"},
+		{"BASHPID maps to fish_pid", "echo $BASHPID\n", "echo $fish_pid\n"},
 	}
 
 	for _, tc := range tests {

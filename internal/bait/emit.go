@@ -1548,12 +1548,24 @@ func (e *emitter) paramReplacements(pe *syntax.ParamExp) []syntax.WordPart {
 		return []syntax.WordPart{namedParam("status")}
 	case "!":
 		return []syntax.WordPart{namedParam("last_pid")}
-	case "$":
+	case "$", "BASHPID":
 		return []syntax.WordPart{namedParam("fish_pid")}
 	case "#":
 		return []syntax.WordPart{substPart("count", "$argv")}
-	case "0":
+	case "0", "BASH_SOURCE":
 		return []syntax.WordPart{substPart("status", "filename")}
+	case "FUNCNAME":
+		return []syntax.WordPart{substPart("status", "current-function")}
+	case "UID", "EUID":
+		return []syntax.WordPart{substPart("id", "-u")}
+	case "GROUPS":
+		return []syntax.WordPart{substPart("id", "-g")}
+	case "HOSTNAME":
+		return []syntax.WordPart{namedParam("hostname")}
+	case "HOSTTYPE", "MACHTYPE":
+		return []syntax.WordPart{substPart("uname", "-m")}
+	case "RANDOM":
+		return []syntax.WordPart{substPart("random", "0", "32767")}
 	}
 	if isDigits(name) {
 		// bash positional params are 1-based like fish list indices;
@@ -1890,6 +1902,12 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 		case !ok:
 			e.warn(pe.Pos(), "dynamic array index cannot be shifted; left untranslated")
 			return []syntax.WordPart{pe}, true
+		case name == "BASH_SOURCE" && (tok == "1" || tok == "@"):
+			return []syntax.WordPart{substPart("status", "filename")}, true
+		case name == "FUNCNAME" && (tok == "1" || tok == "@"):
+			return []syntax.WordPart{substPart("status", "current-function")}, true
+		case name == "GROUPS" && (tok == "1" || tok == "@"):
+			return []syntax.WordPart{substPart("id", "-g")}, true
 		case tok == "@":
 			return []syntax.WordPart{namedParam(name)}, true
 		default:
