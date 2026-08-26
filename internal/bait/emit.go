@@ -205,6 +205,8 @@ func (e *emitter) stmt(s *syntax.Stmt) {
 		e.forClause(s, cmd)
 	case *syntax.CaseClause:
 		e.caseClause(s, cmd)
+	case *syntax.TestClause:
+		e.testClause(s, cmd)
 	case *syntax.FuncDecl:
 		e.funcDecl(s, cmd)
 	case *syntax.Block:
@@ -910,6 +912,150 @@ func (e *emitter) renderCasePattern(p *syntax.Word) string {
 	}
 	return s
 }
+
+func (e *emitter) testClause(s *syntax.Stmt, tc *syntax.TestClause) {
+	tail := e.tails(s)
+	e.wrapperComments(s)
+	res := e.renderTestExpr(tc.X)
+	if s.Negated {
+		e.printf("! %s%s", res, tail)
+	} else {
+		e.printf("%s%s", res, tail)
+	}
+}
+
+func (e *emitter) renderTestExpr(expr syntax.TestExpr) string {
+	switch x := expr.(type) {
+	case nil:
+		return "test -n ''"
+	case *syntax.ParenTest:
+		return "begin " + e.renderTestExpr(x.X) + "; end"
+	case *syntax.UnaryTest:
+		return e.renderUnaryTest(x)
+	case *syntax.BinaryTest:
+		return e.renderBinaryTest(x)
+	case *syntax.Word:
+		return "test -n " + e.renderWordSmart(x)
+	default:
+		return "test " + e.render(expr)
+	}
+}
+
+func (e *emitter) renderUnaryTest(u *syntax.UnaryTest) string {
+	opStr := u.Op.String()
+	if opStr == "!" {
+		inner := e.renderTestExpr(u.X)
+		return "! " + inner
+	}
+	if opStr == "-v" {
+		if w, ok := u.X.(*syntax.Word); ok {
+			raw := e.render(w)
+			unquoted := unquoteArg(raw)
+			shifted := e.shiftArrayIndex(unquoted)
+			return "set -q " + shifted
+		}
+		return "set -q " + e.render(u.X)
+	}
+	return fmt.Sprintf("test %s %s", opStr, e.renderTestOperand(u.X))
+}
+
+func (e *emitter) renderBinaryTest(b *syntax.BinaryTest) string {
+	opStr := b.Op.String()
+	switch opStr {
+	case "&&":
+		return fmt.Sprintf("%s && %s", e.renderTestExpr(b.X), e.renderTestExpr(b.Y))
+	case "||":
+		return fmt.Sprintf("%s || %s", e.renderTestExpr(b.X), e.renderTestExpr(b.Y))
+	case "=~":
+		xWord, _ := b.X.(*syntax.Word)
+		yWord, _ := b.Y.(*syntax.Word)
+		target := e.renderWordSmart(xWord)
+		pat := e.renderPatternLiteral(yWord)
+		return fmt.Sprintf("string match -r -q -- %s %s", pat, target)
+	case "==", "=":
+		xWord, _ := b.X.(*syntax.Word)
+		yWord, _ := b.Y.(*syntax.Word)
+		target := e.renderWordSmart(xWord)
+		if hasUnquotedWildcard(yWord) {
+			pat := e.renderPatternLiteral(yWord)
+			return fmt.Sprintf("string match -q -- %s %s", pat, target)
+		}
+		yStr := e.renderWordSmart(yWord)
+		return fmt.Sprintf("test %s = %s", target, yStr)
+	case "!=":
+		xWord, _ := b.X.(*syntax.Word)
+		yWord, _ := b.Y.(*syntax.Word)
+		target := e.renderWordSmart(xWord)
+		if hasUnquotedWildcard(yWord) {
+			pat := e.renderPatternLiteral(yWord)
+			return fmt.Sprintf("! string match -q -- %s %s", pat, target)
+		}
+		yStr := e.renderWordSmart(yWord)
+		return fmt.Sprintf("test %s != %s", target, yStr)
+	case "-eq", "-ne", "-lt", "-le", "-gt", "-ge", "-nt", "-ot", "-ef":
+		return fmt.Sprintf("test %s %s %s", e.renderTestOperand(b.X), opStr, e.renderTestOperand(b.Y))
+	case "<":
+		return fmt.Sprintf("test %s \\< %s", e.renderTestOperand(b.X), e.renderTestOperand(b.Y))
+	case ">":
+		return fmt.Sprintf("test %s \\> %s", e.renderTestOperand(b.X), e.renderTestOperand(b.Y))
+	default:
+		return fmt.Sprintf("test %s %s %s", e.renderTestOperand(b.X), opStr, e.renderTestOperand(b.Y))
+	}
+}
+
+func (e *emitter) renderTestOperand(expr syntax.TestExpr) string {
+	if w, ok := expr.(*syntax.Word); ok {
+		return e.renderWordSmart(w)
+	}
+	return e.render(expr)
+}
+
+func (e *emitter) renderPatternLiteral(w *syntax.Word) string {
+	if w == nil {
+		return "''"
+	}
+	if hasParamOrSubst(w) {
+		return e.renderWordSmart(w)
+	}
+	raw := e.render(w)
+	if (strings.HasPrefix(raw, "'") && strings.HasSuffix(raw, "'")) ||
+		(strings.HasPrefix(raw, `"`) && strings.HasSuffix(raw, `"`)) {
+		return raw
+	}
+	return "'" + strings.ReplaceAll(raw, "'", `\'`) + "'"
+}
+
+func hasParamOrSubst(w *syntax.Word) bool {
+	if w == nil {
+		return false
+	}
+	found := false
+	syntax.Walk(w, func(n syntax.Node) bool {
+		switch n.(type) {
+		case *syntax.ParamExp, *syntax.CmdSubst:
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+func hasUnquotedWildcard(w *syntax.Word) bool {
+	if w == nil {
+		return false
+	}
+	for _, p := range w.Parts {
+		switch p := p.(type) {
+		case *syntax.Lit:
+			if strings.ContainsAny(p.Value, "*?[") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 
 func casePatternString(p *syntax.Word) (string, bool) {
 	var sb strings.Builder

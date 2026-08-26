@@ -620,6 +620,30 @@ func TestBashFishEquivalence(t *testing.T) {
 				"done\n",
 		},
 		{
+			name: "double bracket glob and equality",
+			src: "val=\"apple_pie\"\n" +
+				"if [[ $val == apple* ]]; then echo 'starts with apple'; fi\n" +
+				"if [[ $val != orange* ]]; then echo 'not orange'; fi\n" +
+				"if [[ \"$val\" == \"apple_pie\" ]]; then echo 'exact match'; fi\n",
+		},
+		{
+			name: "double bracket regex match",
+			src: "str=\"version_123_release\"\n" +
+				"if [[ $str =~ [0-9]+ ]]; then echo 'has digits'; fi\n" +
+				"if [[ $str =~ ^version_ ]]; then echo 'starts with version'; fi\n",
+		},
+		{
+			name: "double bracket compound condition",
+			src: "a=\"one\"\nb=\"two\"\n" +
+				"if [[ ( -n \"$a\" || -n \"$b\" ) && \"$a\" == \"one\" ]]; then echo 'compound ok'; fi\n",
+		},
+		{
+			name: "double bracket var test -v",
+			src: "DEFINED=\"yes\"\n" +
+				"if [[ -v DEFINED ]]; then echo 'DEFINED is set'; fi\n" +
+				"if [[ ! -v UNDEFINED_VAR ]]; then echo 'UNDEFINED is not set'; fi\n",
+		},
+		{
 			name: "empty command prefix",
 			src: "prefix=\"\"\n" +
 				"$prefix echo running without prefix\n",
@@ -1343,6 +1367,105 @@ func TestUnsetBuiltin(t *testing.T) {
 		{"unset array element", "unset 'arr[0]'\n", "set --erase arr[1]\n"},
 		{"unset array element unquoted", "unset arr[2]\n", "set --erase arr[3]\n"},
 		{"unset in chain", "test -n \"$x\" && unset x\n", "test -n \"$x\" && set --erase x\n"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, warnings, err := Translate([]byte(tc.in))
+			if err != nil {
+				t.Fatalf("Translate(%q) error: %v", tc.in, err)
+			}
+			if len(warnings) > 0 {
+				t.Errorf("unexpected warnings: %v", warnings)
+			}
+			if string(got) != tc.want {
+				t.Errorf("mismatch\n in: %q\n got: %q\n want: %q",
+					tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestTestClause(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			"non-empty test",
+			"[[ -n \"$x\" ]]\n",
+			"test -n \"$x\"\n",
+		},
+		{
+			"empty test",
+			"[[ -z \"$x\" ]]\n",
+			"test -z \"$x\"\n",
+		},
+		{
+			"string equality",
+			"[[ \"$a\" == \"b\" ]]\n",
+			"test \"$a\" = \"b\"\n",
+		},
+		{
+			"string inequality",
+			"[[ \"$a\" != \"b\" ]]\n",
+			"test \"$a\" != \"b\"\n",
+		},
+		{
+			"glob match",
+			"[[ $a == b* ]]\n",
+			"string match -q -- 'b*' $a\n",
+		},
+		{
+			"glob no match",
+			"[[ $a != b* ]]\n",
+			"! string match -q -- 'b*' $a\n",
+		},
+		{
+			"regex match",
+			"[[ $str =~ ^[0-9]+$ ]]\n",
+			"string match -r -q -- '^[0-9]+$' $str\n",
+		},
+		{
+			"and combiner",
+			"[[ -f /etc/hosts && -r /etc/hosts ]]\n",
+			"test -f /etc/hosts && test -r /etc/hosts\n",
+		},
+		{
+			"or combiner with not",
+			"[[ -d dir || ! -e file ]]\n",
+			"test -d dir || ! test -e file\n",
+		},
+		{
+			"parenthesized group",
+			"[[ ( -n \"$a\" || -n \"$b\" ) && \"$c\" == \"d\" ]]\n",
+			"begin test -n \"$a\" || test -n \"$b\"; end && test \"$c\" = \"d\"\n",
+		},
+		{
+			"integer comparison",
+			"[[ 5 -gt 3 ]]\n",
+			"test 5 -gt 3\n",
+		},
+		{
+			"variable set test",
+			"[[ -v VAR ]]\n",
+			"set -q VAR\n",
+		},
+		{
+			"if with double bracket",
+			"if [[ -n \"$x\" ]]; then echo yes; fi\n",
+			"if test -n \"$x\"\n    echo yes\nend\n",
+		},
+		{
+			"while with double bracket",
+			"while [[ $i -lt 5 ]]; do echo $i; done\n",
+			"while test $i -lt 5\n    echo $i\nend\n",
+		},
+		{
+			"double bracket in chain",
+			"[[ -n \"$x\" ]] && echo yes\n",
+			"test -n \"$x\" && echo yes\n",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

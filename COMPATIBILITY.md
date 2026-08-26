@@ -47,7 +47,20 @@ anything bait cannot translate is emitted unchanged plus a warning.
 | `{ … }` groups, `( … )` subshells 🟡 | `begin … end` |
 | structural command substitutions `$(if …)`, `$( (…); )` | emitted through the translator; nested structure becomes valid fish |
 | combiners over compounds `cmd \| (subshell)` | structural sides become translated blocks (`cmd \| begin … end`) |
+| `[[ ... ]]` conditional test expressions | Translated to `test`, `string match`, and `set -q` combinations |
 
+### Conditional tests (`[[ ... ]]`, `[ ... ]`)
+
+| bash | fish | Notes |
+|---|---|---|
+| `[ ... ]` | `[ ... ]` / `test ...` | fish ships `[` as a builtin alias of `test` (Tier 0 passthrough) |
+| `[[ -n "$x" ]]`, `[[ -f file ]]` | `test -n "$x"`, `test -f file` | Unary file and string tests map to fish's `test` builtin |
+| `[[ "$a" == "$b" ]]`, `[[ $a = b ]]` | `test "$a" = "$b"`, `test $a = b` | Literal string equality |
+| `[[ $a == b* ]]`, `[[ $a != b* ]]` | `string match -q -- 'b*' $a`, `! string match -q -- 'b*' $a` | Wildcard/glob pattern matching translated to fish `string match` |
+| `[[ $str =~ regex ]]` | `string match -r -q -- 'regex' $str` | Regular expression matching translated to fish `string match -r` |
+| `[[ -v VAR ]]` | `set -q VAR` | Variable set test mapped to fish `set --query` |
+| `[[ cond1 && cond2 ]]`, `[[ cond1 \|\| cond2 ]]` | `cond1 && cond2`, `cond1 \|\| cond2` | Logical combiners |
+| `[[ ( cond1 \|\| cond2 ) && cond3 ]]` | `begin cond1 \|\| cond2; end && cond3` | Parenthesized condition groups |
 ### Shebang
 
 `#!/bin/bash`, `#!/usr/bin/env bash`, `sh`, `ash`, `dash` are rewritten to
