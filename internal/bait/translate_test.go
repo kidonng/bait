@@ -666,6 +666,22 @@ func TestBashFishEquivalence(t *testing.T) {
 				"my_func\n",
 		},
 		{
+			name: "pipestatus across multiple commands",
+			src: "true | false | true\n" +
+				"echo \"pipe: ${PIPESTATUS[0]} ${PIPESTATUS[1]} ${PIPESTATUS[2]}\"\n",
+		},
+		{
+			name: "ostype lowercase check",
+			src: "case \"$OSTYPE\" in\n" +
+				"darwin*|linux*|*bsd*)\n" +
+				"\techo 'recognized os'\n" +
+				"\t;;\n" +
+				"*)\n" +
+				"\techo 'unrecognized os'\n" +
+				"\t;;\n" +
+				"esac\n",
+		},
+		{
 			name: "empty command prefix",
 			src: "prefix=\"\"\n" +
 				"$prefix echo running without prefix\n",
@@ -919,6 +935,16 @@ func TestTier2Params(t *testing.T) {
 		{"BASH_SOURCE maps to status filename", "echo \"${BASH_SOURCE[0]}\" $BASH_SOURCE\n", "echo \"$(status filename)\" $(status filename)\n"},
 		{"FUNCNAME maps to status current-function", "echo \"$FUNCNAME\" \"${FUNCNAME[0]}\"\n", "echo \"$(status current-function)\" \"$(status current-function)\"\n"},
 		{"BASHPID maps to fish_pid", "echo $BASHPID\n", "echo $fish_pid\n"},
+		{
+			"PIPESTATUS maps to pipestatus",
+			"echo $PIPESTATUS ${PIPESTATUS[0]} ${PIPESTATUS[1]} ${PIPESTATUS[@]} ${#PIPESTATUS[@]}\n",
+			"echo $pipestatus $pipestatus[1] $pipestatus[2] $pipestatus $(count $pipestatus)\n",
+		},
+		{
+			"OSTYPE maps to uname -s lower",
+			"echo $OSTYPE \"${OSTYPE}\"\n",
+			"echo $(uname -s | string lower) \"$(uname -s | string lower)\"\n",
+		},
 	}
 
 	for _, tc := range tests {

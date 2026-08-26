@@ -1388,7 +1388,7 @@ func (e *emitter) soleArrayAll(w *syntax.Word) (string, bool) {
 	if !ok || tok != "@" {
 		return "", false
 	}
-	return pe.Param.Value, true
+	return e.varName(pe.Param.Value), true
 }
 func (e *emitter) assignValue(a *syntax.Assign) string {
 	// A missing value is a typed-nil *Word, which must not reach the
@@ -1564,6 +1564,10 @@ func (e *emitter) paramReplacements(pe *syntax.ParamExp) []syntax.WordPart {
 		return []syntax.WordPart{namedParam("hostname")}
 	case "HOSTTYPE", "MACHTYPE":
 		return []syntax.WordPart{substPart("uname", "-m")}
+	case "PIPESTATUS":
+		return []syntax.WordPart{namedParam("pipestatus")}
+	case "OSTYPE":
+		return []syntax.WordPart{pipeSubstPart([]string{"uname", "-s"}, []string{"string", "lower"})}
 	case "RANDOM":
 		return []syntax.WordPart{substPart("random", "0", "32767")}
 	}
@@ -1620,6 +1624,24 @@ func substPart(args ...string) syntax.WordPart {
 		call.Args = append(call.Args, litWord(a))
 	}
 	return &syntax.CmdSubst{Stmts: []*syntax.Stmt{{Cmd: call}}}
+}
+
+// pipeSubstPart builds a $(cmd1 args... | cmd2 args...) command substitution word part.
+func pipeSubstPart(xArgs, yArgs []string) syntax.WordPart {
+	xCall := &syntax.CallExpr{}
+	for _, a := range xArgs {
+		xCall.Args = append(xCall.Args, litWord(a))
+	}
+	yCall := &syntax.CallExpr{}
+	for _, a := range yArgs {
+		yCall.Args = append(yCall.Args, litWord(a))
+	}
+	bin := &syntax.BinaryCmd{
+		Op: syntax.Pipe,
+		X:  &syntax.Stmt{Cmd: xCall},
+		Y:  &syntax.Stmt{Cmd: yCall},
+	}
+	return &syntax.CmdSubst{Stmts: []*syntax.Stmt{{Cmd: bin}}}
 }
 
 func soleSpecialParam(w *syntax.Word, names ...string) bool {
@@ -2099,6 +2121,9 @@ func (e *emitter) varName(name string) string {
 	if name == "IFS" {
 		e.needsBaitWords = true
 		return "BAIT_IFS"
+	}
+	if name == "PIPESTATUS" {
+		return "pipestatus"
 	}
 	return name
 }

@@ -100,6 +100,8 @@ All generated builtin options use long form (`set --local`, `set --append`,
 | `$GROUPS` `${GROUPS[0]}` | `$(id -g)` |
 | `$HOSTNAME` | `$hostname` |
 | `$HOSTTYPE` `$MACHTYPE` | `$(uname -m)` |
+| `$OSTYPE` | `$(uname -s \| string lower)` |
+| `$PIPESTATUS` `${PIPESTATUS[@]}` `${PIPESTATUS[N]}` | `$pipestatus` `$pipestatus` `$pipestatus[N+1]` |
 | `$RANDOM` | `$(random 0 32767)` |
 | `$1`…`${N}` | `$argv[1]`…`$argv[N]` (both are 1-based; no off-by-one) |
 | `"$@"`, `$*`, `"${arr[@]}"`, `${arr[*]}` 🟡 | `$arr` / `$argv` (quotes dropped, see differences) |
