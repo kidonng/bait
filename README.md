@@ -34,6 +34,12 @@ nix run .#test
 nix run .#test -- ./internal/bait
 ```
 
+## Status
+
+By definition™️, bait is never complete. Some bash features do not translate easily into fish.
+
+However, it can already translate the most popular installer scripts and enable them to run natively in fish. _It is not recommended to actually do so._
+
 ## Documentation
 
 - **[Compatibility Guide](./COMPATIBILITY.md)**: Full reference for supported syntax, control flow, scoping rules, parameter expansions, integer arithmetic, on-demand runtime helpers (`getopts`, `__bait_words`, `__bait_exec`), documented runtime differences, and tested real-world scripts.
