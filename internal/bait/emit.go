@@ -328,12 +328,18 @@ func (e *emitter) shiftCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 func (e *emitter) unsetCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 	tail := e.tails(s)
 	isFunc := false
-	var names []string
 	stopFlags := false
+
+	type unsetChunk struct {
+		isFunc bool
+		names  []string
+	}
+	var chunks []unsetChunk
+
 	for _, argWord := range c.Args[1:] {
 		arg := e.render(argWord)
 		unquoted := unquoteArg(arg)
-		if !stopFlags && strings.HasPrefix(arg, "-") {
+		if !stopFlags && strings.HasPrefix(arg, "-") && len(arg) > 1 {
 			if arg == "--" {
 				stopFlags = true
 				continue
@@ -341,24 +347,31 @@ func (e *emitter) unsetCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 			if strings.Contains(arg, "f") {
 				isFunc = true
 			}
-			if strings.Contains(arg, "v") {
+			if strings.Contains(arg, "v") || strings.Contains(arg, "n") {
 				isFunc = false
 			}
 			continue
 		}
-		if isFunc {
-			names = append(names, unquoted)
+		name := unquoted
+		if !isFunc {
+			name = e.shiftArrayIndex(unquoted)
+		}
+		if len(chunks) > 0 && chunks[len(chunks)-1].isFunc == isFunc {
+			chunks[len(chunks)-1].names = append(chunks[len(chunks)-1].names, name)
 		} else {
-			names = append(names, e.shiftArrayIndex(unquoted))
+			chunks = append(chunks, unsetChunk{isFunc: isFunc, names: []string{name}})
 		}
 	}
-	if len(names) == 0 {
-		return
-	}
-	if isFunc {
-		e.printf("functions --erase %s%s", strings.Join(names, " "), tail)
-	} else {
-		e.printf("set --erase %s%s", strings.Join(names, " "), tail)
+
+	for _, chunk := range chunks {
+		if len(chunk.names) == 0 {
+			continue
+		}
+		if chunk.isFunc {
+			e.printf("functions --erase %s%s", strings.Join(chunk.names, " "), tail)
+		} else {
+			e.printf("set --erase %s%s", strings.Join(chunk.names, " "), tail)
+		}
 	}
 }
 
@@ -376,15 +389,16 @@ func (e *emitter) shiftArrayIndex(name string) string {
 	idxStart := strings.IndexByte(name, '[')
 	idxEnd := strings.LastIndexByte(name, ']')
 	if idxStart != -1 && idxEnd > idxStart {
-		arrName := name[:idxStart]
+		arrName := e.varName(name[:idxStart])
 		sub := name[idxStart+1 : idxEnd]
 		if n, err := strconv.Atoi(sub); err == nil {
 			if n >= 0 {
 				return fmt.Sprintf("%s[%d]", arrName, n+1)
 			}
 		}
+		return fmt.Sprintf("%s[%s]", arrName, sub)
 	}
-	return name
+	return e.varName(name)
 }
 // `set args...` form assign fish's argv list; option forms and the bare
 // `set` state dump have no fish equivalent and are dropped. Reports
@@ -786,7 +800,17 @@ func (e *emitter) chainLeaf(st *syntax.Stmt) string {
 	c, ok := st.Cmd.(*syntax.CallExpr)
 	if !ok || len(c.Args) != 0 || len(c.Assigns) == 0 {
 		if c != nil && len(c.Args) > 0 && (isLitWord(c.Args[0], "shift") || isLitWord(c.Args[0], "unset")) {
-			return e.inlineStmtText(st)
+			txt := e.inlineStmtText(st)
+			if strings.Contains(txt, "\n") {
+				var parts []string
+				for _, line := range strings.Split(txt, "\n") {
+					if trimmed := strings.TrimSpace(line); trimmed != "" {
+						parts = append(parts, trimmed)
+					}
+				}
+				return "begin; " + strings.Join(parts, "; ") + "; end"
+			}
+			return txt
 		}
 		if c != nil && len(c.Assigns) == 0 && len(c.Args) > 0 {
 			if _, ok := singleBareParam(c.Args[0]); ok {

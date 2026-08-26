@@ -691,6 +691,14 @@ func TestBashFishEquivalence(t *testing.T) {
 			src: "prefix=\"\"\n" +
 				"$prefix echo running without prefix\n",
 		},
+		{
+			name: "unset multiple variables with -v flag",
+			src: "var1=val1\n" +
+				"var2=val2\n" +
+				"echo \"before: v1=${var1:-missing} v2=${var2:-missing}\"\n" +
+				"unset -v var1 var2\n" +
+				"echo \"after: v1=${var1:-missing} v2=${var2:-missing}\"\n",
+		},
 	}
 
 	for _, tc := range tests {
@@ -1448,6 +1456,11 @@ func TestUnsetBuiltin(t *testing.T) {
 		{"unset array element", "unset 'arr[0]'\n", "set --erase arr[1]\n"},
 		{"unset array element unquoted", "unset arr[2]\n", "set --erase arr[3]\n"},
 		{"unset in chain", "test -n \"$x\" && unset x\n", "test -n \"$x\" && set --erase x\n"},
+		{"unset mixed -f and -v", "unset -f f1 f2 -v v1 v2\n", "functions --erase f1 f2\nset --erase v1 v2\n"},
+		{"unset mixed var and func", "unset v1 -f f1\n", "set --erase v1\nfunctions --erase f1\n"},
+		{"unset mixed interleaved", "unset -f f1 -v v1 -f f2\n", "functions --erase f1\nset --erase v1\nfunctions --erase f2\n"},
+		{"unset mixed in chain", "test -n \"$x\" && unset -f f1 -v v1\n", "test -n \"$x\" && begin; functions --erase f1; set --erase v1; end\n"},
+		{"unset PIPESTATUS special var", "unset PIPESTATUS\n", "set --erase pipestatus\n"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

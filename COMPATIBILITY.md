@@ -182,6 +182,7 @@ Fish deliberately does not perform implicit word splitting on unquoted variable 
 | `shift N` | `set --erase argv[1..N]` |
 | `unset x`, `unset -v x y` | `set --erase x`, `set --erase x y` |
 | `unset -f func` | `functions --erase func` |
+| `unset -f f1 -v v1` (mixed flags) | Emits sequentially grouped chunks: `functions --erase f1` then `set --erase v1` (in chains wrapped with `begin ... end`) |
 | `unset 'arr[0]'` | `set --erase arr[1]` (constant indices shifted +1) |
 | `set -e`, `set -u`, `set +x`, `set -o name`, … | dropped; a warning is reported — fish has no shell option flags |
 | `bare set` | dropped; a warning is reported — bash dumps shell state, which has no fish meaning |
