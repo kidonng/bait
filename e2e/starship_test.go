@@ -12,8 +12,6 @@ import (
 func TestStarshipInstall(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	t.Cleanup(cancel)
-	t.Skip("Starship install script relies on POSIX runtime word-splitting (e.g. cmd=\"curl ...\"; $cmd, empty $sudo prefix, and space-separated $SUPPORTED_TARGETS in for loop); bait does not inject unsafe global eval or regex word splitting")
-
 	src, err := downloadScript(ctx, "https://starship.rs/install.sh")
 	if err != nil {
 		t.Fatalf("download failed: %v", err)

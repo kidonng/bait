@@ -19,12 +19,14 @@ const indentUnit = "    "
 // printer verbatim, which preserves tier-0 constructs unchanged.
 // Unsupported statements are emitted verbatim and reported as warnings.
 type emitter struct {
-	buf        bytes.Buffer
-	depth      int
-	printer    *syntax.Printer
-	warnings   []Warning
-	err        error
-	inFunction bool
+	buf            bytes.Buffer
+	depth          int
+	printer        *syntax.Printer
+	warnings       []Warning
+	err            error
+	inFunction     bool
+	needsBaitWords bool
+	needsBaitExec  bool
 }
 
 func newEmitter() *emitter {
@@ -132,12 +134,25 @@ func (e *emitter) condText(cond []*syntax.Stmt) string {
 }
 
 func (e *emitter) file(f *syntax.File) {
+	var body bytes.Buffer
+	origBuf := e.buf
+	e.buf = body
 	for _, stmt := range f.Stmts {
 		e.stmt(stmt)
 	}
 	for _, c := range f.Last {
 		e.comment(c)
 	}
+	bodyBytes := e.buf.Bytes()
+	e.buf = origBuf
+
+	if e.needsBaitWords {
+		e.buf.WriteString(baitWordsHelper)
+	}
+	if e.needsBaitExec {
+		e.buf.WriteString(baitExecHelper)
+	}
+	e.buf.Write(bodyBytes)
 }
 
 func (e *emitter) stmt(s *syntax.Stmt) {
@@ -205,6 +220,14 @@ func (e *emitter) simple(s *syntax.Stmt) {
 		if hasStructuralCmdSubst(s) {
 			e.emitSimpleFish(s, c)
 			return
+		}
+		if len(c.Assigns) == 0 && len(c.Args) > 0 {
+			if _, ok := singleBareParam(c.Args[0]); ok {
+				e.needsBaitExec = true
+				e.needsBaitWords = true
+				e.lines("__bait_exec " + e.render(s))
+				return
+			}
 		}
 	}
 	e.lines(e.render(s))
@@ -319,10 +342,13 @@ func (e *emitter) inlineStmtText(s *syntax.Stmt) string {
 	sub := newEmitter()
 	sub.inFunction = e.inFunction
 	sub.stmt(s)
-	e.warnings = append(e.warnings, sub.warnings...)
-	if sub.err != nil && e.err == nil {
-		e.err = sub.err
+	if sub.needsBaitWords {
+		e.needsBaitWords = true
 	}
+	if sub.needsBaitExec {
+		e.needsBaitExec = true
+	}
+	e.warnings = append(e.warnings, sub.warnings...)
 	text := strings.TrimRight(sub.buf.String(), "\n")
 	pad := strings.Repeat(indentUnit, e.depth)
 	lines := strings.Split(text, "\n")
@@ -600,7 +626,13 @@ func (e *emitter) chainLeaf(st *syntax.Stmt) string {
 		if c != nil && len(c.Args) > 0 && isLitWord(c.Args[0], "shift") {
 			return e.inlineStmtText(st)
 		}
-
+		if c != nil && len(c.Assigns) == 0 && len(c.Args) > 0 {
+			if _, ok := singleBareParam(c.Args[0]); ok {
+				e.needsBaitExec = true
+				e.needsBaitWords = true
+				return "__bait_exec " + e.render(st)
+			}
+		}
 		if hasStructuralCmdSubst(st) {
 			return e.inlineStmtText(st)
 		}
@@ -617,7 +649,7 @@ func (e *emitter) chainLeaf(st *syntax.Stmt) string {
 			return e.render(st)
 		}
 		parts = append(parts, fmt.Sprintf("set %s%s %s",
-			scopePrefix(scope), a.Name.Value, e.assignValue(a)))
+			scopePrefix(scope), e.varName(a.Name.Value), e.assignValue(a)))
 	}
 	if len(parts) == 1 {
 		return parts[0]
@@ -688,6 +720,21 @@ func (e *emitter) forClause(s *syntax.Stmt, f *syntax.ForClause) {
 	}
 	items := make([]string, len(iter.Items))
 	for i, w := range iter.Items {
+		if pe, ok := singleBareParam(w); ok {
+			name := pe.Param.Value
+			if name == "@" || name == "*" || name == "argv" {
+				items[i] = "$argv"
+				continue
+			}
+			if name == "PATH" {
+				items[i] = "$PATH"
+				continue
+			}
+			name = e.varName(name)
+			items[i] = "(__bait_words $" + name + ")"
+			e.needsBaitWords = true
+			continue
+		}
 		items[i] = e.render(w)
 	}
 	if !iter.InPos.IsValid() {
@@ -826,10 +873,14 @@ func (e *emitter) assignStmt(s *syntax.Stmt, c *syntax.CallExpr) {
 		scope = "--global"
 	}
 	for _, a := range c.Assigns {
+		curScope := scope
+		if a.Name != nil && a.Name.Value == "IFS" && e.inFunction {
+			curScope = "--local"
+		}
 		if a.Name != nil {
 			if args, ok := e.selfRefAccumulation(a); ok {
-				e.printf("set %s%s %s", scopePrefix(scope),
-					a.Name.Value, strings.Join(args, " "))
+				e.printf("set %s%s %s", scopePrefix(curScope),
+					e.varName(a.Name.Value), strings.Join(args, " "))
 				continue
 			}
 		}
@@ -845,7 +896,7 @@ func (e *emitter) assignStmt(s *syntax.Stmt, c *syntax.CallExpr) {
 				e.lines(e.render(s))
 				return
 			}
-			e.printf("set %s--append %s%s", scopePrefix(scope), a.Name.Value,
+			e.printf("set %s--append %s%s", scopePrefix(curScope), e.varName(a.Name.Value),
 				e.arrayElemArgs(a.Array))
 
 		case a.Index != nil:
@@ -855,15 +906,15 @@ func (e *emitter) assignStmt(s *syntax.Stmt, c *syntax.CallExpr) {
 				e.lines(e.render(s))
 				return
 			}
-			e.printf("set %s%s[%s] %s", scopePrefix(scope), a.Name.Value, tok,
+			e.printf("set %s%s[%s] %s", scopePrefix(curScope), e.varName(a.Name.Value), tok,
 				e.assignValue(a))
 
 		case a.Array != nil:
-			e.printf("set %s%s%s", scopePrefix(scope), a.Name.Value,
+			e.printf("set %s%s%s", scopePrefix(curScope), e.varName(a.Name.Value),
 				e.arrayElemArgs(a.Array))
 
 		default:
-			e.setLine(scope, a.Name.Value, e.assignValue(a))
+			e.setLine(curScope, e.varName(a.Name.Value), e.assignValue(a))
 		}
 	}
 }
@@ -1050,7 +1101,7 @@ func (e *emitter) declClause(s *syntax.Stmt, d *syntax.DeclClause) {
 			e.printf("%s", e.render(s))
 			return
 		}
-		e.setLine(scope, a.Name.Value, e.assignValue(a))
+		e.setLine(scope, e.varName(a.Name.Value), e.assignValue(a))
 	}
 }
 
@@ -1151,6 +1202,9 @@ func (e *emitter) paramReplacements(pe *syntax.ParamExp) []syntax.WordPart {
 	switch name {
 	case "@", "*":
 		return []syntax.WordPart{argvParam()}
+	case "IFS":
+		e.needsBaitWords = true
+		return []syntax.WordPart{namedParam("BAIT_IFS")}
 	case "?":
 		return []syntax.WordPart{namedParam("status")}
 	case "!":
@@ -1431,7 +1485,7 @@ func setCall(name string, value syntax.WordPart) syntax.Command {
 }
 
 func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, bool) {
-	name := pe.Param.Value
+	name := e.varName(pe.Param.Value)
 	ref := dq(namedParam(name)) // "$name"
 	printVal := func(val *syntax.Word) *syntax.Stmt {
 		return callStmt(litWord("printf"), litWord(`%s\n`), val)
@@ -1683,3 +1737,64 @@ func globToRegex(pat string, lazy bool) (string, bool) {
 func dq(parts ...syntax.WordPart) *syntax.Word {
 	return &syntax.Word{Parts: []syntax.WordPart{&syntax.DblQuoted{Parts: parts}}}
 }
+
+func (e *emitter) varName(name string) string {
+	if name == "IFS" {
+		e.needsBaitWords = true
+		return "BAIT_IFS"
+	}
+	return name
+}
+
+func singleBareParam(w *syntax.Word) (*syntax.ParamExp, bool) {
+	if w == nil || len(w.Parts) != 1 {
+		return nil, false
+	}
+	pe, ok := w.Parts[0].(*syntax.ParamExp)
+	if !ok || !bareParam(pe) || pe.Param == nil {
+		return nil, false
+	}
+	return pe, true
+}
+
+const baitWordsHelper = `function __bait_words
+    if test (count $argv) -eq 0
+        return 0
+    end
+    if set -q BAIT_IFS; and test -z "$BAIT_IFS"
+        for a in $argv
+            echo $a
+        end
+        return 0
+    end
+    if set -q BAIT_IFS; and test -n "$BAIT_IFS"
+        string split -n -- "$BAIT_IFS" $argv
+        return 0
+    end
+    string match -ra '\S+' -- $argv
+end
+
+`
+
+const baitExecHelper = `function __bait_exec
+    while test (count $argv) -gt 0; and test -z "$argv[1]"
+        set --erase argv[1]
+    end
+    if test (count $argv) -eq 0
+        return 0
+    end
+    if type -q -- $argv[1]
+        $argv[1] $argv[2..-1]
+        return $status
+    end
+    set -l words (string match -ra '\S+' -- $argv[1])
+    if test (count $words) -gt 0
+        set -l cmd $words[1]
+        set -l cmd_args $words[2..-1]
+        $cmd $cmd_args $argv[2..-1]
+        return $status
+    end
+    $argv[1] $argv[2..-1]
+end
+
+`

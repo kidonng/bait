@@ -39,7 +39,7 @@ anything bait cannot translate is emitted unchanged plus a warning.
 | `if/then/elif/else/fi` | `if` / `else if` / `else` / `end` |
 | `while cond; do … done` | `while cond … end` |
 | `until cond; do … done` | `while not cond … end` |
-| `for x in …; do … done` | `for x in … … end`; bare `for x` iterates `$argv` |
+| `for x in …; do … done` | `for x in … … end`; bare `for x` iterates `$argv`; unquoted `for x in $var` uses `(__bait_words $var)` to match POSIX field splitting |
 | `case x in p) …;; esac` | `switch x` / `case 'p'` / `end` |
 | `f() { … }`, `function f { … }` | `function f … end` |
 | `{ … }` groups, `( … )` subshells 🟡 | `begin … end` |
@@ -114,6 +114,16 @@ parentheses, and the corresponding compound assignments.
 | bash | fish | Why |
 |---|---|---|
 | `read -r line` | `read line` | fish's `read` has no `-r`; it would treat `-r` as a variable name and silently corrupt input |
+
+### Word splitting, IFS, and dynamic command dispatch
+
+Fish deliberately does not perform implicit word splitting on unquoted variable expansions (`$var`). When bait encounters constructs that rely on POSIX field splitting or dynamic command strings, it injects self-contained runtime helper functions (`__bait_words`, `__bait_exec`) at the top of the translated file on demand (plain scripts without dynamic constructs have zero runtime footprint):
+
+| bash | fish | Notes |
+|---|---|---|
+| `IFS=":"`, `IFS=" "` | `set BAIT_IFS ':'`, `set BAIT_IFS ' '` (local inside functions) | Modifying `IFS` maps onto `BAIT_IFS` |
+| `for x in $var; do … done` (unquoted) | `for x in (__bait_words $var) … end` | Splits on whitespace or `$BAIT_IFS` matching POSIX field splitting |
+| `$cmd` (dynamic command string), `$sudo tar …` | `__bait_exec $cmd`, `__bait_exec $sudo tar …` | Evaporates empty leading prefixes (`sudo=""`) and parses command flags while strictly preserving argument boundaries |
 
 ### The `set` builtin
 

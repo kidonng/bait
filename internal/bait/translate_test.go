@@ -571,6 +571,31 @@ func TestBashFishEquivalence(t *testing.T) {
 				"echo \"$1|$2\"\n" +
 				"echo \"count:$#\"\n",
 		},
+		{
+			name: "for over space-separated variable",
+			src: "TARGETS=\"target1 target2 target3\"\n" +
+				"for t in $TARGETS; do\n" +
+				"\techo \"got:$t\"\n" +
+				"done\n",
+		},
+		{
+			name: "custom ifs splitting",
+			src: "IFS=':'\n" +
+				"PATHS=\"/usr/bin:/bin:/opt/bin\"\n" +
+				"for p in $PATHS; do\n" +
+				"\techo \"path:$p\"\n" +
+				"done\n",
+		},
+		{
+			name: "dynamic command execution",
+			src: "cmd=\"printf [%s]\\n hello world\"\n" +
+				"$cmd\n",
+		},
+		{
+			name: "empty command prefix",
+			src: "prefix=\"\"\n" +
+				"$prefix echo running without prefix\n",
+		},
 	}
 
 	for _, tc := range tests {
