@@ -699,6 +699,8 @@ func (e *emitter) caseClause(s *syntax.Stmt, cl *syntax.CaseClause) {
 
 func (e *emitter) renderCasePattern(p *syntax.Word) string {
 	s := e.render(p)
+	// If bash escaped ~ before a path pattern (e.g. \~/*), mvdan prints
+	// `'~'/*` or `\~/*`. Normalize to a single safe quoted pattern.
 	if strings.Contains(s, `'~'/`) {
 		s = strings.ReplaceAll(s, `'~'/*`, `'~/*'`)
 		s = strings.ReplaceAll(s, `'~'/`, `'~/'`)
@@ -710,6 +712,17 @@ func (e *emitter) renderCasePattern(p *syntax.Word) string {
 		s = `'~'`
 	} else if strings.HasPrefix(s, `\~/`) {
 		s = `'~` + s[2:] + `'`
+	}
+
+	// In fish, `case` is a builtin command where unquoted arguments undergo
+	// filesystem glob expansion in the current working directory before `case`
+	// receives them. Quote any unquoted pattern containing wildcard characters
+	// (*, ?, ~) so fish passes the pattern string directly to case without
+	// filesystem expansion.
+	if !strings.HasPrefix(s, "'") && !strings.HasPrefix(s, `"`) {
+		if strings.ContainsAny(s, "*?~") {
+			s = "'" + strings.ReplaceAll(s, "'", `\'`) + "'"
+		}
 	}
 	return s
 }

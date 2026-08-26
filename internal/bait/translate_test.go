@@ -169,7 +169,7 @@ func TestTier1(t *testing.T) {
 				"    echo tux\n" +
 				"case Darwin '*BSD'\n" +
 				"    echo bsd\n" +
-				"case *\n" +
+				"case '*'\n" +
 				"    echo other\n" +
 				"end\n",
 		},
@@ -465,6 +465,19 @@ func TestBashFishEquivalence(t *testing.T) {
 				"\t\t;;\n" +
 				"\tDarwin)\n" +
 				"\t\techo apple\n" +
+				"\t\t;;\n" +
+				"esac\n",
+		},
+		{
+			name:  "switch wildcard with files present",
+			files: map[string]string{"foo.txt": "", "bar.txt": "", "other.dat": ""},
+			src: "target=something_else\n" +
+				"case \"$target\" in\n" +
+				"\t*.txt)\n" +
+				"\t\techo txt\n" +
+				"\t\t;;\n" +
+				"\t*)\n" +
+				"\t\techo wildcard_matched\n" +
 				"\t\t;;\n" +
 				"esac\n",
 		},
