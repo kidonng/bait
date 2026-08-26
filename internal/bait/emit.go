@@ -212,8 +212,7 @@ func (e *emitter) stmt(s *syntax.Stmt) {
 	case *syntax.Block:
 		e.group(s, cmd.Stmts, cmd.Last)
 	case *syntax.Subshell:
-		e.warn(cmd.Lparen, "subshell isolation is lost: (...) translated to a begin block")
-		e.group(s, cmd.Stmts, cmd.Last)
+		e.subshell(s, cmd)
 	default:
 		e.warn(s.Position, "%s has no fish equivalent; emitted verbatim", describe(cmd))
 		e.lines(e.render(s))
@@ -719,6 +718,10 @@ func chainNeedsRewrite(b *syntax.BinaryCmd) bool {
 	syntax.Walk(b, func(n syntax.Node) bool {
 		c, ok := n.(*syntax.CallExpr)
 		if !ok {
+			if _, isSub := n.(*syntax.Subshell); isSub {
+				found = true
+				return false
+			}
 			return true
 		}
 		if len(c.Args) == 0 && len(c.Assigns) > 0 {
@@ -818,6 +821,9 @@ func (e *emitter) chainLeaf(st *syntax.Stmt) string {
 				e.needsBaitWords = true
 				return "__bait_exec " + e.render(st)
 			}
+		}
+		if _, isSub := st.Cmd.(*syntax.Subshell); isSub {
+			return e.inlineStmtText(st)
 		}
 		if hasStructuralCmdSubst(st) {
 			return e.inlineStmtText(st)
@@ -1198,6 +1204,79 @@ func (e *emitter) group(s *syntax.Stmt, stmts []*syntax.Stmt, last []syntax.Comm
 	e.printf("begin")
 	e.body(stmts, last)
 	e.printf("end%s", tail)
+}
+func quoteFishSingle(s string) string {
+	var b strings.Builder
+	b.WriteByte('\'')
+	for i := range s {
+		c := s[i]
+		switch c {
+		case '\\':
+			b.WriteString(`\\`)
+		case '\'':
+			b.WriteString(`\'`)
+		default:
+			b.WriteByte(c)
+		}
+	}
+	b.WriteByte('\'')
+	return b.String()
+}
+
+func (e *emitter) subshell(s *syntax.Stmt, sub *syntax.Subshell) {
+	tail := e.tails(s)
+	e.wrapperComments(s)
+
+	prefix := ""
+	if s.Negated {
+		prefix = "! "
+	}
+
+	if len(sub.Stmts) == 0 {
+		e.printf("%sfish -c ''%s", prefix, tail)
+		return
+	}
+
+	var pieces []string
+	allSingleLine := len(sub.Last) == 0
+	subEmitter := newEmitter()
+	subEmitter.inFunction = e.inFunction
+
+	for _, st := range sub.Stmts {
+		itemEmitter := newEmitter()
+		itemEmitter.inFunction = e.inFunction
+		itemEmitter.stmt(st)
+		if itemEmitter.needsBaitWords {
+			e.needsBaitWords = true
+		}
+		if itemEmitter.needsBaitExec {
+			e.needsBaitExec = true
+		}
+		e.warnings = append(e.warnings, itemEmitter.warnings...)
+
+		text := strings.TrimRight(itemEmitter.buf.String(), "\n")
+		if strings.Contains(text, "\n") || len(st.Comments) > 0 {
+			allSingleLine = false
+		}
+		pieces = append(pieces, text)
+	}
+
+	for _, c := range sub.Last {
+		allSingleLine = false
+		subEmitter.comment(c)
+	}
+
+	var rawFish string
+	if allSingleLine {
+		rawFish = strings.Join(pieces, "; ")
+	} else {
+		rawFish = strings.Join(pieces, "\n")
+		if len(sub.Last) > 0 {
+			rawFish += "\n" + strings.TrimRight(subEmitter.buf.String(), "\n")
+		}
+	}
+
+	e.printf("%sfish -c %s%s", prefix, quoteFishSingle(rawFish), tail)
 }
 
 func describe(cmd syntax.Command) string {

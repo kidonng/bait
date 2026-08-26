@@ -45,9 +45,10 @@ anything bait cannot translate is emitted unchanged plus a warning.
 | `for x in …; do … done` | `for x in … … end`; bare `for x` iterates `$argv`; unquoted `for x in $var` uses `(__bait_words $var)` to match POSIX field splitting |
 | `case x in p) …;; esac` | `switch x` / `case 'p'` / `end` |
 | `f() { … }`, `function f { … }` | `function f … end` |
-| `{ … }` groups, `( … )` subshells 🟡 | `begin … end` |
-| structural command substitutions `$(if …)`, `$( (…); )` | emitted through the translator; nested structure becomes valid fish |
-| combiners over compounds `cmd \| (subshell)` | structural sides become translated blocks (`cmd \| begin … end`) |
+| `{ … }` groups | `begin … end` |
+| `( … )` subshells | `fish -c '...'` (true process isolation for directory, variable mutations, umask, and traps) |
+| structural command substitutions `$(if …)`, `$( (…); )` | emitted through the translator; subshells become `$(fish -c '...')` |
+| combiners over compounds `cmd \| (subshell)` | `cmd \| fish -c '...'`, `fish -c '...' && cmd` |
 | `[[ ... ]]` conditional test expressions | Translated to `test`, `string match`, and `set -q` combinations |
 
 ### Conditional tests (`[[ ... ]]`, `[ ... ]`)
@@ -207,10 +208,12 @@ natively:
 
 ## Translated with documented differences
 
-- **Subshells** `( … )` become `begin … end` (both at statement level
-  and nested inside command substitutions or pipelines). Fish has no
-  subshell; variable and `cd` state persists after the block. Every
-  occurrence is reported as a warning.
+- **Subshells** `( … )` become `fish -c '...'` (at statement level, nested
+  inside command substitutions, in pipeline stages, and in combiner chains).
+  This provides true process-level isolation: working directory changes
+  (`cd /tmp`), variable mutations, umask, and trap changes inside the
+  subshell do not leak to the parent shell. Child processes inherit exported
+  environment variables. Zero warnings are reported since isolation is preserved.
 - **Function-body assignments** become `set --global` so that values
   survive the call exactly as they do in bash. Note that arithmetic
   statements (`((i += 1))`) deliberately emit plain `set` instead, which
