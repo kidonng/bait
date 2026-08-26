@@ -592,6 +592,22 @@ func TestBashFishEquivalence(t *testing.T) {
 				"$cmd\n",
 		},
 		{
+			name: "herestring",
+			src:  "cat <<< \"hello from herestring\"\n",
+		},
+		{
+			name: "herestring with variable expansion",
+			src: "MSG=\"world\"\n" +
+				"cat <<< \"hello $MSG\"\n",
+		},
+		{
+			name: "heredoc with variable",
+			src: "VAL=\"123\"\n" +
+				"cat <<EOF\n" +
+				"val is $VAL\n" +
+				"EOF\n",
+		},
+		{
 			name: "empty command prefix",
 			src: "prefix=\"\"\n" +
 				"$prefix echo running without prefix\n",
@@ -1248,6 +1264,50 @@ func TestCmdSubstFish(t *testing.T) {
 			if len(warnings) != tc.wantWarnings {
 				t.Errorf("warning count mismatch: got %d, want %d (%v)",
 					len(warnings), tc.wantWarnings, warnings)
+			}
+			if string(got) != tc.want {
+				t.Errorf("mismatch\n in: %q\n got: %q\n want: %q",
+					tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestHeredocAndHerestring(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			"simple herestring",
+			"cat <<< \"hello\"\n",
+			"printf '%s\\n' \"hello\" | cat\n",
+		},
+		{
+			"herestring with variable",
+			"cat <<< \"$FOO\"\n",
+			"printf '%s\\n' \"$FOO\" | cat\n",
+		},
+		{
+			"herestring unquoted",
+			"cat <<< hello\n",
+			"printf '%s\\n' hello | cat\n",
+		},
+		{
+			"quoted heredoc",
+			"cat <<'EOF'\nline 1 $NOEXPAND\nEOF\n",
+			"printf '%s\\n' 'line 1 $NOEXPAND' | cat\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, warnings, err := Translate([]byte(tc.in))
+			if err != nil {
+				t.Fatalf("Translate(%q) error: %v", tc.in, err)
+			}
+			if len(warnings) > 0 {
+				t.Errorf("unexpected warnings: %v", warnings)
 			}
 			if string(got) != tc.want {
 				t.Errorf("mismatch\n in: %q\n got: %q\n want: %q",

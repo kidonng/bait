@@ -25,6 +25,7 @@ anything bait cannot translate is emitted unchanged plus a warning.
 | Pipes `\|`, `\|&`, `2>\|` | |
 | Redirections `< > >> 2> 2>> &> &>> N< N> 2>&1 >&2` | Normalized to spaced form (`> out.txt`) |
 | Here-documents `<< EOF`, `<<- EOF` | Translated to `printf '%s\n' '...' \| cmd` (with variable expansions preserved where active) |
+| Here-strings `<<< WORD` | Translated to `printf '%s\n' WORD \| cmd` |
 | Combiners `&&` `\|\|` `!` | Native fish syntax |
 | Command substitution `$(...)` | Also `(...)` output from bait itself uses `$()` |
 | Per-command environment `VAR=val cmd` | Supported natively since fish 3.1 |

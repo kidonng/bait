@@ -1864,7 +1864,7 @@ func extractHdoc(redirs []*syntax.Redirect) (*syntax.Redirect, []*syntax.Redirec
 	var hdoc *syntax.Redirect
 	var rest []*syntax.Redirect
 	for _, r := range redirs {
-		if r.Op == syntax.Hdoc || r.Op == syntax.DashHdoc {
+		if r.Op == syntax.Hdoc || r.Op == syntax.DashHdoc || r.Op == syntax.WordHdoc {
 			hdoc = r
 		} else {
 			rest = append(rest, r)
@@ -1879,11 +1879,16 @@ func (e *emitter) emitHdoc(s *syntax.Stmt, hdoc *syntax.Redirect, rest []*syntax
 	cmdText := e.render(s)
 	s.Redirs = origRedirs
 
+	if hdoc.Op == syntax.WordHdoc {
+		wordText := e.render(hdoc.Word)
+		e.printf("printf '%%s\\n' %s | %s", wordText, cmdText)
+		return
+	}
+
 	body := ""
 	if hdoc.Hdoc != nil {
 		body = e.render(hdoc.Hdoc)
 	}
-
 	if isQuotedHdocWord(hdoc.Word) {
 		escaped := strings.ReplaceAll(body, "'", `\'`)
 		e.printf("printf '%%s\\n' '%s' | %s", escaped, cmdText)
