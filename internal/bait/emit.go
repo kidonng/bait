@@ -211,17 +211,17 @@ func (e *emitter) simple(s *syntax.Stmt) {
 // with a warning: silent passthrough would only fail at runtime.
 var bashOnlyBuiltins = map[string]string{
 	"hash":    "use 'command -v' or 'type -q' instead",
-	"trap":    "use function --on-event handlers instead",
 	"unset":   "use 'set --erase NAME' instead",
-	"shift":   "reassign $argv instead",
+	"shift":   "reassign $argv instead (e.g. 'set --erase argv[1]')",
 	"let":     "use 'math' instead",
 	"getopts": "use 'argparse' inside functions instead",
-	"pushd":   "fish has no directory stack",
-	"popd":    "fish has no directory stack",
-	"dirs":    "fish has no directory stack",
 	"shopt":   "fish has no shell options",
-	"ulimit":  "fish has no ulimit builtin",
-	"unalias": "fish aliases are functions; remove the function instead",
+	"unalias": "fish aliases are functions; use 'functions --erase' instead",
+	"caller":  "use 'status stack-trace' instead",
+	"compgen": "use 'complete' instead",
+	"compopt": "use 'complete' instead",
+	"enable":  "fish does not support enabling/disabling builtins",
+	"fc":      "use 'history' instead",
 }
 
 func (e *emitter) warnBashOnlyBuiltin(s *syntax.Stmt, c *syntax.CallExpr) {
@@ -739,6 +739,12 @@ func describe(cmd syntax.Command) string {
 		return c.Variant.Value + " declaration"
 	case *syntax.TestClause:
 		return "[[ ]] test clause"
+	case *syntax.LetClause:
+		return "let statement"
+	case *syntax.TimeClause:
+		return "time clause"
+	case *syntax.CoprocClause:
+		return "coproc clause"
 	default:
 		return fmt.Sprintf("%T", cmd)
 	}

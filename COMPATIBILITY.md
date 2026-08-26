@@ -127,6 +127,22 @@ parentheses, and the corresponding compound assignments.
 Values are emitted as written, so quoting and command substitutions are
 preserved (`set -- "$(cmd)"` stays `set argv "$(cmd)"`).
 
+### POSIX utilities and builtins supported by fish
+
+Fish provides either built-in commands or shipped functions for several
+common bash/POSIX utilities, which pass through verbatim and work
+natively:
+
+| Command | Mechanism in fish | Notes |
+|---|---|---|
+| `export VAR=val` | Shipped function (`functions/export.fish`) | Supports `export VAR=val` and bare `export` |
+| `alias name='cmd'` | Shipped function (`functions/alias.fish`) | Defines a wrapper function |
+| `pushd`, `popd`, `dirs` | Shipped functions (`functions/pushd.fish`, etc.) | Full directory stack support with `+N` / `-N` |
+| `trap 'cmd' SIG...` / `EXIT` | Shipped function (`functions/trap.fish`) | Maps signal handlers and exit handlers |
+| `umask` | Shipped function (`functions/umask.fish`) | Supports octal and `-S` symbolic modes |
+| `ulimit` | Builtin (`builtin --names`) | Full resource limit manipulation |
+| `eval`, `exec`, `type`, `time`, `wait`, `disown`, `jobs`, `bg`, `fg` | Builtins | Native fish builtins |
+
 ## Translated with documented differences
 
 - **Subshells** `( … )` become `begin … end` (both at statement level
@@ -166,10 +182,11 @@ preserved (`set -- "$(cmd)"` stays `set argv "$(cmd)"`).
 - `export` flags such as `export -n` (not supported by fish's wrapper)
 - Case-modification operators `${v^}` `${v^^}` `${v,}` `${v,,}`
 - `$@` / `$*` embedded inside larger words
-- bash-only builtins with no fish equivalent: `hash`, `trap`, `unset`,
-  `shift`, `let`, `getopts`, `pushd`, `popd`, `dirs`, `shopt`, `ulimit`,
-  `unalias` — emitted verbatim with a hint (silent passthrough would
-  only fail at runtime)
+- bash-only builtins with no fish equivalent: `hash`, `unset`,
+  `shift`, `let`, `getopts`, `shopt`, `unalias`, `caller`, `compgen`,
+  `compopt`, `enable`, `fc` — emitted verbatim with a hint (fish ships
+  POSIX functions/builtins for `export`, `alias`, `pushd`, `popd`,
+  `dirs`, `trap`, `umask`, and `ulimit`)
 - `coproc`, mksh/zsh-only constructs
 
 ## Not supported

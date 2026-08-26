@@ -320,9 +320,19 @@ func TestWarnings(t *testing.T) {
 			"set flags",
 		},
 		{
-			"trap passthrough",
-			"trap cleanup EXIT\n",
+			"unset passthrough",
+			"unset myvar\n",
 			"bash builtin",
+		},
+		{
+			"shift passthrough",
+			"shift 2\n",
+			"bash builtin",
+		},
+		{
+			"let passthrough",
+			"let a=1+2\n",
+			"let statement",
 		},
 		{
 			"hash passthrough",
@@ -338,16 +348,6 @@ func TestWarnings(t *testing.T) {
 			"subshell inside command substitution",
 			"x=$( (cd /tmp && pwd); )\n",
 			"subshell isolation",
-		},
-		{
-			"trap passthrough",
-			"trap cleanup EXIT\n",
-			"bash builtin",
-		},
-		{
-			"set flags dropped",
-			"set -e\n",
-			"set flags",
 		},
 		{
 			"bare set dropped",
