@@ -43,6 +43,8 @@ anything bait cannot translate is emitted unchanged plus a warning.
 | `case x in p) …;; esac` | `switch x` / `case p` / `end` |
 | `f() { … }`, `function f { … }` | `function f … end` |
 | `{ … }` groups, `( … )` subshells 🟡 | `begin … end` |
+| structural command substitutions `$(if …)`, `$( (…); )` | emitted through the translator; nested structure becomes valid fish |
+| combiners over compounds `cmd \| (subshell)` | structural sides become translated blocks (`cmd \| begin … end`) |
 
 ### Shebang
 
@@ -127,9 +129,10 @@ preserved (`set -- "$(cmd)"` stays `set argv "$(cmd)"`).
 
 ## Translated with documented differences
 
-- **Subshells** `( … )` become `begin … end`. Fish has no subshell;
-  variable and `cd` state persists after the block. Every occurrence is
-  reported as a warning.
+- **Subshells** `( … )` become `begin … end` (both at statement level
+  and nested inside command substitutions or pipelines). Fish has no
+  subshell; variable and `cd` state persists after the block. Every
+  occurrence is reported as a warning.
 - **Function-body assignments** become `set --global` so that values
   survive the call exactly as they do in bash. Note that arithmetic
   statements (`((i += 1))`) deliberately emit plain `set` instead, which
@@ -167,9 +170,6 @@ preserved (`set -- "$(cmd)"` stays `set argv "$(cmd)"`).
   `shift`, `let`, `getopts`, `pushd`, `popd`, `dirs`, `shopt`, `ulimit`,
   `unalias` — emitted verbatim with a hint (silent passthrough would
   only fail at runtime)
-- Subshells `( … )` nested inside command substitutions — their body
-  never passes through the statement emitter, and fish parses `( … )`
-  as command substitution, so the verbatim parens would misparse
 - `coproc`, mksh/zsh-only constructs
 
 ## Not supported

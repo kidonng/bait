@@ -337,7 +337,7 @@ func TestWarnings(t *testing.T) {
 		{
 			"subshell inside command substitution",
 			"x=$( (cd /tmp && pwd); )\n",
-			"subshell inside a command substitution",
+			"subshell isolation",
 		},
 		{
 			"trap passthrough",
@@ -487,6 +487,11 @@ func TestBashFishEquivalence(t *testing.T) {
 			src: "FLAGS=\"--silent\"\n" +
 				"FLAGS=\"$FLAGS --netrc-file $NETRC\"\n" +
 				"printf '%s\\n' $FLAGS\n",
+		},
+		{
+			name: "if inside command substitution",
+			src: "V=$(if [ 1 -eq 1 ]; then echo match; else echo mismatch; fi)\n" +
+				"echo \"got:$V\"\n",
 		},
 		{
 			name: "positional parameters",
@@ -1104,6 +1109,59 @@ func TestChainAssignments(t *testing.T) {
 			}
 			if len(warnings) != 0 {
 				t.Errorf("unexpected warnings: %v", warnings)
+			}
+			if string(got) != tc.want {
+				t.Errorf("mismatch\n in: %q\n got: %q\n want: %q",
+					tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestCmdSubstFish pins command substitutions whose bodies contain
+// structural constructs (if, subshells, combiners over compounds):
+// their inner statements are translated into valid fish.
+func TestCmdSubstFish(t *testing.T) {
+	tests := []struct {
+		name         string
+		in           string
+		want         string
+		wantWarnings int
+	}{
+		{
+			"simple command substitution unchanged",
+			"x=$(pwd)\n",
+			"set x $(pwd)\n",
+			0,
+		},
+		{
+			"subshell inside substitution becomes begin block",
+			"x=$( (echo hi); )\n",
+			"set x $(begin\n    echo hi\nend)\n",
+			1,
+		},
+		{
+			"if inside substitution",
+			"x=$(if true; then echo yes; fi)\n",
+			"set x $(if true\n    echo yes\nend)\n",
+			0,
+		},
+		{
+			"pipe into subshell in condition position",
+			"if [ \"$(echo a | (cat))\" = a ]; then echo match; fi\n",
+			"if [ \"$(echo a | begin\n    cat\nend)\" = a ]\n    echo match\nend\n",
+			1,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, warnings, err := Translate([]byte(tc.in))
+			if err != nil {
+				t.Fatalf("Translate(%q) error: %v", tc.in, err)
+			}
+			if len(warnings) != tc.wantWarnings {
+				t.Errorf("warning count mismatch: got %d, want %d (%v)",
+					len(warnings), tc.wantWarnings, warnings)
 			}
 			if string(got) != tc.want {
 				t.Errorf("mismatch\n in: %q\n got: %q\n want: %q",

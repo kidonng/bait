@@ -46,7 +46,6 @@ func Translate(src []byte) ([]byte, []Warning, error) {
 	}
 	em := newEmitter()
 	em.normalize(file)
-	em.warnCmdSubstSubshells(file)
 	em.file(file)
 	if em.err != nil {
 		return nil, nil, fmt.Errorf("print fish: %w", em.err)

@@ -118,6 +118,9 @@ func (e *emitter) condText(cond []*syntax.Stmt) string {
 	if len(cond) == 1 {
 		if c, ok := cond[0].Cmd.(*syntax.CallExpr); ok {
 			e.warnBashOnlyBuiltin(cond[0], c)
+			if hasStructuralCmdSubst(cond[0]) {
+				return e.inlineStmtText(cond[0])
+			}
 		}
 		return e.render(cond[0])
 	}
@@ -195,6 +198,10 @@ func (e *emitter) simple(s *syntax.Stmt) {
 				return
 			}
 		}
+		if hasStructuralCmdSubst(s) {
+			e.emitSimpleFish(s, c)
+			return
+		}
 	}
 	e.lines(e.render(s))
 }
@@ -268,6 +275,166 @@ func (e *emitter) setCmd(s *syntax.Stmt, c *syntax.CallExpr) bool {
 	return false
 }
 
+// emitSimpleFish renders a simple command whose arguments or env-prefix
+// assignments contain structural command substitutions.
+func (e *emitter) emitSimpleFish(s *syntax.Stmt, c *syntax.CallExpr) {
+	var parts []string
+	if s.Negated {
+		parts = append(parts, "!")
+	}
+	for _, a := range c.Assigns {
+		parts = append(parts, a.Name.Value+"="+e.assignValue(a))
+	}
+	for _, w := range c.Args {
+		parts = append(parts, e.renderWordSmart(w))
+	}
+	line := strings.Join(parts, " ") + e.tails(s)
+	e.lines(line)
+}
+
+// inlineStmtText renders one statement through the translator into a
+// text chunk for embedding into a surrounding line.
+func (e *emitter) inlineStmtText(s *syntax.Stmt) string {
+	sub := newEmitter()
+	sub.inFunction = e.inFunction
+	sub.stmt(s)
+	e.warnings = append(e.warnings, sub.warnings...)
+	if sub.err != nil && e.err == nil {
+		e.err = sub.err
+	}
+	text := strings.TrimRight(sub.buf.String(), "\n")
+	pad := strings.Repeat(indentUnit, e.depth)
+	lines := strings.Split(text, "\n")
+	for i := 1; i < len(lines); i++ {
+		lines[i] = pad + lines[i]
+	}
+	return strings.Join(lines, "\n")
+}
+
+// hasStructuralCmdSubst reports whether any command substitution inside
+// n contains structural statements (if/for/subshell/...).
+func hasStructuralCmdSubst(n syntax.Node) bool {
+	if n == nil {
+		return false
+	}
+	found := false
+	syntax.Walk(n, func(inner syntax.Node) bool {
+		cs, ok := inner.(*syntax.CmdSubst)
+		if !ok {
+			return true
+		}
+		for _, st := range cs.Stmts {
+			if hasStructural(st) {
+				found = true
+				return false
+			}
+		}
+		return true
+	})
+	return found
+}
+
+// renderWordSmart renders a word as fish text. Words whose command
+// substitutions contain structural statements are emitted through the
+// translator; everything else keeps the printer's verbatim output.
+func (e *emitter) renderWordSmart(w *syntax.Word) string {
+	if w == nil {
+		return ""
+	}
+	if !hasStructuralCmdSubst(w) {
+		return e.render(w)
+	}
+	if out, ok := e.renderWordFish(w); ok {
+		return out
+	}
+	return e.render(w)
+}
+
+// renderWordFish renders word parts manually so that command
+// substitutions can carry translated fish bodies. ok is false for part
+// combinations without a fish rendering; callers fall back to the
+// printer.
+func (e *emitter) renderWordFish(w *syntax.Word) (string, bool) {
+	var b strings.Builder
+	for _, p := range w.Parts {
+		switch p := p.(type) {
+		case *syntax.Lit:
+			b.WriteString(p.Value)
+		case *syntax.SglQuoted:
+			if p.Dollar {
+				return "", false
+			}
+			b.WriteString("'" + p.Value + "'")
+		case *syntax.DblQuoted:
+			if p.Dollar {
+				return "", false
+			}
+			b.WriteString("\"")
+			for _, ip := range p.Parts {
+				switch ip := ip.(type) {
+				case *syntax.Lit:
+					b.WriteString(ip.Value)
+				case *syntax.CmdSubst:
+					s, ok := e.cmdSubstText(ip)
+					if !ok {
+						return "", false
+					}
+					b.WriteString(s)
+				case *syntax.ParamExp:
+					b.WriteString(e.render(ip))
+				default:
+					return "", false
+				}
+			}
+			b.WriteString("\"")
+		case *syntax.CmdSubst:
+			s, ok := e.cmdSubstText(p)
+			if !ok {
+				return "", false
+			}
+			b.WriteString(s)
+		case *syntax.ParamExp:
+			b.WriteString(e.render(p))
+		default:
+			return "", false
+		}
+	}
+	return b.String(), true
+}
+
+// cmdSubstText renders a command substitution as $( ... ) with the body
+// emitted through the statement translator.
+func (e *emitter) cmdSubstText(cs *syntax.CmdSubst) (string, bool) {
+	if cs.Backquotes {
+		return "", false
+	}
+	sub := newEmitter()
+	sub.inFunction = e.inFunction
+	for _, st := range cs.Stmts {
+		sub.stmt(st)
+	}
+	for _, c := range cs.Last {
+		sub.comment(c)
+	}
+	e.warnings = append(e.warnings, sub.warnings...)
+	if sub.err != nil {
+		if e.err == nil {
+			e.err = sub.err
+		}
+		return "", false
+	}
+	text := strings.TrimRight(sub.buf.String(), "\n")
+	if text == "" {
+		return "", true
+	}
+	pad := strings.Repeat(indentUnit, e.depth)
+	lines := strings.Split(text, "\n")
+	for i := 1; i < len(lines); i++ {
+		lines[i] = pad + lines[i]
+	}
+	return "$(" + strings.Join(lines, "\n") + ")", true
+}
+
 // stripReadRawFlags removes bash's read -r flag. fish's read builtin has
 // no -r option: it never processes backslashes on input, so bash's raw
 // mode is already the default, and an unrecognized "-r" would be taken
@@ -319,8 +486,8 @@ func (e *emitter) binary(s *syntax.Stmt) {
 		return
 	}
 	if hasStructural(bcmd.X) || hasStructural(bcmd.Y) {
-		e.warn(bcmd.OpPos, "combiner over a compound statement is not translated; emitted verbatim")
-		e.printf("%s", e.render(s))
+		e.printf("%s %s %s%s", e.chainSideText(bcmd.X), binOpText(bcmd.Op),
+			e.chainSideText(bcmd.Y), e.tails(s))
 		return
 	}
 	if chainHasAssignment(bcmd) {
@@ -390,11 +557,24 @@ func binOpText(op syntax.BinCmdOperator) string {
 	return ";"
 }
 
+// chainSideText renders one side of a combiner/pipe: structural sides
+// become translated fish blocks (multi-line), plain sides render as
+// chain leaves.
+func (e *emitter) chainSideText(st *syntax.Stmt) string {
+	if !hasStructural(st) {
+		return e.chainLeaf(st)
+	}
+	return e.inlineStmtText(st)
+}
+
 // chainLeaf renders one leaf of a combiner chain: pure assignments
 // become set commands, everything else renders verbatim.
 func (e *emitter) chainLeaf(st *syntax.Stmt) string {
 	c, ok := st.Cmd.(*syntax.CallExpr)
 	if !ok || len(c.Args) != 0 || len(c.Assigns) == 0 {
+		if hasStructuralCmdSubst(st) {
+			return e.inlineStmtText(st)
+		}
 		return e.render(st)
 	}
 	scope := ""
@@ -420,9 +600,11 @@ func hasStructural(s *syntax.Stmt) bool {
 	if s == nil {
 		return false
 	}
-	switch s.Cmd.(type) {
-	case *syntax.CallExpr, *syntax.BinaryCmd:
+	switch cmd := s.Cmd.(type) {
+	case *syntax.CallExpr:
 		return false
+	case *syntax.BinaryCmd:
+		return hasStructural(cmd.X) || hasStructural(cmd.Y)
 	default:
 		return true
 	}
@@ -754,7 +936,7 @@ func (e *emitter) assignValue(a *syntax.Assign) string {
 	if a.Value == nil {
 		return `""`
 	}
-	if r := e.render(a.Value); r != "" {
+	if r := e.renderWordSmart(a.Value); r != "" {
 		return r
 	}
 	return `""`
@@ -1099,26 +1281,6 @@ func (e *emitter) arithCommand(ac *syntax.ArithmCmd) syntax.Command {
 		}
 	}
 	return nil
-}
-
-// warnCmdSubstSubshells flags bash subshells nested inside command
-// substitutions. Their contents never pass through the statement
-// emitter (words print verbatim), and fish parses (...) as command
-// substitution, so the raw parens change meaning or fail to parse.
-func (e *emitter) warnCmdSubstSubshells(f *syntax.File) {
-	syntax.Walk(f, func(n syntax.Node) bool {
-		cs, ok := n.(*syntax.CmdSubst)
-		if !ok {
-			return true
-		}
-		syntax.Walk(cs, func(inner syntax.Node) bool {
-			if p, ok := inner.(*syntax.Subshell); ok {
-				e.warn(p.Lparen, "subshell inside a command substitution is emitted verbatim; fish would misparse it")
-			}
-			return true
-		})
-		return true
-	})
 }
 
 // arithmText renders an arithmetic expression as fish math payload text,
