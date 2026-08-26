@@ -775,6 +775,12 @@ func TestBashFishEquivalence(t *testing.T) {
 			name: "test clause dollar dash interactive check in script",
 			src: "[[ $- != *i* ]] && echo non-interactive\n",
 		},
+		{
+			name: "getopts parsing arguments",
+			src: "while getopts :hqy opt -y -q; do\n" +
+				"\techo \"opt:$opt\"\n" +
+				"done\n",
+		},
 	}
 
 	for _, tc := range tests {
@@ -1176,27 +1182,27 @@ func TestTier2Ops(t *testing.T) {
 		{
 			"shortest suffix strip",
 			"echo ${f%.txt}\n",
-			"echo $(string replace --regex '\\.txt$' '' -- $f)\n",
+			"echo $(string replace --regex -- '\\.txt$' '' $f)\n",
 		},
 		{
 			"greedy suffix strip",
 			"echo ${f%%.*}\n",
-			"echo $(string replace --regex '\\..*$' '' -- $f)\n",
+			"echo $(string replace --regex -- '\\..*$' '' $f)\n",
 		},
 		{
 			"greedy prefix strip",
 			"echo ${p##*/}\n",
-			"echo $(string replace --regex '^.*/' '' -- $p)\n",
+			"echo $(string replace --regex -- '^.*/' '' $p)\n",
 		},
 		{
 			"replace first",
 			"echo ${s/o/0}\n",
-			"echo $(string replace --regex 'o' '0' -- $s)\n",
+			"echo $(string replace --regex -- 'o' '0' $s)\n",
 		},
 		{
 			"replace all",
 			"echo ${s//o/0}\n",
-			"echo $(string replace --regex --all 'o' '0' -- $s)\n",
+			"echo $(string replace --regex --all -- 'o' '0' $s)\n",
 		},
 		{
 			"substring",
@@ -1356,7 +1362,7 @@ func TestExpansionRegression(t *testing.T) {
 		{
 			"nested expansion in default stays live",
 			"echo ${A:-x${B%/}y}\n",
-			"echo $(test -n \"$A\" && printf %s\\n \"$A\" || printf %s\\n \"x$(string replace --regex '/$' '' -- $B)y\")\n",
+			"echo $(test -n \"$A\" && printf %s\\n \"$A\" || printf %s\\n \"x$(string replace --regex -- '/$' '' $B)y\")\n",
 		},
 	}
 	for _, tc := range tests {
@@ -1745,6 +1751,75 @@ func TestProcSubst(t *testing.T) {
 			if string(got) != tc.want {
 				t.Errorf("mismatch\n in: %q\n got: %q\n want: %q",
 					tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRustupSupportFeatures(t *testing.T) {
+	tests := []struct {
+		name     string
+		in       string
+		want     string
+		contains string
+	}{
+		{
+			name: "literal dollar escaping",
+			in:   "echo 404$\n",
+			want: "echo 404\\$\n",
+		},
+		{
+			name: "function locals remain function scoped",
+			in: "main() {\n" +
+				"    local need_tty=yes\n" +
+				"    echo $need_tty\n" +
+				"}\n",
+			want: "function main\n" +
+				"    set --function need_tty yes\n" +
+				"    echo $need_tty\n" +
+				"end\n",
+		},
+		{
+			name: "helper function locals remain function scoped",
+			in: "helper() {\n" +
+				"    local val=123\n" +
+				"    echo $val\n" +
+				"}\n",
+			want: "function helper\n" +
+				"    set --function val 123\n" +
+				"    echo $val\n" +
+				"end\n",
+		},
+		{
+			name: "path concatenation does not split into list",
+			in:   "_file=\"$_dir/rustup-init$_ext\"\n",
+			want: "set _file \"$_dir/rustup-init$_ext\"\n",
+		},
+		{
+			name:     "word split applied to options variable",
+			in:       "curl $_retry $url\n",
+			contains: "(__bait_words $_retry)",
+		},
+		{
+			name: "getopts helper emitted",
+			in: "while getopts :hqy opt \"$arg\"; do\n" +
+				"    echo $opt\n" +
+				"done\n",
+			contains: "function getopts",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _, err := Translate([]byte(tc.in))
+			if err != nil {
+				t.Fatalf("Translate(%q) error: %v", tc.in, err)
+			}
+			if tc.want != "" && string(got) != tc.want {
+				t.Errorf("mismatch\n in: %q\n got: %q\n want: %q", tc.in, got, tc.want)
+			}
+			if tc.contains != "" && !strings.Contains(string(got), tc.contains) {
+				t.Errorf("expected output to contain %q, got: %q", tc.contains, string(got))
 			}
 		})
 	}

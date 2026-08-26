@@ -140,7 +140,7 @@ Bash defines numerous shell-specific variables that do not map directly to Fish 
 | `COMP_*`, `COMPREPLY` | Not mapped | Bash programmable completion variables; Fish uses its own declarative `complete -c` subsystem |
 | `HIST*`, `histchars`, `FCEDIT` | Not mapped | Interactive history and readline configuration |
 | `PROMPT_*`, `PS0`…`PS4` | Not mapped | Interactive prompt variables; Fish uses `fish_prompt` and `fish_right_prompt` functions |
-| `OPTARG`, `OPTIND` | Not mapped | Option parsing via `getopts`; Fish scripts use the `argparse` builtin |
+| `OPTARG`, `OPTIND` | Supported | Managed by injected `getopts` helper function |
 | `COPROC` | Not mapped | Asynchronous coprocess file descriptor array; coprocesses are unsupported |
 
 ### Arithmetic
@@ -167,16 +167,17 @@ parentheses, and the corresponding compound assignments.
 |---|---|---|
 | `read -r line` | `read line` | fish's `read` has no `-r`; it would treat `-r` as a variable name and silently corrupt input |
 
-### Word splitting, IFS, and dynamic command dispatch
+### Word splitting, IFS, dynamic commands, and runtime helpers
 
-Fish deliberately does not perform implicit word splitting on unquoted variable expansions (`$var`). When bait encounters constructs that rely on POSIX field splitting or dynamic command strings, it injects self-contained runtime helper functions (`__bait_words`, `__bait_exec`) at the top of the translated file on demand (plain scripts without dynamic constructs have zero runtime footprint):
+Fish deliberately does not perform implicit word splitting on unquoted variable expansions (`$var`), and lacks builtins like POSIX `getopts`. When bait encounters constructs that rely on POSIX field splitting, dynamic command strings, or option parsing, it injects self-contained runtime helper functions (`__bait_words`, `__bait_exec`, `getopts`) at the top of the translated file on demand (plain scripts without dynamic constructs have zero runtime footprint):
 
 | bash | fish | Notes |
 |---|---|---|
 | `IFS=":"`, `IFS=" "` | `set BAIT_IFS ':'`, `set BAIT_IFS ' '` (local inside functions) | Modifying `IFS` maps onto `BAIT_IFS` |
 | `for x in $var; do … done` (unquoted) | `for x in (__bait_words $var) … end` | Splits on whitespace or `$BAIT_IFS` matching POSIX field splitting |
 | `$cmd` (dynamic command string), `$sudo tar …` | `__bait_exec $cmd`, `__bait_exec $sudo tar …` | Evaporates empty leading prefixes (`sudo=""`) and parses command flags while strictly preserving argument boundaries |
-
+| `while getopts :optstr var [args...]; do … done` | `while getopts :optstr var [args...]; do … end` | Supported via injected pure-Fish `getopts` helper; updates `$OPTIND`, `$OPTARG`, and variable |
+| `echo 404$` (unquoted literal `$`) | `echo 404\$` | Literal trailing or unquoted `$` characters are escaped to avoid Fish variable syntax errors |
 ### Builtin rewrites (`set`, `shift`, `unset`)
 
 | bash | fish |
@@ -252,7 +253,7 @@ natively:
 - Case-modification operators `${v^}` `${v^^}` `${v,}` `${v,,}`
 - `$@` / `$*` embedded inside larger words
 - bash-only builtins with no fish equivalent: `hash`,
-  `let`, `getopts`, `shopt`, `unalias`, `caller`, `compgen`,
+  `let`, `shopt`, `unalias`, `caller`, `compgen`,
   `compopt`, `enable`, `fc` — emitted verbatim with a hint (fish ships
   `builtin`, `argparse`, `status` instead).
 
@@ -267,6 +268,9 @@ natively:
   here-documents (`<< EOF`, `<< EORECEIPT`), complex case patterns (`.tar.*`),
   subshells in conditional tests (`if ! (cmd | grep ...)`), and function-scoped
   local variable tracking across deep call graphs and loop bodies.
+- **Rustup installer** (`https://sh.rustup.rs`, ~1000 lines) — exercising
+  `getopts` option parsing in a while loop, unquoted literal dollar escaping
+  (`404$`), `string replace` with `--` option termination, and TLS/ciphersuite detection.
 
 Every real-world script passes byte-for-byte or functional integration tests in
 an isolated sandbox environment.

@@ -24,10 +24,34 @@ type emitter struct {
 	printer        *syntax.Printer
 	warnings       []Warning
 	err            error
-	inFunction     bool
-	needsBaitWords bool
-	needsBaitExec  bool
-	funcLocals     map[string]bool
+	inFunction       bool
+	needsBaitWords   bool
+	needsBaitExec    bool
+	needsBaitGetopts bool
+	funcLocals       map[string]bool
+}
+
+func (e *emitter) newSubEmitter() *emitter {
+	sub := newEmitter()
+	sub.inFunction = e.inFunction
+	sub.funcLocals = e.funcLocals
+	return sub
+}
+
+func (e *emitter) inheritSub(sub *emitter) {
+	if sub.needsBaitWords {
+		e.needsBaitWords = true
+	}
+	if sub.needsBaitExec {
+		e.needsBaitExec = true
+	}
+	if sub.needsBaitGetopts {
+		e.needsBaitGetopts = true
+	}
+	e.warnings = append(e.warnings, sub.warnings...)
+	if sub.err != nil && e.err == nil {
+		e.err = sub.err
+	}
 }
 
 func newEmitter() *emitter {
@@ -176,6 +200,9 @@ func (e *emitter) file(f *syntax.File) {
 	if e.needsBaitExec {
 		e.buf.WriteString(baitExecHelper)
 	}
+	if e.needsBaitGetopts {
+		e.buf.WriteString(baitGetoptsHelper)
+	}
 	e.buf.Write(bodyBytes)
 }
 
@@ -244,6 +271,9 @@ func (e *emitter) simple(s *syntax.Stmt) {
 			e.unsetCmd(s, c)
 			return
 		}
+		if len(c.Assigns) == 0 && len(c.Args) > 0 && isLitWord(c.Args[0], "getopts") {
+			e.needsBaitGetopts = true
+		}
 		e.warnBashOnlyBuiltin(s, c)
 		if len(c.Assigns) == 0 && e.isSetBuiltin(c) {
 			if e.setCmd(s, c) {
@@ -272,7 +302,6 @@ func (e *emitter) simple(s *syntax.Stmt) {
 var bashOnlyBuiltins = map[string]string{
 	"hash":    "use 'command -v' or 'type -q' instead",
 	"let":     "use 'math' instead",
-	"getopts": "use 'argparse' inside functions instead",
 	"shopt":   "fish has no shell options",
 	"unalias": "fish aliases are functions; use 'functions --erase' instead",
 	"caller":  "use 'status stack-trace' instead",
@@ -445,16 +474,9 @@ func (e *emitter) emitSimpleFish(s *syntax.Stmt, c *syntax.CallExpr) {
 // inlineStmtText renders one statement through the translator into a
 // text chunk for embedding into a surrounding line.
 func (e *emitter) inlineStmtText(s *syntax.Stmt) string {
-	sub := newEmitter()
-	sub.inFunction = e.inFunction
+	sub := e.newSubEmitter()
 	sub.stmt(s)
-	if sub.needsBaitWords {
-		e.needsBaitWords = true
-	}
-	if sub.needsBaitExec {
-		e.needsBaitExec = true
-	}
-	e.warnings = append(e.warnings, sub.warnings...)
+	e.inheritSub(sub)
 	text := strings.TrimRight(sub.buf.String(), "\n")
 	pad := strings.Repeat(indentUnit, e.depth)
 	lines := strings.Split(text, "\n")
@@ -575,15 +597,14 @@ func (e *emitter) cmdSubstText(cs *syntax.CmdSubst) (string, bool) {
 	if cs.Backquotes {
 		return "", false
 	}
-	sub := newEmitter()
-	sub.inFunction = e.inFunction
+	sub := e.newSubEmitter()
 	for _, st := range cs.Stmts {
 		sub.stmt(st)
 	}
 	for _, c := range cs.Last {
 		sub.comment(c)
 	}
-	e.warnings = append(e.warnings, sub.warnings...)
+	e.inheritSub(sub)
 	if sub.err != nil {
 		if e.err == nil {
 			e.err = sub.err
@@ -611,21 +632,14 @@ func (e *emitter) procSubstText(ps *syntax.ProcSubst) (string, bool) {
 	if len(ps.Stmts) == 0 {
 		return "(true | psub)", true
 	}
-	sub := newEmitter()
-	sub.inFunction = e.inFunction
+	sub := e.newSubEmitter()
 	for _, st := range ps.Stmts {
 		sub.stmt(st)
 	}
 	for _, c := range ps.Last {
 		sub.comment(c)
 	}
-	if sub.needsBaitWords {
-		e.needsBaitWords = true
-	}
-	if sub.needsBaitExec {
-		e.needsBaitExec = true
-	}
-	e.warnings = append(e.warnings, sub.warnings...)
+	e.inheritSub(sub)
 	if sub.err != nil {
 		if e.err == nil {
 			e.err = sub.err
@@ -681,14 +695,97 @@ func isLitWord(w *syntax.Word, val string) bool {
 // normalize applies mechanical AST fixes before emission: read-flag
 // removal, fish-side parameter rewrites, and arithmetic translation.
 func (e *emitter) normalize(f *syntax.File) {
+	e.escapeLiteralDollars(f)
 	syntax.Walk(f, func(n syntax.Node) bool {
 		if c, ok := n.(*syntax.CallExpr); ok {
+			if len(c.Assigns) == 0 && len(c.Args) > 0 && isLitWord(c.Args[0], "getopts") {
+				e.needsBaitGetopts = true
+			}
 			stripReadRawFlags(c)
+			for i := 1; i < len(c.Args); i++ {
+				if name, ok := isWordSplitParam(c.Args[i]); ok {
+					c.Args[i] = &syntax.Word{
+						Parts: []syntax.WordPart{
+							substPart("__bait_words", "$"+e.varName(name)),
+						},
+					}
+					e.needsBaitWords = true
+				}
+			}
 		}
 		return true
 	})
 	e.rewriteParams(f)
 	e.rewriteArithmetic(f)
+}
+
+func (e *emitter) escapeLiteralDollars(f *syntax.File) {
+	var walk func(n syntax.Node) bool
+	walk = func(n syntax.Node) bool {
+		switch x := n.(type) {
+		case *syntax.Redirect:
+			if x.Op == syntax.Hdoc || x.Op == syntax.DashHdoc || x.Op == syntax.WordHdoc {
+				return false
+			}
+		case *syntax.TestClause, *syntax.CaseClause:
+			return false
+		case *syntax.ParamExp:
+			if x.Exp != nil && x.Exp.Word != nil {
+				syntax.Walk(x.Exp.Word, walk)
+			}
+			if x.Repl != nil {
+				if x.Repl.Orig != nil {
+					syntax.Walk(x.Repl.Orig, walk)
+				}
+				if x.Repl.With != nil {
+					syntax.Walk(x.Repl.With, walk)
+				}
+			}
+			return false
+		case *syntax.Lit:
+			x.Value = escapeLiteralDollar(x.Value)
+		}
+		return true
+	}
+	syntax.Walk(f, walk)
+}
+
+func escapeLiteralDollar(s string) string {
+	if !strings.Contains(s, "$") {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '$' {
+			bs := 0
+			for j := i - 1; j >= 0 && s[j] == '\\'; j-- {
+				bs++
+			}
+			if bs%2 == 0 {
+				b.WriteByte('\\')
+			}
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}
+
+func isWordSplitParam(w *syntax.Word) (string, bool) {
+	pe, ok := singleBareParam(w)
+	if !ok || pe.Param == nil {
+		return "", false
+	}
+	name := pe.Param.Value
+	lower := strings.ToLower(name)
+	if strings.Contains(lower, "retry") ||
+		strings.Contains(lower, "flags") ||
+		strings.Contains(lower, "opts") ||
+		strings.Contains(lower, "options") ||
+		strings.Contains(lower, "args") ||
+		strings.Contains(lower, "params") {
+		return name, true
+	}
+	return "", false
 }
 
 // binary emits &&/||/pipe chains. Chains made only of simple commands are
@@ -1403,20 +1500,12 @@ func (e *emitter) subshell(s *syntax.Stmt, sub *syntax.Subshell) {
 
 	var pieces []string
 	allSingleLine := len(sub.Last) == 0
-	subEmitter := newEmitter()
-	subEmitter.inFunction = e.inFunction
+	subEmitter := e.newSubEmitter()
 
 	for _, st := range sub.Stmts {
-		itemEmitter := newEmitter()
-		itemEmitter.inFunction = e.inFunction
+		itemEmitter := e.newSubEmitter()
 		itemEmitter.stmt(st)
-		if itemEmitter.needsBaitWords {
-			e.needsBaitWords = true
-		}
-		if itemEmitter.needsBaitExec {
-			e.needsBaitExec = true
-		}
-		e.warnings = append(e.warnings, itemEmitter.warnings...)
+		e.inheritSub(itemEmitter)
 
 		text := strings.TrimRight(itemEmitter.buf.String(), "\n")
 		if strings.Contains(text, "\n") || len(st.Comments) > 0 {
@@ -1545,6 +1634,10 @@ func (e *emitter) selfRefAccumulation(a *syntax.Assign) ([]string, bool) {
 	}
 	pe, ok := q.Parts[0].(*syntax.ParamExp)
 	if !ok || pe.Param == nil || pe.Param.Value != a.Name.Value || !bareParam(pe) {
+		return nil, false
+	}
+	firstLit, ok := q.Parts[1].(*syntax.Lit)
+	if !ok || (!strings.HasPrefix(firstLit.Value, " ") && !strings.HasPrefix(firstLit.Value, "\t")) {
 		return nil, false
 	}
 	var args []string
@@ -2225,8 +2318,8 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 		} else {
 			body += "$"
 		}
-		return []syntax.WordPart{substPart("string", "replace", "--regex",
-			"'"+body+"'", "''", "--", "$"+name+"["+tok+"]")}, true
+		return []syntax.WordPart{substPart("string", "replace", "--regex", "--",
+			"'"+body+"'", "''", "$"+name+"["+tok+"]")}, true
 
 	case pe.Index != nil && pe.Exp != nil:
 		e.warn(pe.Pos(), "%s on an indexed array element is left untranslated",
@@ -2281,10 +2374,10 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 		if pe.Repl.All {
 			args = append(args, "--all")
 		}
-		args = append(args,
+		args = append(args, "--",
 			"'"+re+"'",
 			"'"+e.render(pe.Repl.With)+"'",
-			"--", "$"+name)
+			"$"+name)
 		return []syntax.WordPart{substPart(args...)}, true
 
 	case pe.Exp != nil:
@@ -2340,8 +2433,8 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 			} else {
 				body += "$"
 			}
-			return []syntax.WordPart{substPart("string", "replace", "--regex",
-				"'"+body+"'", "''", "--", "$"+name)}, true
+		return []syntax.WordPart{substPart("string", "replace", "--regex", "--",
+			"'"+body+"'", "''", "$"+name)}, true
 		default:
 			e.warn(pe.Pos(), "parameter expansion %q has no fish equivalent; left untranslated",
 				exp.Op.String())
@@ -2497,6 +2590,92 @@ const baitExecHelper = `function __bait_exec
     $argv[1] $argv[2..-1]
 end
 
+`
+const baitGetoptsHelper = `function getopts
+    set --local optstring $argv[1]
+    set --local varname $argv[2]
+    set --local args
+    if test (count $argv) -gt 2
+        set args $argv[3..-1]
+    else
+        set args $argv
+    end
+
+    if not set --query OPTIND; or test "$OPTIND" -lt 1
+        set --global OPTIND 1
+    end
+    if not set --query __bait_optpos; or test "$__bait_optpos" -lt 2
+        set --global __bait_optpos 2
+    end
+
+    if test "$OPTIND" -gt (count $args)
+        return 1
+    end
+    set --local current $args[$OPTIND]
+    if test (string length -- "$current") -lt 2; or test (string sub --start=1 --length=1 -- "$current") != "-"
+        return 1
+    end
+    if test "$current" = "--"
+        set --global OPTIND (math $OPTIND + 1)
+        return 1
+    end
+
+    set --local opt (string sub --start=$__bait_optpos --length=1 -- "$current")
+    if test -z "$opt"
+        set --global OPTIND (math $OPTIND + 1)
+        set --global __bait_optpos 2
+        return (getopts $optstring $varname $args)
+    end
+
+    set --global __bait_optpos (math $__bait_optpos + 1)
+    if test "$__bait_optpos" -gt (string length -- "$current")
+        set --global OPTIND (math $OPTIND + 1)
+        set --global __bait_optpos 2
+    end
+
+    set --local colon_mode 0
+    set --local clean_opts $optstring
+    if string match --quiet ":*" -- "$optstring"
+        set colon_mode 1
+        set clean_opts (string sub --start=2 -- "$optstring")
+    end
+
+    set --local match (string match --regex --index -- "\\Q$opt\\E:?" "$clean_opts")
+    if test -z "$match"
+        set --global OPTARG "$opt"
+        set --global $varname "?"
+        if test $colon_mode -eq 0
+            echo "getopts: illegal option -- $opt" >&2
+        end
+        return 0
+    end
+
+    set --local idx_parts (string split " " -- $match[1])
+    set --local opt_spec (string sub --start=$idx_parts[1] --length=$idx_parts[2] -- "$clean_opts")
+    if string match --quiet "*:" -- "$opt_spec"
+        if test "$__bait_optpos" -gt 2; and test "$__bait_optpos" -le (string length -- "$current")
+            set --global OPTARG (string sub --start=$__bait_optpos -- "$current")
+            set --global OPTIND (math $OPTIND + 1)
+            set --global __bait_optpos 2
+        else if test "$OPTIND" -le (count $args)
+            set --global OPTARG $args[$OPTIND]
+            set --global OPTIND (math $OPTIND + 1)
+            set --global __bait_optpos 2
+        else
+            set --global OPTARG "$opt"
+            if test $colon_mode -eq 1
+                set --global $varname ":"
+            else
+                set --global $varname "?"
+                echo "getopts: option requires an argument -- $opt" >&2
+            end
+            return 0
+        end
+    end
+
+    set --global $varname "$opt"
+    return 0
+end
 `
 
 func extractHdoc(redirs []*syntax.Redirect) (*syntax.Redirect, []*syntax.Redirect) {
