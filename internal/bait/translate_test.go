@@ -174,6 +174,18 @@ func TestTier1(t *testing.T) {
 				"end\n",
 		},
 		{
+			"case with escaped tilde patterns",
+			"case \"$PIXI_HOME\" in\n" +
+				"\t\\~ | \\~/*)\n" +
+				"\t\techo home\n" +
+				"\t\t;;\n" +
+				"esac\n",
+			"switch \"$PIXI_HOME\"\n" +
+				"case '~' '~/*'\n" +
+				"    echo home\n" +
+				"end\n",
+		},
+		{
 			"function definition",
 			"greet() {\n" +
 				"\techo \"hello $1\"\n" +
@@ -619,6 +631,11 @@ func TestReadFlags(t *testing.T) {
 			"grep -r untouched",
 			"grep -r pattern dir\n",
 			"grep -r pattern dir\n",
+		},
+		{
+			"read underscore variable sanitized",
+			"echo a b c | read -r _ v _\n",
+			"echo a b c | read _unused v _unused\n",
 		},
 	}
 	for _, tc := range tests {

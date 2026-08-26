@@ -448,6 +448,10 @@ func stripReadRawFlags(c *syntax.CallExpr) {
 		if i > 0 && isLitWord(w, "-r") {
 			continue
 		}
+		if i > 0 && isLitWord(w, "_") {
+			filtered = append(filtered, litWord("_unused"))
+			continue
+		}
 		filtered = append(filtered, w)
 	}
 	c.Args = filtered
@@ -682,7 +686,7 @@ func (e *emitter) caseClause(s *syntax.Stmt, cl *syntax.CaseClause) {
 		}
 		patterns := make([]string, len(item.Patterns))
 		for i, p := range item.Patterns {
-			patterns[i] = e.render(p)
+			patterns[i] = e.renderCasePattern(p)
 		}
 		e.printf("case %s", strings.Join(patterns, " "))
 		e.body(item.Stmts, item.Last)
@@ -691,6 +695,23 @@ func (e *emitter) caseClause(s *syntax.Stmt, cl *syntax.CaseClause) {
 		e.comment(c)
 	}
 	e.printf("end%s", tail)
+}
+
+func (e *emitter) renderCasePattern(p *syntax.Word) string {
+	s := e.render(p)
+	if strings.Contains(s, `'~'/`) {
+		s = strings.ReplaceAll(s, `'~'/*`, `'~/*'`)
+		s = strings.ReplaceAll(s, `'~'/`, `'~/'`)
+		if strings.HasPrefix(s, `'~/`) && !strings.HasSuffix(s, `'`) {
+			s += `'`
+		}
+	}
+	if s == `\~` {
+		s = `'~'`
+	} else if strings.HasPrefix(s, `\~/`) {
+		s = `'~` + s[2:] + `'`
+	}
+	return s
 }
 
 func (e *emitter) funcDecl(s *syntax.Stmt, fd *syntax.FuncDecl) {
@@ -1557,9 +1578,10 @@ func (e *emitter) argWord(w *syntax.Word) *syntax.Word {
 	case !strings.ContainsAny(s, " $\t\""):
 		return litWord(s)
 	case strings.Contains(s, "$"):
-		// Expansions must stay live, so keep double quotes and escape
-		// the inner ones; fish treats \" inside "..." as a literal.
-		return litWord(`"` + strings.ReplaceAll(s, `"`, `\"`) + `"`)
+		if strings.HasPrefix(s, `"`) && strings.HasSuffix(s, `"`) && len(s) >= 2 {
+			return litWord(s)
+		}
+		return litWord(`"` + s + `"`)
 	case strings.Contains(s, `"`):
 		return litWord("'" + s + "'")
 	default:
