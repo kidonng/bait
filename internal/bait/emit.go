@@ -72,7 +72,7 @@ func (e *emitter) redirect(r *syntax.Redirect) string {
 		s += r.N.Value
 	}
 	s += r.Op.String()
-	return s + " " + e.render(r.Word)
+	return s + " " + e.renderWordSmart(r.Word)
 }
 
 // tails renders the redirections and background marker that trail a
@@ -450,22 +450,24 @@ func (e *emitter) inlineStmtText(s *syntax.Stmt) string {
 	return strings.Join(lines, "\n")
 }
 
-// hasStructuralCmdSubst reports whether any command substitution inside
-// n contains structural statements (if/for/subshell/...).
+// hasStructuralCmdSubst reports whether any command substitution or process
+// substitution inside n contains structural statements or requires translation.
 func hasStructuralCmdSubst(n syntax.Node) bool {
 	if n == nil {
 		return false
 	}
 	found := false
 	syntax.Walk(n, func(inner syntax.Node) bool {
-		cs, ok := inner.(*syntax.CmdSubst)
-		if !ok {
-			return true
-		}
-		for _, st := range cs.Stmts {
-			if hasStructural(st) {
-				found = true
-				return false
+		switch ps := inner.(type) {
+		case *syntax.ProcSubst:
+			found = true
+			return false
+		case *syntax.CmdSubst:
+			for _, st := range ps.Stmts {
+				if hasStructural(st) {
+					found = true
+					return false
+				}
 			}
 		}
 		return true
@@ -519,6 +521,12 @@ func (e *emitter) renderWordFish(w *syntax.Word) (string, bool) {
 						return "", false
 					}
 					b.WriteString(s)
+				case *syntax.ProcSubst:
+					s, ok := e.procSubstText(ip)
+					if !ok {
+						return "", false
+					}
+					b.WriteString(s)
 				case *syntax.ParamExp:
 					b.WriteString(e.render(ip))
 				default:
@@ -528,6 +536,12 @@ func (e *emitter) renderWordFish(w *syntax.Word) (string, bool) {
 			b.WriteString("\"")
 		case *syntax.CmdSubst:
 			s, ok := e.cmdSubstText(p)
+			if !ok {
+				return "", false
+			}
+			b.WriteString(s)
+		case *syntax.ProcSubst:
+			s, ok := e.procSubstText(p)
 			if !ok {
 				return "", false
 			}
@@ -572,6 +586,52 @@ func (e *emitter) cmdSubstText(cs *syntax.CmdSubst) (string, bool) {
 		lines[i] = pad + lines[i]
 	}
 	return "$(" + strings.Join(lines, "\n") + ")", true
+}
+
+// procSubstText renders a process substitution <( ... ) as ( ... | psub ).
+func (e *emitter) procSubstText(ps *syntax.ProcSubst) (string, bool) {
+	if ps.Op == syntax.CmdOut {
+		e.warn(ps.OpPos, "output process substitution >(...) has no direct fish equivalent; emitted verbatim")
+		return e.render(ps), true
+	}
+	if len(ps.Stmts) == 0 {
+		return "(true | psub)", true
+	}
+	sub := newEmitter()
+	sub.inFunction = e.inFunction
+	for _, st := range ps.Stmts {
+		sub.stmt(st)
+	}
+	for _, c := range ps.Last {
+		sub.comment(c)
+	}
+	if sub.needsBaitWords {
+		e.needsBaitWords = true
+	}
+	if sub.needsBaitExec {
+		e.needsBaitExec = true
+	}
+	e.warnings = append(e.warnings, sub.warnings...)
+	if sub.err != nil {
+		if e.err == nil {
+			e.err = sub.err
+		}
+		return "", false
+	}
+	text := strings.TrimRight(sub.buf.String(), "\n")
+	if text == "" {
+		return "(true | psub)", true
+	}
+	if len(ps.Stmts) == 1 && !strings.Contains(text, "\n") && !hasStructural(ps.Stmts[0]) {
+		return "(" + text + " | psub)", true
+	}
+	pad := strings.Repeat(indentUnit, e.depth+1)
+	lines := strings.Split(text, "\n")
+	for i := range lines {
+		lines[i] = pad + lines[i]
+	}
+	endPad := strings.Repeat(indentUnit, e.depth)
+	return "(begin\n" + strings.Join(lines, "\n") + "\n" + endPad + "end | psub)", true
 }
 
 // stripReadRawFlags removes bash's read -r flag. fish's read builtin has

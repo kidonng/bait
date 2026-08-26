@@ -644,6 +644,17 @@ func TestBashFishEquivalence(t *testing.T) {
 				"if [[ ! -v UNDEFINED_VAR ]]; then echo 'UNDEFINED is not set'; fi\n",
 		},
 		{
+			name: "diff with process substitution",
+			src: "diff -u <(printf \"alpha\\nbeta\\n\") <(printf \"alpha\\ngamma\\n\") >/dev/null || true\n" +
+				"echo 'diff completed'\n",
+		},
+		{
+			name: "while loop reading from process substitution",
+			src: "while read -r line; do\n" +
+				"\techo \"got:$line\"\n" +
+				"done < <(printf \"one\\ntwo\\n\")\n",
+		},
+		{
 			name: "empty command prefix",
 			src: "prefix=\"\"\n" +
 				"$prefix echo running without prefix\n",
@@ -1465,6 +1476,50 @@ func TestTestClause(t *testing.T) {
 			"double bracket in chain",
 			"[[ -n \"$x\" ]] && echo yes\n",
 			"test -n \"$x\" && echo yes\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, warnings, err := Translate([]byte(tc.in))
+			if err != nil {
+				t.Fatalf("Translate(%q) error: %v", tc.in, err)
+			}
+			if len(warnings) > 0 {
+				t.Errorf("unexpected warnings: %v", warnings)
+			}
+			if string(got) != tc.want {
+				t.Errorf("mismatch\n in: %q\n got: %q\n want: %q",
+					tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestProcSubst(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			"diff with two input process substitutions",
+			"diff -u <(sort a.txt) <(sort b.txt)\n",
+			"diff -u (sort a.txt | psub) (sort b.txt | psub)\n",
+		},
+		{
+			"source from process substitution",
+			"source <(curl -fsSL https://example.com/install.sh)\n",
+			"source (curl -fsSL https://example.com/install.sh | psub)\n",
+		},
+		{
+			"process substitution with variable expansion",
+			"cat <(echo \"$MSG\")\n",
+			"cat (echo \"$MSG\" | psub)\n",
+		},
+		{
+			"while loop reading from process substitution",
+			"while read -r line; do echo \"$line\"; done < <(find . -name \"*.go\")\n",
+			"while read line\n    echo \"$line\"\nend < (find . -name \"*.go\" | psub)\n",
 		},
 	}
 	for _, tc := range tests {

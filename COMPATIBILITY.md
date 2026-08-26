@@ -28,6 +28,7 @@ anything bait cannot translate is emitted unchanged plus a warning.
 | Here-strings `<<< WORD` | Translated to `printf '%s\n' WORD \| cmd` |
 | Combiners `&&` `\|\|` `!` | Native fish syntax |
 | Command substitution `$(...)` | Also `(...)` output from bait itself uses `$()` |
+| Process substitution `<(cmd)` | Translated to `(cmd \| psub)` or `(begin ...; end \| psub)` |
 | Per-command environment `VAR=val cmd` | Supported natively since fish 3.1 |
 | Backgrounding `cmd &` | Including on structural blocks (`end &`) |
 | Brace expansion `{a,b,c}`, tilde `~`, globs `*` `**` | |
