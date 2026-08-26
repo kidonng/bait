@@ -410,12 +410,13 @@ func (e *emitter) setCmd(s *syntax.Stmt, c *syntax.CallExpr) bool {
 		return true
 	}
 	head := e.render(args[0])
-	if head != "--" && (strings.HasPrefix(head, "-") || strings.HasPrefix(head, "+")) {
-		e.warn(s.Position, "set flags have no fish equivalent; statement dropped")
-		return true
-	}
 	if head == "--" {
 		args = args[1:]
+	} else if head == "-" && len(args) > 1 {
+		args = args[1:]
+	} else if strings.HasPrefix(head, "-") || strings.HasPrefix(head, "+") {
+		e.warn(s.Position, "set flags have no fish equivalent; statement dropped")
+		return true
 	}
 	out := make([]*syntax.Word, 0, len(args)+2)
 	out = append(out, litWord("set"), litWord("argv"))
@@ -947,7 +948,16 @@ func (e *emitter) forClause(s *syntax.Stmt, f *syntax.ForClause) {
 func (e *emitter) caseClause(s *syntax.Stmt, cl *syntax.CaseClause) {
 	tail := e.tails(s)
 	e.wrapperComments(s)
+	if isDollarDash(cl.Word) && len(cl.Items) > 0 {
+		if e.emitInteractiveCase(s, cl, tail) {
+			return
+		}
+	}
 	wTxt := e.render(cl.Word)
+	if isDollarDash(cl.Word) {
+		e.warn(cl.Word.Pos(), "$- has no fish equivalent; fish uses status subcommands (e.g. status is-interactive)")
+		wTxt = "(status is-interactive && echo i || echo '')"
+	}
 	if strings.Contains(wTxt, "$PATH") && !strings.HasPrefix(wTxt, `"`) && !strings.HasPrefix(wTxt, "'") {
 		wTxt = `"` + wTxt + `"`
 	}
@@ -967,6 +977,115 @@ func (e *emitter) caseClause(s *syntax.Stmt, cl *syntax.CaseClause) {
 		e.comment(c)
 	}
 	e.printf("end%s", tail)
+}
+
+func isDollarDash(w *syntax.Word) bool {
+	if w == nil {
+		return false
+	}
+	if len(w.Parts) == 1 {
+		switch p := w.Parts[0].(type) {
+		case *syntax.ParamExp:
+			return p.Param != nil && p.Param.Value == "-" && bareParam(p)
+		case *syntax.DblQuoted:
+			if len(p.Parts) == 1 {
+				if pe, ok := p.Parts[0].(*syntax.ParamExp); ok {
+					return pe.Param != nil && pe.Param.Value == "-" && bareParam(pe)
+				}
+			}
+		}
+	}
+	return false
+}
+
+func isInteractivePattern(p *syntax.Word) bool {
+	if p == nil {
+		return false
+	}
+	raw, ok := casePatternString(p)
+	if !ok {
+		raw = ""
+		for _, part := range p.Parts {
+			switch pt := part.(type) {
+			case *syntax.Lit:
+				raw += pt.Value
+			case *syntax.DblQuoted:
+				for _, dqp := range pt.Parts {
+					if dqlit, ok := dqp.(*syntax.Lit); ok {
+						raw += dqlit.Value
+					}
+				}
+			case *syntax.SglQuoted:
+				raw += pt.Value
+			}
+		}
+	}
+	trimmed := strings.Trim(raw, "*?.^$")
+	return trimmed == "i" || trimmed == "I"
+}
+
+func hasInteractivePattern(patterns []*syntax.Word) bool {
+	for _, p := range patterns {
+		if isInteractivePattern(p) {
+			return true
+		}
+	}
+	return false
+}
+
+func isWildcardPattern(p *syntax.Word) bool {
+	if p == nil {
+		return false
+	}
+	if len(p.Parts) == 1 {
+		if lit, ok := p.Parts[0].(*syntax.Lit); ok {
+			return lit.Value == "*"
+		}
+	}
+	return false
+}
+
+func (e *emitter) emitInteractiveCase(s *syntax.Stmt, cl *syntax.CaseClause, tail string) bool {
+	if len(cl.Items) == 1 {
+		item0 := cl.Items[0]
+		if hasInteractivePattern(item0.Patterns) {
+			e.printf("if status is-interactive")
+			e.body(item0.Stmts, item0.Last)
+			for _, c := range cl.Last {
+				e.comment(c)
+			}
+			e.printf("end%s", tail)
+			return true
+		}
+	}
+	if len(cl.Items) == 2 {
+		item0 := cl.Items[0]
+		item1 := cl.Items[1]
+		if hasInteractivePattern(item0.Patterns) &&
+			len(item1.Patterns) == 1 && isWildcardPattern(item1.Patterns[0]) {
+			if len(item0.Stmts) == 0 && len(item0.Last) == 0 {
+				e.printf("if not status is-interactive")
+				e.body(item1.Stmts, item1.Last)
+				for _, c := range cl.Last {
+					e.comment(c)
+				}
+				e.printf("end%s", tail)
+				return true
+			}
+			e.printf("if status is-interactive")
+			e.body(item0.Stmts, item0.Last)
+			if len(item1.Stmts) > 0 || len(item1.Last) > 0 {
+				e.printf("else")
+				e.body(item1.Stmts, item1.Last)
+			}
+			for _, c := range cl.Last {
+				e.comment(c)
+			}
+			e.printf("end%s", tail)
+			return true
+		}
+	}
+	return false
 }
 
 func (e *emitter) renderCasePattern(p *syntax.Word) string {
@@ -1050,6 +1169,12 @@ func (e *emitter) renderUnaryTest(u *syntax.UnaryTest) string {
 }
 
 func (e *emitter) renderBinaryTest(b *syntax.BinaryTest) string {
+	if _, negated, ok := isInteractiveTest(b); ok {
+		if negated {
+			return "! status is-interactive"
+		}
+		return "status is-interactive"
+	}
 	opStr := b.Op.String()
 	switch opStr {
 	case "&&":
@@ -1091,6 +1216,45 @@ func (e *emitter) renderBinaryTest(b *syntax.BinaryTest) string {
 	default:
 		return fmt.Sprintf("test %s %s %s", e.renderTestOperand(b.X), opStr, e.renderTestOperand(b.Y))
 	}
+}
+
+func isInteractiveTest(b *syntax.BinaryTest) (interactive bool, negated bool, ok bool) {
+	xWord, okX := b.X.(*syntax.Word)
+	yWord, okY := b.Y.(*syntax.Word)
+	if !okX || !okY {
+		return false, false, false
+	}
+	dashX := isDollarDash(xWord)
+	dashY := isDollarDash(yWord)
+	if !dashX && !dashY {
+		return false, false, false
+	}
+	var pat *syntax.Word
+	if dashX {
+		pat = yWord
+	} else {
+		pat = xWord
+	}
+	opStr := b.Op.String()
+	switch opStr {
+	case "==", "=":
+		if isInteractivePattern(pat) {
+			return true, false, true
+		}
+	case "!=":
+		if isInteractivePattern(pat) {
+			return true, true, true
+		}
+	case "=~":
+		if isInteractivePattern(pat) {
+			return true, false, true
+		}
+	case "!~":
+		if isInteractivePattern(pat) {
+			return true, true, true
+		}
+	}
+	return false, false, false
 }
 
 func (e *emitter) renderTestOperand(expr syntax.TestExpr) string {
@@ -1586,19 +1750,37 @@ func (e *emitter) setLine(scope, name, value string) {
 // parameters, and redundant braces around plain variables.
 func (e *emitter) rewriteParams(f *syntax.File) {
 	syntax.Walk(f, func(n syntax.Node) bool {
-		w, ok := n.(*syntax.Word)
-		if !ok {
+		switch node := n.(type) {
+		case *syntax.CaseClause:
+			if isDollarDash(node.Word) {
+				for _, item := range node.Items {
+					syntax.Walk(item, func(cn syntax.Node) bool {
+						if w, ok := cn.(*syntax.Word); ok {
+							w.Parts = e.spliceParts(w.Parts)
+						}
+						return true
+					})
+				}
+				return false
+			}
+		case *syntax.TestClause:
+			if b, ok := node.X.(*syntax.BinaryTest); ok {
+				if _, _, isInter := isInteractiveTest(b); isInter {
+					return false
+				}
+			}
+		case *syntax.Word:
+			if soleSpecialParam(node, "@", "*") {
+				node.Parts = []syntax.WordPart{argvParam()}
+				return true
+			}
+			if name, ok := e.soleArrayAll(node); ok {
+				node.Parts = []syntax.WordPart{namedParam(name)}
+				return true
+			}
+			node.Parts = e.spliceParts(node.Parts)
 			return true
 		}
-		if soleSpecialParam(w, "@", "*") {
-			w.Parts = []syntax.WordPart{argvParam()}
-			return true
-		}
-		if name, ok := e.soleArrayAll(w); ok {
-			w.Parts = []syntax.WordPart{namedParam(name)}
-			return true
-		}
-		w.Parts = e.spliceParts(w.Parts)
 		return true
 	})
 }
@@ -1683,6 +1865,9 @@ func (e *emitter) paramReplacements(pe *syntax.ParamExp) []syntax.WordPart {
 		return []syntax.WordPart{substPart("random")}
 	case "EPOCHSECONDS":
 		return []syntax.WordPart{substPart("date", "+%s")}
+	case "-":
+		e.warn(pe.Pos(), "$- has no fish equivalent; fish uses status subcommands (e.g. status is-interactive)")
+		return []syntax.WordPart{statusDashPart()}
 	}
 	if isDigits(name) {
 		// bash positional params are 1-based like fish list indices;
@@ -1755,6 +1940,23 @@ func pipeSubstPart(xArgs, yArgs []string) syntax.WordPart {
 		Y:  &syntax.Stmt{Cmd: yCall},
 	}
 	return &syntax.CmdSubst{Stmts: []*syntax.Stmt{{Cmd: bin}}}
+}
+
+func statusDashPart() syntax.WordPart {
+	cmd1 := &syntax.CallExpr{Args: []*syntax.Word{litWord("status"), litWord("is-interactive")}}
+	cmd2 := &syntax.CallExpr{Args: []*syntax.Word{litWord("echo"), litWord("i")}}
+	cmd3 := &syntax.CallExpr{Args: []*syntax.Word{litWord("echo"), litWord("''")}}
+	bin1 := &syntax.BinaryCmd{
+		Op: syntax.AndStmt,
+		X:  &syntax.Stmt{Cmd: cmd1},
+		Y:  &syntax.Stmt{Cmd: cmd2},
+	}
+	bin2 := &syntax.BinaryCmd{
+		Op: syntax.OrStmt,
+		X:  &syntax.Stmt{Cmd: bin1},
+		Y:  &syntax.Stmt{Cmd: cmd3},
+	}
+	return &syntax.CmdSubst{Stmts: []*syntax.Stmt{{Cmd: bin2}}}
 }
 
 func soleSpecialParam(w *syntax.Word, names ...string) bool {

@@ -44,6 +44,7 @@ anything bait cannot translate is emitted unchanged plus a warning.
 | `until cond; do … done` | `while not cond … end` |
 | `for x in …; do … done` | `for x in … … end`; bare `for x` iterates `$argv`; unquoted `for x in $var` uses `(__bait_words $var)` to match POSIX field splitting |
 | `case x in p) …;; esac` | `switch x` / `case 'p'` / `end` |
+| `case $- in *i*) …;; esac` | `if status is-interactive` / `end` |
 | `f() { … }`, `function f { … }` | `function f … end` |
 | `{ … }` groups | `begin … end` |
 | `( … )` subshells | `fish -c '...'` (true process isolation for directory, variable mutations, umask, and traps) |
@@ -63,6 +64,7 @@ anything bait cannot translate is emitted unchanged plus a warning.
 | `[[ -v VAR ]]` | `set -q VAR` | Variable set test mapped to fish `set --query` |
 | `[[ cond1 && cond2 ]]`, `[[ cond1 \|\| cond2 ]]` | `cond1 && cond2`, `cond1 \|\| cond2` | Logical combiners |
 | `[[ ( cond1 \|\| cond2 ) && cond3 ]]` | `begin cond1 \|\| cond2; end && cond3` | Parenthesized condition groups |
+| `[[ $- == *i* ]]`, `[[ $- =~ i ]]` | `status is-interactive` | Interactive shell check (negated form: `! status is-interactive`) |
 ### Shebang
 
 `#!/bin/bash`, `#!/usr/bin/env bash`, `sh`, `ash`, `dash` are rewritten to
@@ -84,6 +86,7 @@ content is not shell fail at the parse stage with an error.
 | `arr+=(x)` | `set --append arr x` |
 | assignment in a combiner chain: `cmd \|\| x=fall`, `x=init && cmd` | `set` command emitted as the chain leaf: `cmd \|\| set x fall` |
 | self-referential accumulation `X="$X more words"` | list append `set X $X more words` — bash word-splits the accumulated string at unquoted use sites; fish reaches the same observable behavior by accumulating a list (initial values containing spaces are not split) |
+| `set -- a b`, `set - a b` | `set argv a b` (positional assignment; bare `set --` clears positionals with `set argv`) |
 
 All generated builtin options use long form (`set --local`, `set --append`,
 `string --regex`, …).
@@ -96,6 +99,7 @@ All generated builtin options use long form (`set --local`, `set --append`,
 | `$?` `$$` `$!` `$BASHPID` | `$status` `$fish_pid` `$last_pid` `$fish_pid` |
 | `$#` | `$(count $argv)` |
 | `$0` `${BASH_SOURCE[0]}` `$BASH_SOURCE` `$BASH_ARGV0` | `$(status filename)` |
+| `$-` | `$(status is-interactive && echo i \|\| echo '')` | Shell option flags (warning emitted; interactive check patterns are rewritten to `status is-interactive`) |
 | `$BASH` | `$(status fish-path)` |
 | `$BASH_COMMAND` | `$(status current-command)` |
 | `$FUNCNAME` `${FUNCNAME[0]}` | `$(status current-function)` |

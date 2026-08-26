@@ -186,6 +186,46 @@ func TestTier1(t *testing.T) {
 				"end\n",
 		},
 		{
+			"case dollar dash interactive check",
+			"case $- in\n" +
+				"\t*i*)\n" +
+				"\t\treturn\n" +
+				"\t\t;;\n" +
+				"esac\n",
+			"if status is-interactive\n" +
+				"    return\n" +
+				"end\n",
+		},
+		{
+			"case dollar dash interactive with else",
+			"case $- in\n" +
+				"\t*i*)\n" +
+				"\t\techo yes\n" +
+				"\t\t;;\n" +
+				"\t*)\n" +
+				"\t\techo no\n" +
+				"\t\t;;\n" +
+				"esac\n",
+			"if status is-interactive\n" +
+				"    echo yes\n" +
+				"else\n" +
+				"    echo no\n" +
+				"end\n",
+		},
+		{
+			"case dollar dash non-interactive branch only",
+			"case $- in\n" +
+				"\t*i*)\n" +
+				"\t\t;;\n" +
+				"\t*)\n" +
+				"\t\techo non-interactive\n" +
+				"\t\t;;\n" +
+				"esac\n",
+			"if not status is-interactive\n" +
+				"    echo non-interactive\n" +
+				"end\n",
+		},
+		{
 			"function definition",
 			"greet() {\n" +
 				"\techo \"hello $1\"\n" +
@@ -345,6 +385,16 @@ func TestWarnings(t *testing.T) {
 			"bare set dropped",
 			"set\n",
 			"statement dropped",
+		},
+		{
+			"single dash set dropped",
+			"set -\n",
+			"statement dropped",
+		},
+		{
+			"dollar dash standalone warning",
+			"echo \"$-\"\n",
+			"status subcommands",
 		},
 	}
 
@@ -707,6 +757,23 @@ func TestBashFishEquivalence(t *testing.T) {
 				"echo \"before: v1=${var1:-missing} v2=${var2:-missing}\"\n" +
 				"unset -v var1 var2\n" +
 				"echo \"after: v1=${var1:-missing} v2=${var2:-missing}\"\n",
+		},
+		{
+			name: "set positional with single dash terminator",
+			src: "set - first \"second param\"\n" +
+				"echo \"$1|$2\"\n" +
+				"echo \"count:$#\"\n",
+		},
+		{
+			name: "case dollar dash interactive check in script",
+			src: "case $- in\n" +
+				"\t*i*) echo interactive ;;\n" +
+				"\t*) echo non-interactive ;;\n" +
+				"esac\n",
+		},
+		{
+			name: "test clause dollar dash interactive check in script",
+			src: "[[ $- != *i* ]] && echo non-interactive\n",
 		},
 	}
 
@@ -1210,6 +1277,7 @@ func TestSetBuiltin(t *testing.T) {
 		{"clear positionals", "set --\n", "set argv\n"},
 		{"flagless form", "set alpha beta\n", "set argv alpha beta\n"},
 		{"command substitution value", "set -- $(pwd)\n", "set argv $(pwd)\n"},
+		{"single dash terminator", "set - alpha beta\n", "set argv alpha beta\n"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1559,6 +1627,26 @@ func TestTestClause(t *testing.T) {
 			"regex match",
 			"[[ $str =~ ^[0-9]+$ ]]\n",
 			"string match -r -q -- '^[0-9]+$' $str\n",
+		},
+		{
+			"interactive shell check glob",
+			"[[ $- == *i* ]]\n",
+			"status is-interactive\n",
+		},
+		{
+			"interactive shell check quoted glob",
+			"[[ $- == *\"i\"* ]]\n",
+			"status is-interactive\n",
+		},
+		{
+			"non-interactive shell check",
+			"[[ $- != *i* ]]\n",
+			"! status is-interactive\n",
+		},
+		{
+			"interactive shell check regex",
+			"[[ $- =~ i ]]\n",
+			"status is-interactive\n",
 		},
 		{
 			"and combiner",
