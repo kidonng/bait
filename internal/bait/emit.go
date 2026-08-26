@@ -116,6 +116,9 @@ func (e *emitter) body(stmts []*syntax.Stmt, dangling []syntax.Comment) {
 // take a single job).
 func (e *emitter) condText(cond []*syntax.Stmt) string {
 	if len(cond) == 1 {
+		if c, ok := cond[0].Cmd.(*syntax.CallExpr); ok {
+			e.warnBashOnlyBuiltin(cond[0], c)
+		}
 		return e.render(cond[0])
 	}
 	parts := make([]string, len(cond))
@@ -185,7 +188,84 @@ func (e *emitter) lines(s string) {
 // redirections, and the background marker -- all of which are also valid
 // fish.
 func (e *emitter) simple(s *syntax.Stmt) {
+	if c, ok := s.Cmd.(*syntax.CallExpr); ok {
+		e.warnBashOnlyBuiltin(s, c)
+		if len(c.Assigns) == 0 && e.isSetBuiltin(c) {
+			if e.setCmd(s, c) {
+				return
+			}
+		}
+	}
 	e.lines(e.render(s))
+}
+
+// warnBashOnlyBuiltin flags bash builtins that fish lacks entirely (or
+// whose fish counterpart differs fatally). They are emitted verbatim
+// with a warning: silent passthrough would only fail at runtime.
+var bashOnlyBuiltins = map[string]string{
+	"hash":    "use 'command -v' or 'type -q' instead",
+	"trap":    "use function --on-event handlers instead",
+	"unset":   "use 'set --erase NAME' instead",
+	"shift":   "reassign $argv instead",
+	"let":     "use 'math' instead",
+	"getopts": "use 'argparse' inside functions instead",
+	"pushd":   "fish has no directory stack",
+	"popd":    "fish has no directory stack",
+	"dirs":    "fish has no directory stack",
+	"shopt":   "fish has no shell options",
+	"ulimit":  "fish has no ulimit builtin",
+	"unalias": "fish aliases are functions; remove the function instead",
+}
+
+func (e *emitter) warnBashOnlyBuiltin(s *syntax.Stmt, c *syntax.CallExpr) {
+	if len(c.Args) == 0 || len(c.Assigns) != 0 || c.Args[0].Pos().Col() == 0 {
+		return
+	}
+	name := e.render(c.Args[0])
+	if hint, ok := bashOnlyBuiltins[name]; ok {
+		e.warn(s.Position, "%s is a bash builtin with no fish equivalent (%s); emitted verbatim", name, hint)
+	}
+}
+
+// isSetBuiltin reports whether the command invokes bash's set builtin,
+// including the bare argument-less form.
+func (e *emitter) isSetBuiltin(c *syntax.CallExpr) bool {
+	if len(c.Args) == 0 {
+		return true
+	}
+	// Synthesized `set` commands produced by the translator's own
+	// rewrites (arithmetic statements, assignments) carry no source
+	// position; only user-written set builtins are rewritten.
+	if c.Args[0].Pos().Col() == 0 {
+		return false
+	}
+	return e.render(c.Args[0]) == "set"
+}
+
+// setCmd rewrites bash's set builtin. `set --` and bash's flagless
+// `set args...` form assign fish's argv list; option forms and the bare
+// `set` state dump have no fish equivalent and are dropped. Reports
+// whether the statement was fully handled; when false, c.Args has been
+// rewritten to the `set argv ...` form for normal rendering.
+func (e *emitter) setCmd(s *syntax.Stmt, c *syntax.CallExpr) bool {
+	args := c.Args[1:] // drop the command word
+	if len(args) == 0 {
+		e.warn(s.Position, "set with no arguments prints shell state; statement dropped")
+		return true
+	}
+	head := e.render(args[0])
+	if head != "--" && (strings.HasPrefix(head, "-") || strings.HasPrefix(head, "+")) {
+		e.warn(s.Position, "set flags have no fish equivalent; statement dropped")
+		return true
+	}
+	if head == "--" {
+		args = args[1:]
+	}
+	out := make([]*syntax.Word, 0, len(args)+2)
+	out = append(out, litWord("set"), litWord("argv"))
+	out = append(out, args...)
+	c.Args = out
+	return false
 }
 
 // stripReadRawFlags removes bash's read -r flag. fish's read builtin has
@@ -231,12 +311,109 @@ func (e *emitter) normalize(f *syntax.File) {
 // valid fish verbatim; a structural operand (rare) falls back.
 func (e *emitter) binary(s *syntax.Stmt) {
 	bcmd := s.Cmd.(*syntax.BinaryCmd)
+	// A function definition always succeeds, so `f() { … } && cmd` is a
+	// plain sequence in both shells; emit the two statements in order.
+	if _, ok := bcmd.X.Cmd.(*syntax.FuncDecl); ok && bcmd.Op == syntax.AndStmt {
+		e.stmt(bcmd.X)
+		e.stmt(bcmd.Y)
+		return
+	}
 	if hasStructural(bcmd.X) || hasStructural(bcmd.Y) {
 		e.warn(bcmd.OpPos, "combiner over a compound statement is not translated; emitted verbatim")
 		e.printf("%s", e.render(s))
 		return
 	}
+	if chainHasAssignment(bcmd) {
+		e.emitChain(bcmd)
+		return
+	}
 	e.simple(s)
+}
+
+func chainHasAssignment(b *syntax.BinaryCmd) bool {
+	found := false
+	syntax.Walk(b, func(n syntax.Node) bool {
+		c, ok := n.(*syntax.CallExpr)
+		if !ok {
+			return true
+		}
+		if len(c.Args) == 0 && len(c.Assigns) > 0 {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+// emitChain renders an &&/||/| chain leaf by leaf so that assignment
+// leaves can become set commands; plain command leaves stay verbatim.
+func (e *emitter) emitChain(b *syntax.BinaryCmd) {
+	var leaves []*syntax.Stmt
+	var ops []syntax.BinCmdOperator
+	var walk func(*syntax.BinaryCmd)
+	walk = func(b *syntax.BinaryCmd) {
+		if xb, ok := b.X.Cmd.(*syntax.BinaryCmd); ok {
+			walk(xb)
+		} else {
+			leaves = append(leaves, b.X)
+		}
+		ops = append(ops, b.Op)
+		if yb, ok := b.Y.Cmd.(*syntax.BinaryCmd); ok {
+			walk(yb)
+		} else {
+			leaves = append(leaves, b.Y)
+		}
+	}
+	walk(b)
+	parts := make([]string, 0, 2*len(leaves))
+	for i, leaf := range leaves {
+		if i > 0 {
+			parts = append(parts, binOpText(ops[i-1]))
+		}
+		parts = append(parts, e.chainLeaf(leaf))
+	}
+	e.lines(strings.Join(parts, " "))
+}
+
+func binOpText(op syntax.BinCmdOperator) string {
+	switch op {
+	case syntax.AndStmt:
+		return "&&"
+	case syntax.OrStmt:
+		return "||"
+	case syntax.Pipe:
+		return "|"
+	case syntax.PipeAll:
+		return "|&"
+	}
+	return ";"
+}
+
+// chainLeaf renders one leaf of a combiner chain: pure assignments
+// become set commands, everything else renders verbatim.
+func (e *emitter) chainLeaf(st *syntax.Stmt) string {
+	c, ok := st.Cmd.(*syntax.CallExpr)
+	if !ok || len(c.Args) != 0 || len(c.Assigns) == 0 {
+		return e.render(st)
+	}
+	scope := ""
+	if e.inFunction {
+		scope = "--global"
+	}
+	var parts []string
+	for _, a := range c.Assigns {
+		if a.Name == nil || a.Append || a.Index != nil || a.Array != nil {
+			e.warn(st.Position, "assignment in a combiner chain cannot be translated; emitted verbatim")
+			return e.render(st)
+		}
+		parts = append(parts, fmt.Sprintf("set %s%s %s",
+			scopePrefix(scope), a.Name.Value, e.assignValue(a)))
+	}
+	if len(parts) == 1 {
+		return parts[0]
+	}
+	return "begin; " + strings.Join(parts, "; ") + "; end"
 }
 
 func hasStructural(s *syntax.Stmt) bool {
@@ -340,9 +517,22 @@ func (e *emitter) funcDecl(s *syntax.Stmt, fd *syntax.FuncDecl) {
 	e.printf("function %s", fd.Name.Value)
 	saved := e.inFunction
 	e.inFunction = true
-	switch body := fd.Body.Cmd.(type) {
+	body := fd.Body.Cmd
+	if bcmd, ok := body.(*syntax.BinaryCmd); ok && bcmd.Op == syntax.AndStmt {
+		if blk, ok := bcmd.X.Cmd.(*syntax.Block); ok {
+			// mvdan parses `f() { … } && cmd` with the combiner inside
+			// the body; bash applies it to the definition statement,
+			// which always succeeds. Close the function, then run cmd.
+			e.body(blk.Stmts, blk.Last)
+			e.inFunction = saved
+			e.printf("end%s", tail)
+			e.stmt(bcmd.Y)
+			return
+		}
+	}
+	switch b := body.(type) {
 	case *syntax.Block:
-		e.body(body.Stmts, body.Last)
+		e.body(b.Stmts, b.Last)
 	default:
 		e.body([]*syntax.Stmt{fd.Body}, nil)
 	}
@@ -389,6 +579,13 @@ func (e *emitter) assignStmt(s *syntax.Stmt, c *syntax.CallExpr) {
 		scope = "--global"
 	}
 	for _, a := range c.Assigns {
+		if a.Name != nil {
+			if args, ok := e.selfRefAccumulation(a); ok {
+				e.printf("set %s%s %s", scopePrefix(scope),
+					a.Name.Value, strings.Join(args, " "))
+				continue
+			}
+		}
 		switch {
 		case a.Name == nil:
 			e.warn(s.Position, "unnamed assignment cannot be translated; emitted verbatim")
@@ -422,6 +619,57 @@ func (e *emitter) assignStmt(s *syntax.Stmt, c *syntax.CallExpr) {
 			e.setLine(scope, a.Name.Value, e.assignValue(a))
 		}
 	}
+}
+
+// selfRefAccumulation detects `X="$X more words"`: bash accumulates a
+// string that is word-split at unquoted use sites, while fish reaches
+// the same observable behavior by accumulating a list. It returns the
+// arguments for `set X $X <words...>`, splitting literal parts on
+// whitespace and keeping adjacent fragments in one word.
+func (e *emitter) selfRefAccumulation(a *syntax.Assign) ([]string, bool) {
+	if a.Value == nil || len(a.Value.Parts) != 1 {
+		return nil, false
+	}
+	q, ok := a.Value.Parts[0].(*syntax.DblQuoted)
+	if !ok || len(q.Parts) < 2 {
+		return nil, false
+	}
+	pe, ok := q.Parts[0].(*syntax.ParamExp)
+	if !ok || pe.Param == nil || pe.Param.Value != a.Name.Value || !bareParam(pe) {
+		return nil, false
+	}
+	var args []string
+	cur := ""
+	flush := func() {
+		if cur != "" {
+			args = append(args, cur)
+			cur = ""
+		}
+	}
+	for _, p := range q.Parts[1:] {
+		switch p := p.(type) {
+		case *syntax.Lit:
+			v := p.Value
+			if v != strings.TrimLeft(v, " \t") {
+				flush()
+			}
+			for i, f := range strings.Fields(v) {
+				if i > 0 {
+					flush()
+				}
+				cur += f
+			}
+			if v != strings.TrimRight(v, " \t") {
+				flush()
+			}
+		case *syntax.ParamExp:
+			cur += e.render(&syntax.Word{Parts: []syntax.WordPart{p}})
+		default:
+			return nil, false
+		}
+	}
+	flush()
+	return append([]string{"$" + a.Name.Value}, args...), true
 }
 
 func scopePrefix(scope string) string {
@@ -853,6 +1101,26 @@ func (e *emitter) arithCommand(ac *syntax.ArithmCmd) syntax.Command {
 	return nil
 }
 
+// warnCmdSubstSubshells flags bash subshells nested inside command
+// substitutions. Their contents never pass through the statement
+// emitter (words print verbatim), and fish parses (...) as command
+// substitution, so the raw parens change meaning or fail to parse.
+func (e *emitter) warnCmdSubstSubshells(f *syntax.File) {
+	syntax.Walk(f, func(n syntax.Node) bool {
+		cs, ok := n.(*syntax.CmdSubst)
+		if !ok {
+			return true
+		}
+		syntax.Walk(cs, func(inner syntax.Node) bool {
+			if p, ok := inner.(*syntax.Subshell); ok {
+				e.warn(p.Lparen, "subshell inside a command substitution is emitted verbatim; fish would misparse it")
+			}
+			return true
+		})
+		return true
+	})
+}
+
 // arithmText renders an arithmetic expression as fish math payload text,
 // rewriting bare variable names to $references. ok reports whether every
 // operator has a math equivalent.
@@ -924,8 +1192,10 @@ func mathSubst(payload string) syntax.WordPart {
 }
 
 func setCall(name string, value syntax.WordPart) syntax.Command {
+	// The zero position on the command word marks this command as
+	// synthesized; source positions always have a column >= 1.
 	return &syntax.CallExpr{Args: []*syntax.Word{
-		litWord("set"),
+		{Parts: []syntax.WordPart{&syntax.Lit{Value: "set"}}},
 		litWord(name),
 		{Parts: []syntax.WordPart{value}},
 	}}
@@ -1042,6 +1312,12 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 
 	case pe.Exp != nil:
 		exp := pe.Exp
+		// The default/alternate/pattern word may itself contain
+		// parameter expansions; rewrite them before rendering, since the
+		// outer walk visits this node before its nested words.
+		if exp.Word != nil {
+			exp.Word.Parts = e.spliceParts(exp.Word.Parts)
+		}
 		switch exp.Op {
 		case syntax.DefaultUnsetOrNull:
 			chain := binCmd(syntax.OrStmt,
@@ -1073,6 +1349,10 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 
 		case syntax.RemSmallPrefix, syntax.RemLargePrefix,
 			syntax.RemSmallSuffix, syntax.RemLargeSuffix:
+			if exp.Word == nil {
+				// `${x%}` / `${x#}` strip an empty pattern: identity.
+				return []syntax.WordPart{namedParam(name)}, true
+			}
 			lazy := exp.Op == syntax.RemSmallPrefix || exp.Op == syntax.RemSmallSuffix
 			body, ok := globToRegex(e.render(exp.Word), lazy)
 			if !ok {
@@ -1095,15 +1375,24 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 
 // argWord renders a word for use as a single printf argument: bare when
 // plain, double-quoted around expansions, single-quoted when it embeds
-// double quotes.
+// double quotes but no expansions.
 func (e *emitter) argWord(w *syntax.Word) *syntax.Word {
+	if w == nil {
+		// `${x-}`, `${x:-}`, `${x:+}` with an empty default parse with
+		// a nil Word; render as an explicit empty argument.
+		return litWord("''")
+	}
 	s := e.render(w)
 	switch {
 	case s == "":
 		return litWord("''")
 	case !strings.ContainsAny(s, " $\t\""):
 		return litWord(s)
-	case strings.Contains(s, "\""):
+	case strings.Contains(s, "$"):
+		// Expansions must stay live, so keep double quotes and escape
+		// the inner ones; fish treats \" inside "..." as a literal.
+		return litWord(`"` + strings.ReplaceAll(s, `"`, `\"`) + `"`)
+	case strings.Contains(s, `"`):
 		return litWord("'" + s + "'")
 	default:
 		return dq(litPart(s))

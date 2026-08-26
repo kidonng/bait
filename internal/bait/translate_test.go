@@ -314,6 +314,46 @@ func TestWarnings(t *testing.T) {
 			"case $x in\na) echo one ;&\nb) echo two ;;\nesac\n",
 			"fallthrough",
 		},
+		{
+			"set flags dropped",
+			"set -e\n",
+			"set flags",
+		},
+		{
+			"trap passthrough",
+			"trap cleanup EXIT\n",
+			"bash builtin",
+		},
+		{
+			"hash passthrough",
+			"hash curl 2>/dev/null\n",
+			"bash builtin",
+		},
+		{
+			"hash in condition",
+			"if hash curl 2>/dev/null; then echo y; fi\n",
+			"bash builtin",
+		},
+		{
+			"subshell inside command substitution",
+			"x=$( (cd /tmp && pwd); )\n",
+			"subshell inside a command substitution",
+		},
+		{
+			"trap passthrough",
+			"trap cleanup EXIT\n",
+			"bash builtin",
+		},
+		{
+			"set flags dropped",
+			"set -e\n",
+			"set flags",
+		},
+		{
+			"bare set dropped",
+			"set\n",
+			"statement dropped",
+		},
 	}
 
 	for _, tc := range tests {
@@ -438,6 +478,17 @@ func TestBashFishEquivalence(t *testing.T) {
 				"bump\necho \"after:$COUNTER\"\n",
 		},
 		{
+			name: "chain assignment fallback",
+			src:  "false || GREET=hi\necho \"got:$GREET\"\n",
+		},
+		{
+			name: "flag accumulation stays splittable",
+			env:  []string{"NETRC=/tmp/netrc"},
+			src: "FLAGS=\"--silent\"\n" +
+				"FLAGS=\"$FLAGS --netrc-file $NETRC\"\n" +
+				"printf '%s\\n' $FLAGS\n",
+		},
+		{
 			name: "positional parameters",
 			args: []string{"alpha", "beta"},
 			src:  "echo \"first:$1 second:$2 count:$#\"\n",
@@ -480,6 +531,12 @@ func TestBashFishEquivalence(t *testing.T) {
 				"echo \"second:${fruits[1]}\"\n" +
 				"fruits+=(date)\n" +
 				"echo \"after:${#fruits[@]}\"\n",
+		},
+		{
+			name: "set positional params",
+			src: "set -- alpha \"beta gamma\"\n" +
+				"echo \"$1|$2\"\n" +
+				"echo \"count:$#\"\n",
 		},
 	}
 
@@ -619,6 +676,21 @@ func TestTier2(t *testing.T) {
 			"declare in function is local",
 			"f() {\n\tdeclare n=2\n}\n",
 			"function f\n    set --local n 2\nend\n",
+		},
+		{
+			"self-referential accumulation becomes list append",
+			"OPTS=\"--silent\"\nOPTS=\"$OPTS --netrc\"\n",
+			"set OPTS \"--silent\"\nset OPTS $OPTS --netrc\n",
+		},
+		{
+			"adjacent value concatenates in one word",
+			"OPTS=x\nOPTS=\"$OPTS --file=$F\"\n",
+			"set OPTS x\nset OPTS $OPTS --file=$F\n",
+		},
+		{
+			"non-self reference untouched",
+			"LINE=\"set PATH \\\"$BIN\\\" \\$PATH\"\n",
+			"set LINE \"set PATH \\\"$BIN\\\" \\$PATH\"\n",
 		},
 	}
 
@@ -906,6 +978,135 @@ func TestTier2Arrays(t *testing.T) {
 			}
 			if string(got) != tc.want {
 				t.Errorf("array mismatch\n in:   %q\n got:  %q\n want: %q",
+					tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSetBuiltin covers bash's set builtin: positional assignment maps
+// onto fish's argv list, while option forms are dropped with a warning.
+func TestSetBuiltin(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"positional assignment", "set -- alpha beta\n", "set argv alpha beta\n"},
+		{"quoted value", "set -- \"a b\" c\n", "set argv \"a b\" c\n"},
+		{"clear positionals", "set --\n", "set argv\n"},
+		{"flagless form", "set alpha beta\n", "set argv alpha beta\n"},
+		{"command substitution value", "set -- $(pwd)\n", "set argv $(pwd)\n"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, warnings, err := Translate([]byte(tc.in))
+			if err != nil {
+				t.Fatalf("Translate(%q) error: %v", tc.in, err)
+			}
+			if len(warnings) != 0 {
+				t.Errorf("unexpected warnings: %v", warnings)
+			}
+			if string(got) != tc.want {
+				t.Errorf("set mismatch\n in: %q\n got: %q\n want: %q",
+					tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestExpansionRegression pins behaviors exposed by real-world scripts:
+// empty-default expansions, function-definition combiners, and nested
+// expansions inside default values.
+func TestExpansionRegression(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			"empty default unset",
+			"echo ${x-}\n",
+			"echo $(set --query x && printf %s\\n \"$x\" || printf %s\\n '')\n",
+		},
+		{
+			"empty default unset or null",
+			"echo ${x:-}\n",
+			"echo $(test -n \"$x\" && printf %s\\n \"$x\" || printf %s\\n '')\n",
+		},
+		{
+			"empty pattern strip is identity",
+			"echo ${x%}\n",
+			"echo $x\n",
+		},
+		{
+			"function definition combined with call",
+			"f() { echo hi; } && f\n",
+			"function f\n    echo hi\nend\nf\n",
+		},
+		{
+			"nested expansion in default stays live",
+			"echo ${A:-x${B%/}y}\n",
+			"echo $(test -n \"$A\" && printf %s\\n \"$A\" || printf %s\\n \"x$(string replace --regex '/$' '' -- $B)y\")\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, warnings, err := Translate([]byte(tc.in))
+			if err != nil {
+				t.Fatalf("Translate(%q) error: %v", tc.in, err)
+			}
+			if len(warnings) != 0 {
+				t.Errorf("unexpected warnings: %v", warnings)
+			}
+			if string(got) != tc.want {
+				t.Errorf("mismatch\n in: %q\n got: %q\n want: %q",
+					tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestChainAssignments pins assignment leaves inside &&/||/| chains:
+// they become set commands while plain command leaves stay verbatim.
+func TestChainAssignments(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			"assignment as fallback",
+			"false || X=fall\n",
+			"false || set X fall\n",
+		},
+		{
+			"assignment leading a chain",
+			"X=init && cmd\n",
+			"set X init && cmd\n",
+		},
+		{
+			"assignment with command substitution",
+			"HTTP_CODE=$(curl -s example.com) || CURL_ERR=$?\n",
+			"set HTTP_CODE $(curl -s example.com) || set CURL_ERR $status\n",
+		},
+		{
+			"pipe with assignment leaf",
+			"true | X=1\n",
+			"true | set X 1\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, warnings, err := Translate([]byte(tc.in))
+			if err != nil {
+				t.Fatalf("Translate(%q) error: %v", tc.in, err)
+			}
+			if len(warnings) != 0 {
+				t.Errorf("unexpected warnings: %v", warnings)
+			}
+			if string(got) != tc.want {
+				t.Errorf("mismatch\n in: %q\n got: %q\n want: %q",
 					tc.in, got, tc.want)
 			}
 		})

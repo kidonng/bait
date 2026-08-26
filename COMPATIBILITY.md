@@ -64,6 +64,8 @@ content is not shell fail at the parse stage with an error.
 | `colors=(red blue)` | `set colors red blue` |
 | `arr[2]=x` | `set arr[3] x` (constant indices shifted +1) |
 | `arr+=(x)` | `set --append arr x` |
+| assignment in a combiner chain: `cmd \|\| x=fall`, `x=init && cmd` | `set` command emitted as the chain leaf: `cmd \|\| set x fall` |
+| self-referential accumulation `X="$X more words"` | list append `set X $X more words` — bash word-splits the accumulated string at unquoted use sites; fish reaches the same observable behavior by accumulating a list (initial values containing spaces are not split) |
 
 All generated builtin options use long form (`set --local`, `set --append`,
 `string --regex`, …).
@@ -111,6 +113,18 @@ parentheses, and the corresponding compound assignments.
 |---|---|---|
 | `read -r line` | `read line` | fish's `read` has no `-r`; it would treat `-r` as a variable name and silently corrupt input |
 
+### The `set` builtin
+
+| bash | fish |
+|---|---|
+| `set -- a b` and the flagless `set a b` form | `set argv a b` — bash positional parameters map onto fish's argv list |
+| `set --` | `set argv` (clears positional parameters / argv) |
+| `set -e`, `set -u`, `set +x`, `set -o name`, … | dropped; a warning is reported — fish has no shell option flags |
+| bare `set` | dropped; a warning is reported — bash dumps shell state, which has no fish meaning |
+
+Values are emitted as written, so quoting and command substitutions are
+preserved (`set -- "$(cmd)"` stays `set argv "$(cmd)"`).
+
 ## Translated with documented differences
 
 - **Subshells** `( … )` become `begin … end`. Fish has no subshell;
@@ -149,6 +163,13 @@ parentheses, and the corresponding compound assignments.
 - `export` flags such as `export -n` (not supported by fish's wrapper)
 - Case-modification operators `${v^}` `${v^^}` `${v,}` `${v,,}`
 - `$@` / `$*` embedded inside larger words
+- bash-only builtins with no fish equivalent: `hash`, `trap`, `unset`,
+  `shift`, `let`, `getopts`, `pushd`, `popd`, `dirs`, `shopt`, `ulimit`,
+  `unalias` — emitted verbatim with a hint (silent passthrough would
+  only fail at runtime)
+- Subshells `( … )` nested inside command substitutions — their body
+  never passes through the statement emitter, and fish parses `( … )`
+  as command substitution, so the verbatim parens would misparse
 - `coproc`, mksh/zsh-only constructs
 
 ## Not supported
