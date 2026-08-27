@@ -1029,7 +1029,12 @@ func (e *emitter) forClause(s *syntax.Stmt, f *syntax.ForClause) {
 			e.needsBaitWords = true
 			continue
 		}
-		items[i] = e.render(w)
+		if _, ok := singleBareCmdSubst(w); ok {
+			items[i] = "(__bait_words " + e.renderWordSmart(w) + ")"
+			e.needsBaitWords = true
+			continue
+		}
+		items[i] = e.renderWordSmart(w)
 	}
 	if !iter.InPos.IsValid() {
 		// bash iterates the positional parameters when "in" is omitted.
@@ -2548,6 +2553,16 @@ func singleBareParam(w *syntax.Word) (*syntax.ParamExp, bool) {
 		return nil, false
 	}
 	return pe, true
+}
+func singleBareCmdSubst(w *syntax.Word) (*syntax.CmdSubst, bool) {
+	if w == nil || len(w.Parts) != 1 {
+		return nil, false
+	}
+	cs, ok := w.Parts[0].(*syntax.CmdSubst)
+	if !ok {
+		return nil, false
+	}
+	return cs, true
 }
 
 const baitWordsHelper = `function __bait_words

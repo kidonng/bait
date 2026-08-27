@@ -622,6 +622,21 @@ func TestBashFishEquivalence(t *testing.T) {
 				"done\n",
 		},
 		{
+			name: "for over command substitution empty output",
+			src: "get_empty() { echo \"\"; }\n" +
+				"for x in $(get_empty); do\n" +
+				"\techo \"item:$x\"\n" +
+				"done\n" +
+				"echo done\n",
+		},
+		{
+			name: "for over command substitution space-separated",
+			src: "get_items() { echo \"item1 item2 item3\"; }\n" +
+				"for x in $(get_items); do\n" +
+				"\techo \"got:$x\"\n" +
+				"done\n",
+		},
+		{
 			name: "dynamic command execution",
 			src: "cmd=\"printf [%s]\\n hello world\"\n" +
 				"$cmd\n",
@@ -1799,6 +1814,11 @@ func TestRustupSupportFeatures(t *testing.T) {
 			name:     "word split applied to options variable",
 			in:       "curl $_retry $url\n",
 			contains: "(__bait_words $_retry)",
+		},
+		{
+			name:     "word split applied to for loop command substitution",
+			in:       "for x in $(get_items); do echo \"$x\"; done\n",
+			contains: "for x in (__bait_words $(get_items))",
 		},
 		{
 			name: "getopts helper emitted",
