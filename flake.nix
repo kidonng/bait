@@ -49,17 +49,6 @@
         default = bait;
       });
 
-      apps = forAllSystems (pkgs: {
-        default = {
-          type = "app";
-          program = "${self.packages.${pkgs.stdenv.hostPlatform.system}.default}/bin/bait";
-        };
-        test = {
-          type = "app";
-          program = "${self.packages.${pkgs.stdenv.hostPlatform.system}.test}/bin/bait-test";
-        };
-      });
-
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
           # Target shells and tools used for development and test execution.
