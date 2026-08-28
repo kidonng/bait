@@ -7,7 +7,7 @@ This guide inventories the compatibility mappings, runtime differences, and diag
 ## Translation Policy
 
 - **Native Passthrough**: What modern Fish natively supports (pipes, redirects, combiners, commands, per-command env `VAR=val cmd`, backgrounding, quotes, standard builtins) is passed through byte-for-byte with zero rewrite overhead.
-- **Idiomatic Translation**: Constructs incompatible with Fish syntax are rewritten into native Fish keywords, builtins, and long-option flags (`set --local`, `set --append`, `string match --regex`, etc.).
+- **Idiomatic Translation**: Constructs incompatible with Fish syntax are rewritten into native Fish keywords, builtins, and long-option flags (`set --function`, `set --append`, `string match --regex`, etc.).
 - **On-Demand Helpers**: If a script relies on behaviors Fish lacks natively (POSIX `getopts`, unquoted field splitting, dynamic command strings), `bait` injects minimal, self-contained pure-Fish helpers at the top of the file. Plain scripts have zero runtime footprint.
 - **Explicit Warnings**: Constructs with no faithful equivalent are emitted verbatim with a line/column diagnostic warning on stderr (suppressible with `--quiet`).
 
@@ -43,7 +43,7 @@ This guide inventories the compatibility mappings, runtime differences, and diag
 | `[[ $a == glob* ]]`, `[[ $a != glob* ]]` | `string match -q -- 'glob*' $a`, `! string match -q -- 'glob*' $a` | Wildcard pattern matching |
 | `[[ $str =~ regex ]]` | `string match -r -q -- 'regex' $str` | Regular expression matching |
 | `[[ -v VAR ]]` | `set -q VAR` | Variable existence check |
-| `[[ $- == *i* ]]`, `case $- in *i*)` | `status is-interactive` | Interactive shell check |
+| `[[ $- == *i* ]]`, `case $- in *i*)` | `status is-interactive` | Interactive shell check (simple 1- or 2-branch case forms; other patterns warn and fall back) |
 | `[[ cond1 && cond2 ]]` | `cond1 && cond2` | Logical AND |
 | `[[ cond1 \|\| cond2 ]]` | `cond1 \|\| cond2` | Logical OR |
 | `[[ (c1 \|\| c2) && c3 ]]` | `begin c1 \|\| c2; end && c3` | Grouped condition |
@@ -52,7 +52,7 @@ This guide inventories the compatibility mappings, runtime differences, and diag
 
 ## 3. Variables, Scoping & State Builtins
 
-Fish uses explicit scoping flags (`--local`, `--function`, `--global`). `bait` translates assignments predictably without magic heuristics:
+Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates assignments predictably without magic heuristics:
 
 | Bash | Fish | Scoping / Notes |
 |---|---|---|
@@ -65,15 +65,17 @@ Fish uses explicit scoping flags (`--local`, `--function`, `--global`). `bait` t
 | `arr=(a b c)` | `set arr a b c` | Native Fish list |
 | `arr[2]=val` | `set arr[3] val` | Array index shifted +1 (Fish is 1-based) |
 | `arr+=(val)` | `set --append arr val` | Appends element to list |
+| `X="$X more words"` | `set X $X more words` | Self-referential string accumulation optimized into Fish list append |
 | `set -- a b`, `set - a b`, `set a b` | `set argv a b` | Positional parameter assignment |
 | `set --` | `set argv` | Clears positional parameters |
 | `shift`, `shift N` | `set --erase argv[1]`, `set --erase argv[1..N]` | Shifts positional arguments |
 | `unset x`, `unset -v x y` | `set --erase x`, `set --erase x y` | Erases variable |
 | `unset -f func` | `functions --erase func` | Erases function definition |
 | `unset 'arr[0]'` | `set --erase arr[1]` | Erases specific array element |
-| `read -r line` | `read line` | Fish's `read` drops `-r` (Fish `-r` would set a variable named `r`) |
+| `read -r line`, `read _` | `read line`, `read _unused` | Drops `-r` (default in Fish); rewrites `_` to `_unused` (Fish `$_` is read-only) |
 | `set` (bare), `set -` | *(dropped with warning)* | Prints shell state / trace flags in Bash; dropped in Fish |
 | `set -e`, `set -u`, `set +x`, `set -o ...` | *(dropped with warning)* | Fish has no shell option flags |
+| `eval "..."` | `eval "..."` | Passthrough (emits warning: Fish `eval` executes Fish syntax; incompatible Bash syntax will fail at runtime) |
 
 ---
 
@@ -192,6 +194,7 @@ The following constructs have no faithful Fish equivalent and are emitted verbat
 - Embedded `$@` or `$*` inside words (e.g. `prefix$@suffix`)
 - Standalone `$-` parameter expansion (emits diagnostic warning; recommend status subcommands)
 - Subshell isolation loss (`(...)` translated to a `begin` block)
+- `eval` statement passthrough (emits diagnostic warning; Fish `eval` executes Fish syntax, so dynamic execution of incompatible Bash syntax will fail at runtime)
 ---
 
 ## 9. Real-World Tested Installers

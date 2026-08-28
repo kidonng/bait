@@ -34,7 +34,12 @@ type emitter struct {
 func (e *emitter) newSubEmitter() *emitter {
 	sub := newEmitter()
 	sub.inFunction = e.inFunction
-	sub.funcLocals = e.funcLocals
+	if e.funcLocals != nil {
+		sub.funcLocals = make(map[string]bool, len(e.funcLocals))
+		for k, v := range e.funcLocals {
+			sub.funcLocals[k] = v
+		}
+	}
 	return sub
 }
 
@@ -145,11 +150,7 @@ func (e *emitter) condText(cond []*syntax.Stmt) string {
 	if len(cond) == 1 {
 		st := cond[0]
 		if hasStructural(st) {
-			txt := e.inlineStmtText(st)
-			if st.Negated {
-				return "! " + txt
-			}
-			return txt
+			return e.inlineStmtText(st)
 		}
 		if c, ok := st.Cmd.(*syntax.CallExpr); ok {
 			e.warnBashOnlyBuiltin(st, c)
@@ -383,7 +384,7 @@ func (e *emitter) unsetCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 		}
 		name := unquoted
 		if !isFunc {
-			name = e.shiftArrayIndex(unquoted)
+			name = e.shiftArrayIndex(s.Position, unquoted)
 		}
 		if len(chunks) > 0 && chunks[len(chunks)-1].isFunc == isFunc {
 			chunks[len(chunks)-1].names = append(chunks[len(chunks)-1].names, name)
@@ -414,7 +415,7 @@ func unquoteArg(arg string) string {
 	return arg
 }
 
-func (e *emitter) shiftArrayIndex(name string) string {
+func (e *emitter) shiftArrayIndex(pos syntax.Pos, name string) string {
 	idxStart := strings.IndexByte(name, '[')
 	idxEnd := strings.LastIndexByte(name, ']')
 	if idxStart != -1 && idxEnd > idxStart {
@@ -425,6 +426,7 @@ func (e *emitter) shiftArrayIndex(name string) string {
 				return fmt.Sprintf("%s[%d]", arrName, n+1)
 			}
 		}
+		e.warn(pos, "dynamic array index cannot be shifted; emitted verbatim")
 		return fmt.Sprintf("%s[%s]", arrName, sub)
 	}
 	return e.varName(name)
@@ -701,6 +703,12 @@ func (e *emitter) normalize(f *syntax.File) {
 		if c, ok := n.(*syntax.CallExpr); ok {
 			if len(c.Assigns) == 0 && len(c.Args) > 0 && isLitWord(c.Args[0], "getopts") {
 				e.needsBaitGetopts = true
+				if len(c.Args) == 3 {
+					c.Args = append(c.Args, &syntax.Word{Parts: []syntax.WordPart{argvParam()}})
+				}
+			}
+			if len(c.Args) > 0 && isLitWord(c.Args[0], "eval") && c.Args[0].Pos().Col() > 0 {
+				e.warn(c.Args[0].Pos(), "eval executes fish syntax; incompatible bash syntax will fail at runtime; emitted verbatim")
 			}
 			stripReadRawFlags(c)
 			for i := 1; i < len(c.Args); i++ {
@@ -1256,7 +1264,7 @@ func (e *emitter) renderUnaryTest(u *syntax.UnaryTest) string {
 		if w, ok := u.X.(*syntax.Word); ok {
 			raw := e.render(w)
 			unquoted := unquoteArg(raw)
-			shifted := e.shiftArrayIndex(unquoted)
+			shifted := e.shiftArrayIndex(u.X.Pos(), unquoted)
 			return "set -q " + shifted
 		}
 		return "set -q " + e.render(u.X)
@@ -1461,7 +1469,11 @@ func (e *emitter) funcDecl(s *syntax.Stmt, fd *syntax.FuncDecl) {
 func (e *emitter) group(s *syntax.Stmt, stmts []*syntax.Stmt, last []syntax.Comment) {
 	tail := e.tails(s)
 	e.wrapperComments(s)
-	e.printf("begin")
+	if s.Negated {
+		e.printf("! begin")
+	} else {
+		e.printf("begin")
+	}
 	e.body(stmts, last)
 	e.printf("end%s", tail)
 }
@@ -1506,9 +1518,6 @@ func (e *emitter) assignStmt(s *syntax.Stmt, c *syntax.CallExpr) {
 		if a.Name != nil {
 			if e.inFunction && e.funcLocals != nil && e.funcLocals[a.Name.Value] {
 				curScope = ""
-			}
-			if a.Name.Value == "IFS" && e.inFunction {
-				curScope = "--local"
 			}
 		}
 		if a.Name != nil {
@@ -1710,8 +1719,29 @@ func (e *emitter) declClause(s *syntax.Stmt, d *syntax.DeclClause) {
 	if d.Variant.Value == "export" {
 		if e.hasOptionArg(d.Args) {
 			e.warn(d.Variant.Pos(), "export flag is not supported by fish's export; emitted verbatim")
+			e.printf("%s", e.render(s))
+			return
 		}
-		e.printf("%s", e.render(s))
+		args := make([]string, 0, len(d.Args))
+		for _, a := range d.Args {
+			if a.Naked {
+				if a.Name != nil {
+					args = append(args, e.varName(a.Name.Value))
+				} else if a.Value != nil {
+					args = append(args, e.renderWordSmart(a.Value))
+				}
+				continue
+			}
+			if a.Name != nil {
+				val := e.assignValue(a)
+				args = append(args, fmt.Sprintf("%s=%s", e.varName(a.Name.Value), val))
+			}
+		}
+		if len(args) == 0 {
+			e.printf("export")
+		} else {
+			e.printf("export %s", strings.Join(args, " "))
+		}
 		return
 	}
 	scope := ""
@@ -2494,7 +2524,7 @@ func singleBareCmdSubst(w *syntax.Word) (*syntax.CmdSubst, bool) {
 	return cs, true
 }
 
-const baitWordsHelper = `function __bait_words
+const baitWordsHelper = `function __bait_words --no-scope-shadowing
     if test (count $argv) -eq 0
         return 0
     end
@@ -2520,18 +2550,8 @@ const baitExecHelper = `function __bait_exec
     if test (count $argv) -eq 0
         return 0
     end
-    if type --query -- $argv[1]
-        $argv[1] $argv[2..-1]
-        return $status
-    end
-    set --local words (string match --regex --all '\S+' -- $argv[1])
-    if test (count $words) -gt 0
-        set --local cmd $words[1]
-        set --local cmd_args $words[2..-1]
-        $cmd $cmd_args $argv[2..-1]
-        return $status
-    end
-    $argv[1] $argv[2..-1]
+    set --local words (string match --regex --all '\S+' -- "$argv[1]")
+    $words $argv[2..-1]
 end
 
 `
@@ -2542,7 +2562,7 @@ const baitGetoptsHelper = `function getopts
     if test (count $argv) -gt 2
         set args $argv[3..-1]
     else
-        set args $argv
+        set args
     end
 
     if not set --query OPTIND; or test "$OPTIND" -lt 1

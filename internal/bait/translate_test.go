@@ -2,6 +2,7 @@ package bait
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -257,6 +258,13 @@ func TestTier1(t *testing.T) {
 				"end\n",
 		},
 		{
+			"negated test clause",
+			"if ! [[ -f foo ]]; then echo missing; fi\n",
+			"if ! test -f foo\n" +
+				"    echo missing\n" +
+				"end\n",
+		},
+		{
 			"backgrounded group",
 			"{ sleep 1; } &\n",
 			"begin\n" +
@@ -405,6 +413,21 @@ func TestWarnings(t *testing.T) {
 			"dollar dash standalone warning",
 			"echo \"$-\"\n",
 			"status subcommands",
+		},
+		{
+			"eval passthrough warning",
+			"eval \"echo hello\"\n",
+			"eval executes fish syntax",
+		},
+		{
+			"eval in condition warning",
+			"if eval \"$cmd\"; then echo ok; fi\n",
+			"eval executes fish syntax",
+		},
+		{
+			"eval in command substitution warning",
+			"x=$(eval \"$cmd\")\n",
+			"eval executes fish syntax",
 		},
 	}
 
@@ -787,6 +810,52 @@ func TestBashFishEquivalence(t *testing.T) {
 				"\techo \"opt:$opt\"\n" +
 				"done\n",
 		},
+		{
+			name: "getopts without args uses argv",
+			src: "parse() {\n" +
+				"    while getopts \"ab:\" opt; do\n" +
+				"        echo \"opt:$opt\"\n" +
+				"    done\n" +
+				"}\n" +
+				"parse -a -b val\n" +
+				"parse\n",
+		},
+		{
+			name: "ifs inside function splits properly",
+			src: "split_paths() {\n" +
+				"    IFS=':'\n" +
+				"    paths=\"/usr/bin:/bin:/opt/bin\"\n" +
+				"    for p in $paths; do\n" +
+				"        echo \"p:$p\"\n" +
+				"    done\n" +
+				"}\n" +
+				"split_paths\n",
+		},
+		{
+			name: "ifs inside function local",
+			src: "split_local() {\n" +
+				"    local IFS=':'\n" +
+				"    paths=\"/usr/bin:/bin:/opt/bin\"\n" +
+				"    for p in $paths; do\n" +
+				"        echo \"local_p:$p\"\n" +
+				"    done\n" +
+				"}\n" +
+				"split_local\n",
+		},
+		{
+			name: "negated test clause condition",
+			src: "if ! [[ \"a\" == \"b\" ]]; then\n" +
+				"    echo \"different\"\n" +
+				"fi\n",
+		},
+		{
+			name: "export with expansion equivalence",
+			src: "FOO=original\n" +
+				"export FOO=\"${FOO:-fallback}\"\n" +
+				"echo \"FOO:$FOO\"\n" +
+				"export UNSET_VAR=\"${UNSET_VAR:-fallback}\"\n" +
+				"echo \"UNSET:$UNSET_VAR\"\n",
+		},
 	}
 
 	for _, tc := range tests {
@@ -911,6 +980,11 @@ func TestTier2(t *testing.T) {
 			"export A=1 B=2\n",
 		},
 		{
+			"export with parameter expansion and command substitution",
+			"export FOO=\"${BAR:-default}\" BAZ=$(echo hi)\n",
+			"export FOO=\"$(test -n \"$BAR\" && printf %s\\n \"$BAR\" || printf %s\\n default)\" BAZ=$(echo hi)\n",
+		},
+		{
 			"local maps to set --function",
 			"f() {\n\tlocal x=1\n}\n",
 			"function f\n    set --function x 1\nend\n",
@@ -977,6 +1051,8 @@ func TestTier2Warnings(t *testing.T) {
 		{"dynamic array index", "arr[$i]=x\n", "dynamic array index"},
 		{"export flag", "export -n EDITOR\n", "not supported by fish's export"},
 		{"assert assignment", "cmd ${x:=d}\n", "no fish equivalent"},
+		{"dynamic array index in unset", "unset 'arr[$i]'\n", "dynamic array index"},
+		{"dynamic array index in test -v", "[[ -v arr[$i] ]]\n", "dynamic array index"},
 	}
 
 	for _, tc := range tests {
@@ -1831,5 +1907,64 @@ func TestRustupSupportFeatures(t *testing.T) {
 				t.Errorf("expected output to contain %q, got: %q", tc.contains, string(got))
 			}
 		})
+	}
+}
+func TestSubEmitterLocalsIsolation(t *testing.T) {
+	e := newEmitter()
+	e.inFunction = true
+	e.funcLocals = map[string]bool{"parent_var": true}
+
+	sub := e.newSubEmitter()
+	sub.funcLocals["child_var"] = true
+
+	if e.funcLocals["child_var"] {
+		t.Errorf("parent funcLocals was polluted by sub-emitter mutation")
+	}
+	if !sub.funcLocals["parent_var"] {
+		t.Errorf("sub-emitter did not inherit parent funcLocals")
+	}
+}
+
+
+func TestBaitExecDoesNotEvalMetacharacters(t *testing.T) {
+	if _, err := exec.LookPath("fish"); err != nil {
+		t.Skip("fish not installed")
+	}
+	dir := t.TempDir()
+	outFile := filepath.Join(dir, "should_not_exist")
+	fishScript := fmt.Sprintf("%s\n__bait_exec \"printf [%%s] a | b > %s\"\n", baitExecHelper, outFile)
+
+	cmd := exec.Command("fish", "-c", fishScript)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("fish failed: %v, output: %s", err, string(out))
+	}
+	if _, err := os.Stat(outFile); !os.IsNotExist(err) {
+		t.Errorf("file %s should not have been created by redirection", outFile)
+	}
+	outStr := string(out)
+	if !strings.Contains(outStr, "[a]") || !strings.Contains(outStr, "[|]") || !strings.Contains(outStr, "[>]") {
+		t.Errorf("expected metacharacters to be passed as literal arguments, got: %s", outStr)
+	}
+}
+
+func TestEvalPassthroughWithWarning(t *testing.T) {
+	src := "eval \"echo hello\"\n"
+	got, warnings, err := Translate([]byte(src))
+	if err != nil {
+		t.Fatalf("Translate failed: %v", err)
+	}
+	if string(got) != src {
+		t.Errorf("expected verbatim output %q, got %q", src, string(got))
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("expected 1 warning, got %d", len(warnings))
+	}
+	w := warnings[0]
+	if w.Line != 1 || w.Col != 1 {
+		t.Errorf("expected position 1:1, got %d:%d", w.Line, w.Col)
+	}
+	if !strings.Contains(w.Text, "eval executes fish syntax") {
+		t.Errorf("expected warning text to mention eval executes fish syntax, got: %s", w.Text)
 	}
 }
