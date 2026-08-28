@@ -357,6 +357,11 @@ func TestWarnings(t *testing.T) {
 			"arithmetic command",
 		},
 		{
+			"subshell loses isolation",
+			"(cd /tmp && ls)\n",
+			"subshell isolation",
+		},
+		{
 			"case fallthrough",
 			"case $x in\na) echo one ;&\nb) echo two ;;\nesac\n",
 			"fallthrough",
@@ -380,6 +385,11 @@ func TestWarnings(t *testing.T) {
 			"hash in condition",
 			"if hash curl 2>/dev/null; then echo y; fi\n",
 			"bash builtin",
+		},
+		{
+			"subshell inside command substitution",
+			"x=$( (cd /tmp && pwd); )\n",
+			"subshell isolation",
 		},
 		{
 			"bare set dropped",
@@ -745,25 +755,6 @@ func TestBashFishEquivalence(t *testing.T) {
 			name: "empty command prefix",
 			src: "prefix=\"\"\n" +
 				"$prefix echo running without prefix\n",
-		},
-		{
-			name: "subshell directory isolation",
-			src: "dir_before=$(pwd)\n" +
-				"(\n" +
-				"\tcd /tmp\n" +
-				"\techo \"inside_tmp: $([ \"$(pwd)\" != \"$dir_before\" ] && echo yes)\"\n" +
-				")\n" +
-				"dir_after=$(pwd)\n" +
-				"echo \"parent_isolated: $([ \"$dir_before\" = \"$dir_after\" ] && echo yes)\"\n",
-		},
-		{
-			name: "subshell variable isolation",
-			src: "my_var=\"initial\"\n" +
-				"(\n" +
-				"\tmy_var=\"modified\"\n" +
-				"\techo \"inside: $my_var\"\n" +
-				")\n" +
-				"echo \"outside: $my_var\"\n",
 		},
 		{
 			name: "unset multiple variables with -v flag",
@@ -1460,10 +1451,10 @@ func TestCmdSubstFish(t *testing.T) {
 			0,
 		},
 		{
-			"subshell inside substitution becomes fish -c",
+			"subshell inside substitution becomes begin block",
 			"x=$( (echo hi); )\n",
-			"set x $(fish -c 'echo hi')\n",
-			0,
+			"set x $(begin\n    echo hi\nend)\n",
+			1,
 		},
 		{
 			"if inside substitution",
@@ -1474,8 +1465,8 @@ func TestCmdSubstFish(t *testing.T) {
 		{
 			"pipe into subshell in condition position",
 			"if [ \"$(echo a | (cat))\" = a ]; then echo match; fi\n",
-			"if [ \"$(echo a | fish -c 'cat')\" = a ]\n    echo match\nend\n",
-			0,
+			"if [ \"$(echo a | begin\n    cat\nend)\" = a ]\n    echo match\nend\n",
+			1,
 		},
 	}
 	for _, tc := range tests {
@@ -1583,14 +1574,12 @@ func TestSubshell(t *testing.T) {
 		in   string
 		want string
 	}{
-		{"basic subshell", "(cd /tmp && ls)\n", "fish -c 'cd /tmp && ls'\n"},
-		{"multiple commands", "(cd /tmp; pwd)\n", "fish -c 'cd /tmp; pwd'\n"},
-		{"subshell with redirection", "(cd /tmp && pwd) > /tmp/out\n", "fish -c 'cd /tmp && pwd' > /tmp/out\n"},
-		{"negated subshell", "! (exit 1)\n", "! fish -c 'exit 1'\n"},
-		{"subshell in chain", "(exit 0) && echo ok\n", "fish -c 'exit 0' && echo ok\n"},
-		{"pipe into subshell", "echo hello | (cat)\n", "echo hello | fish -c 'cat'\n"},
-		{"subshell inside command substitution", "x=$( (cd /tmp && pwd) )\n", "set x $(fish -c 'cd /tmp && pwd')\n"},
-		{"nested single quotes inside subshell", "(echo 'hello')\n", "fish -c 'echo \\'hello\\''\n"},
+		{"basic subshell", "(cd /tmp && ls)\n", "begin\n    cd /tmp && ls\nend\n"},
+		{"multiple commands", "(cd /tmp; pwd)\n", "begin\n    cd /tmp\n    pwd\nend\n"},
+		{"subshell with redirection", "(cd /tmp && pwd) > /tmp/out\n", "begin\n    cd /tmp && pwd\nend > /tmp/out\n"},
+		{"subshell in chain", "(exit 0) && echo ok\n", "begin\n    exit 0\nend && echo ok\n"},
+		{"pipe into subshell", "echo hello | (cat)\n", "echo hello | begin\n    cat\nend\n"},
+		{"subshell inside command substitution", "x=$( (cd /tmp && pwd) )\n", "set x $(begin\n    cd /tmp && pwd\nend)\n"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1598,8 +1587,8 @@ func TestSubshell(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Translate(%q) error: %v", tc.in, err)
 			}
-			if len(warnings) > 0 {
-				t.Errorf("unexpected warnings: %v", warnings)
+			if len(warnings) != 1 {
+				t.Errorf("expected 1 warning, got: %v", warnings)
 			}
 			if string(got) != tc.want {
 				t.Errorf("mismatch\n in: %q\n got: %q\n want: %q", tc.in, got, tc.want)

@@ -24,7 +24,7 @@ This guide inventories the compatibility mappings, runtime differences, and diag
 | `case x in p) …;; esac` | `switch x` / `case 'p'` / `end` | Wildcards and multiple patterns supported |
 | `f() { … }`, `function f { … }` | `function f … end` | Function definition |
 | `{ … }` | `begin … end` | Anonymous command block |
-| `( … )` | `fish -c '...'` | True process isolation (directory, variables, umask, traps) |
+| `( … )` | `begin … end` | Anonymous command block (emits warning: subshell isolation is lost) |
 | `cmd &`, `end &` | `cmd &`, `end &` | Background execution |
 | `<(cmd)` | `(cmd \| psub)` | Process substitution via Fish `psub` |
 | `<< EOF`, `<<- EOF` | `printf '%s\n' '...' \| cmd` | Here-document pipeline |
@@ -161,8 +161,8 @@ When scripts use POSIX constructs that Fish does not provide natively, `bait` in
 
 While `bait` strives for 100% behavioral equivalence, Fish semantics differ from Bash in several intentional ways:
 
-1. **Subshell Process Isolation**:
-   - Subshells `( cmd )` become `fish -c 'cmd'`. Working directory changes, variable mutations, and trap handlers remain strictly isolated from the parent shell.
+1. **Subshell Isolation Loss**:
+   - Subshells `( … )` become `begin … end` (both at statement level and nested inside command substitutions or pipelines). Fish has no subshell; variable and `cd` state persists after the block. Every occurrence is reported as a warning.
 2. **List Expansions & Quoting**:
    - In Bash, `"$@"` expands to separate quoted words, while `"$*"` expands to a single joined string.
    - In Fish, quoting a list `"$argv"` joins all elements into a single space-separated string. Therefore, `"$@"` and `"${arr[@]}"` translate to unquoted `$argv` and `$arr` to preserve argument splitting.
@@ -191,6 +191,7 @@ The following constructs have no faithful Fish equivalent and are emitted verbat
 - Export command flags (`export -f`, `export -n`, etc.)
 - Embedded `$@` or `$*` inside words (e.g. `prefix$@suffix`)
 - Standalone `$-` parameter expansion (emits diagnostic warning; recommend status subcommands)
+- Subshell isolation loss (`(...)` translated to a `begin` block)
 ---
 
 ## 9. Real-World Tested Installers
