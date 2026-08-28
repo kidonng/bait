@@ -1051,6 +1051,54 @@ func TestBashFishEquivalence(t *testing.T) {
 				"}\n" +
 				"split_read\n",
 		},
+		{
+			name: "backslash command alias bypass",
+			src: "\\echo hello world\n" +
+				"if ! \\which which >/dev/null 2>&1; then\n" +
+				"\techo missing\n" +
+				"else\n" +
+				"\t\\echo ok\n" +
+				"fi\n",
+		},
+		{
+			name: "double quoted backticks",
+			src: "echo \"Version 'lts' not found - try \\`nvm ls-remote\\` to browse available versions.\"\n" +
+				"cmd=\"ls-remote\"\n" +
+				"echo \"try \\`nvm $cmd\\`\"\n",
+		},
+		{
+			name: "case with bracket character classes",
+			src: "check_line() {\n" +
+				"  case \"$1\" in\n" +
+				"    *[![:space:]]*)\n" +
+				"      echo \"non-empty: $1\"\n" +
+				"      ;;\n" +
+				"    *)\n" +
+				"      echo \"empty or whitespace\"\n" +
+				"      ;;\n" +
+				"  esac\n" +
+				"}\n" +
+				"check_line 'hello'\n" +
+				"check_line '  '\n" +
+				"check_line ''\n" +
+				"check_line 'a b'\n",
+		},
+		{
+			name: "case with bracket negation pattern",
+			src: "clean_dir() {\n" +
+				"  case \"$1\" in\n" +
+				"    *[!/]*/)\n" +
+				"      echo \"trailing slash: $1\"\n" +
+				"      ;;\n" +
+				"    *)\n" +
+				"      echo \"no trailing slash: $1\"\n" +
+				"      ;;\n" +
+				"  esac\n" +
+				"}\n" +
+				"clean_dir '/foo/bar/'\n" +
+				"clean_dir '/foo/bar'\n" +
+				"clean_dir '/'\n",
+		},
 	}
 
 	for _, tc := range tests {
@@ -2772,4 +2820,183 @@ func TestBaitExecCommandAndBuiltin(t *testing.T) {
 			t.Errorf("expected 'hello from builtin', got: %q", string(out))
 		}
 	})
+}
+
+func TestBackslashCommand(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "simple backslash command",
+			in:   `\cd "$@"`,
+			want: "cd $argv\n",
+		},
+		{
+			name: "backslash alias",
+			in:   `\alias foo`,
+			want: "alias foo\n",
+		},
+		{
+			name: "backslash pwd",
+			in:   `\pwd`,
+			want: "pwd\n",
+		},
+		{
+			name: "command builtin with backslash",
+			in:   `\command -v foo`,
+			want: "command -v foo\n",
+		},
+		{
+			name: "builtin keyword with backslash",
+			in:   `\builtin echo hi`,
+			want: "builtin echo hi\n",
+		},
+		{
+			name: "arguments with backslash untouched",
+			in:   `echo \foo \bar`,
+			want: "echo \\foo \\bar\n",
+		},
+		{
+			name: "and-or chain with backslash command",
+			in:   `mkdir -p dir && \cd dir`,
+			want: "mkdir -p dir && cd dir\n",
+		},
+		{
+			name: "negated backslash command",
+			in:   `! \which node`,
+			want: "! which node\n",
+		},
+		{
+			name: "command substitution with backslash command",
+			in:   `DIR="$(nvm_cd && \pwd)"`,
+			want: "set DIR \"$(nvm_cd && pwd)\"\n",
+		},
+		{
+			name: "double backslash preserved",
+			in:   `\\cd foo`,
+			want: "\\\\cd foo\n",
+		},
+		{
+			name: "escaped wildcards and dollars preserved",
+			in:   `echo \* \$foo \ bar`,
+			want: "echo \\* \\$foo \\ bar\n",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _, err := Translate([]byte(tc.in))
+			if err != nil {
+				t.Fatalf("Translate(%q) error: %v", tc.in, err)
+			}
+			if string(got) != tc.want {
+				t.Errorf("mismatch\n in:   %q\n got:  %q\n want: %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDoubleQuotedBackticks(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "simple double quoted backtick",
+			in:   "echo \"try \\`foo\\`\"",
+			want: "echo \"try `foo`\"\n",
+		},
+		{
+			name: "double quoted backtick with variable",
+			in:   "echo \"try \\`${REMOTE_CMD}\\` to browse\"",
+			want: "echo \"try `$REMOTE_CMD` to browse\"\n",
+		},
+		{
+			name: "escaped backslash before backtick",
+			in:   "echo \"try \\\\\\`foo\\\\\\`\"",
+			want: "echo \"try \\\\`foo\\\\`\"\n",
+		},
+		{
+			name: "active backtick command substitution inside double quotes",
+			in:   "echo \"try `echo foo`\"",
+			want: "echo \"try $(echo foo)\"\n",
+		},
+		{
+			name: "assignment with double quoted backtick",
+			in:   "MSG=\"try \\`foo\\`\"",
+			want: "set MSG \"try `foo`\"\n",
+		},
+		{
+			name: "heredoc with escaped backtick",
+			in:   "cat <<EOF\ntry \\`foo\\`\nEOF\n",
+			want: "printf '%s\\n' \"try `foo`\" | cat\n",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _, err := Translate([]byte(tc.in))
+			if err != nil {
+				t.Fatalf("Translate(%q) error: %v", tc.in, err)
+			}
+			if string(got) != tc.want {
+				t.Errorf("mismatch\n in:   %q\n got:  %q\n want: %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCaseWithBracketPatterns(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "bracket character class converted to if",
+			in: "case \"$line\" in\n" +
+				"  *[![:space:]]*)\n" +
+				"    echo yes\n" +
+				"    ;;\n" +
+				"  *)\n" +
+				"    echo no\n" +
+				"    ;;\n" +
+				"esac\n",
+			want: "if string match -r -q -- '^.*[^[:space:]].*$' \"$line\"\n" +
+				"    echo yes\n" +
+				"else\n" +
+				"    echo no\n" +
+				"end\n",
+		},
+		{
+			name: "bracket pattern without wildcard converted to if",
+			in: "case \"$v\" in\n" +
+				"  [0-9]) echo digit ;;\n" +
+				"  [a-z]) echo lower ;;\n" +
+				"  *) echo other ;;\n" +
+				"esac\n",
+			want: "if string match -r -q -- '^[0-9]$' \"$v\"\n" +
+				"    echo digit\n" +
+				"else if string match -r -q -- '^[a-z]$' \"$v\"\n" +
+				"    echo lower\n" +
+				"else\n" +
+				"    echo other\n" +
+				"end\n",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _, err := Translate([]byte(tc.in))
+			if err != nil {
+				t.Fatalf("Translate(%q) error: %v", tc.in, err)
+			}
+			if string(got) != tc.want {
+				t.Errorf("mismatch\n in:   %q\n got:  %q\n want: %q", tc.in, got, tc.want)
+			}
+		})
+	}
 }

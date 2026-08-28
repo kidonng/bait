@@ -1097,6 +1097,60 @@ func isLitWord(w *syntax.Word, val string) bool {
 	return ok && lit.Value == val
 }
 
+func isCmdChar(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+		c == '_' || c == '.' || c == '/'
+}
+
+// normalizeCommandName translates Bash's \cmd alias-bypass syntax to plain cmd.
+// In Bash, prefixing the command word with a backslash (\cd, \alias, \pwd) quotes
+// the first character to prevent alias expansion. In Fish, alias expansion does
+// not exist and backslashes before alphanumeric characters trigger control escapes
+// (\c -> Ctrl-D, \a -> BEL) or unknown command errors. Subsequent arguments
+// are passed to the command itself and are not alias-expanded by the shell.
+func normalizeCommandName(c *syntax.CallExpr) {
+	if len(c.Args) == 0 || len(c.Args[0].Parts) == 0 {
+		return
+	}
+	lit, ok := c.Args[0].Parts[0].(*syntax.Lit)
+	if !ok {
+		return
+	}
+	val := lit.Value
+	if strings.HasPrefix(val, `\`) && !strings.HasPrefix(val, `\\`) && len(val) > 1 {
+		if isCmdChar(val[1]) {
+			lit.Value = val[1:]
+		}
+	}
+}
+
+// unescapeBackticks removes backslashes escaping backticks in double-quoted strings.
+// In Bash double quotes, \` is required to escape backticks from command substitution,
+// and quote removal reduces \` to `. In Fish double quotes, backticks are not command
+// substitutions, and \` is preserved literally as \`. Unescaping \` to ` preserves
+// faithful string output.
+func unescapeBackticks(s string) string {
+	if !strings.Contains(s, "`") || !strings.Contains(s, `\`) {
+		return s
+	}
+	var b strings.Builder
+	for i := range len(s) {
+		if s[i] == '`' {
+			bs := 0
+			for j := i - 1; j >= 0 && s[j] == '\\'; j-- {
+				bs++
+			}
+			if bs%2 == 1 {
+				str := b.String()
+				b.Reset()
+				b.WriteString(str[:len(str)-1])
+			}
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}
+
 func (e *emitter) analyzeVariables(f *syntax.File) {
 	syntax.Walk(f, func(n syntax.Node) bool {
 		if c, ok := n.(*syntax.CallExpr); ok {
@@ -1214,30 +1268,38 @@ func (e *emitter) normalize(f *syntax.File) {
 	e.escapeLiteralDollars(f)
 	e.analyzeVariables(f)
 	syntax.Walk(f, func(n syntax.Node) bool {
-		if c, ok := n.(*syntax.CallExpr); ok {
-			if len(c.Assigns) == 0 && len(c.Args) > 0 && isLitWord(c.Args[0], "getopts") {
+		switch x := n.(type) {
+		case *syntax.CallExpr:
+			normalizeCommandName(x)
+			if len(x.Assigns) == 0 && len(x.Args) > 0 && isLitWord(x.Args[0], "getopts") {
 				e.needsBaitGetopts = true
-				if len(c.Args) == 3 {
-					c.Args = append(c.Args, &syntax.Word{Parts: []syntax.WordPart{argvParam()}})
+				if len(x.Args) == 3 {
+					x.Args = append(x.Args, &syntax.Word{Parts: []syntax.WordPart{argvParam()}})
 				}
 			}
-			if len(c.Args) > 0 && isLitWord(c.Args[0], "eval") && c.Args[0].Pos().Col() > 0 {
-				e.warn(c.Args[0].Pos(), "eval executes fish syntax; incompatible bash syntax will fail at runtime; emitted verbatim")
+			if len(x.Args) > 0 && isLitWord(x.Args[0], "eval") && x.Args[0].Pos().Col() > 0 {
+				e.warn(x.Args[0].Pos(), "eval executes fish syntax; incompatible bash syntax will fail at runtime; emitted verbatim")
 			}
-			normalizeReadCmd(c)
-			for i := 1; i < len(c.Args); i++ {
-				if pe, ok := singleBareParam(c.Args[i]); ok && pe.Param != nil {
+			normalizeReadCmd(x)
+			for i := 1; i < len(x.Args); i++ {
+				if pe, ok := singleBareParam(x.Args[i]); ok && pe.Param != nil {
 					name := pe.Param.Value
 					if e.multiWordScalars[name] && !e.knownLists[name] &&
 						name != "@" && name != "*" && name != "argv" &&
 						!isFishListEnvVar(name) {
 						e.needsBaitWords = true
-						c.Args[i] = &syntax.Word{
+						x.Args[i] = &syntax.Word{
 							Parts: []syntax.WordPart{
 								substPart("__bait_words", "$"+e.varName(name)),
 							},
 						}
 					}
+				}
+			}
+		case *syntax.DblQuoted:
+			for _, p := range x.Parts {
+				if lit, ok := p.(*syntax.Lit); ok {
+					lit.Value = unescapeBackticks(lit.Value)
 				}
 			}
 		}
@@ -1613,6 +1675,10 @@ func (e *emitter) caseClause(s *syntax.Stmt, cl *syntax.CaseClause) {
 		e.printf("end%s", tail)
 		return
 	}
+	if caseHasBracketClass(cl) {
+		e.caseClauseAsIf(s, cl, tail)
+		return
+	}
 	wTxt := e.render(cl.Word)
 	if isDollarDash(cl.Word) {
 		e.warn(cl.Word.Pos(), "$- has no fish equivalent; fish uses status subcommands (e.g. status is-interactive)")
@@ -1637,6 +1703,92 @@ func (e *emitter) caseClause(s *syntax.Stmt, cl *syntax.CaseClause) {
 		e.comment(c)
 	}
 	e.printf("end%s", tail)
+}
+
+func (e *emitter) caseClauseAsIf(s *syntax.Stmt, cl *syntax.CaseClause, tail string) {
+	hasCmdSubst := false
+	syntax.Walk(cl.Word, func(n syntax.Node) bool {
+		if _, ok := n.(*syntax.CmdSubst); ok {
+			hasCmdSubst = true
+			return false
+		}
+		return true
+	})
+	target := e.renderWordSmart(cl.Word)
+	if !strings.HasPrefix(target, `"`) && !strings.HasPrefix(target, `'`) {
+		target = `"` + target + `"`
+	}
+	if hasCmdSubst {
+		e.printf("set --local __bait_case_target %s", target)
+		target = "$__bait_case_target"
+	}
+
+	first := true
+	for i, item := range cl.Items {
+		if !first && i == len(cl.Items)-1 && len(item.Patterns) == 1 && isCatchAll(item.Patterns[0]) {
+			e.printf("else")
+			e.body(item.Stmts, item.Last)
+			continue
+		}
+		var conds []string
+		for _, p := range item.Patterns {
+			re, _ := globToRegex(e.render(p), false)
+			conds = append(conds, fmt.Sprintf("string match -r -q -- %s %s", fishSingleQuote("^"+re+"$"), target))
+		}
+		cond := strings.Join(conds, "; or ")
+		if first {
+			e.printf("if %s", cond)
+			first = false
+		} else {
+			e.printf("else if %s", cond)
+		}
+		e.body(item.Stmts, item.Last)
+	}
+	for _, c := range cl.Last {
+		e.comment(c)
+	}
+	e.printf("end%s", tail)
+}
+
+func isCatchAll(w *syntax.Word) bool {
+	if w == nil || len(w.Parts) != 1 {
+		return false
+	}
+	lit, ok := w.Parts[0].(*syntax.Lit)
+	return ok && lit.Value == "*"
+}
+
+func caseHasBracketClass(cl *syntax.CaseClause) bool {
+	if cl == nil {
+		return false
+	}
+	for _, item := range cl.Items {
+		for _, p := range item.Patterns {
+			if wordHasBracketClass(p) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func wordHasBracketClass(w *syntax.Word) bool {
+	if w == nil {
+		return false
+	}
+	for _, p := range w.Parts {
+		if lit, ok := p.(*syntax.Lit); ok {
+			runes := []rune(lit.Value)
+			for i := 0; i < len(runes); i++ {
+				if runes[i] == '[' {
+					if findClosingBracket(runes, i) != -1 {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
 }
 
 func isDollarDash(w *syntax.Word) bool {
@@ -1832,7 +1984,33 @@ func evalInteractiveTest(b *syntax.BinaryTest) (pred string, ok bool) {
 func (e *emitter) renderCasePattern(p *syntax.Word) string {
 	tokens, ok := tokenizePattern(p)
 	if !ok {
-		return e.render(p)
+		rendered := e.renderWordSmart(p)
+		if hasUnquotedWildcard(p) && !strings.HasPrefix(rendered, `"`) && !strings.HasPrefix(rendered, `'`) {
+			var sb strings.Builder
+			sb.WriteByte('"')
+			for _, part := range p.Parts {
+				switch pt := part.(type) {
+				case *syntax.Lit:
+					val := strings.ReplaceAll(pt.Value, `"`, `\"`)
+					sb.WriteString(val)
+				case *syntax.DblQuoted:
+					for _, qp := range pt.Parts {
+						sb.WriteString(e.renderWordSmart(&syntax.Word{Parts: []syntax.WordPart{qp}}))
+					}
+				case *syntax.SglQuoted:
+					val := pt.Value
+					val = strings.ReplaceAll(val, `\`, `\\`)
+					val = strings.ReplaceAll(val, `"`, `\"`)
+					val = strings.ReplaceAll(val, `$`, `\$`)
+					sb.WriteString(val)
+				default:
+					sb.WriteString(e.renderWordSmart(&syntax.Word{Parts: []syntax.WordPart{pt}}))
+				}
+			}
+			sb.WriteByte('"')
+			return sb.String()
+		}
+		return rendered
 	}
 	if len(tokens) == 0 {
 		return `""`
@@ -3398,6 +3576,17 @@ func findClosingBracket(runes []rune, start int) int {
 			j++
 			continue
 		}
+		if runes[j] == '[' && j+1 < len(runes) && (runes[j+1] == ':' || runes[j+1] == '.' || runes[j+1] == '=') {
+			term := runes[j+1]
+			j += 2
+			for ; j+1 < len(runes); j++ {
+				if runes[j] == term && runes[j+1] == ']' {
+					j++
+					break
+				}
+			}
+			continue
+		}
 		if runes[j] == ']' {
 			return j
 		}
@@ -3419,6 +3608,21 @@ func convertBracketClass(content []rune) string {
 	}
 	for ; idx < len(content); idx++ {
 		c := content[idx]
+		if c == '[' && idx+1 < len(content) && (content[idx+1] == ':' || content[idx+1] == '.' || content[idx+1] == '=') {
+			term := content[idx+1]
+			b.WriteRune(c)
+			b.WriteRune(term)
+			idx += 2
+			for ; idx < len(content); idx++ {
+				b.WriteRune(content[idx])
+				if content[idx] == term && idx+1 < len(content) && content[idx+1] == ']' {
+					idx++
+					b.WriteRune(']')
+					break
+				}
+			}
+			continue
+		}
 		switch c {
 		case '\\':
 			if idx+1 < len(content) {
@@ -3656,6 +3860,7 @@ func (e *emitter) emitHdoc(s *syntax.Stmt, hdoc *syntax.Redirect, rest []*syntax
 			escaped := strings.ReplaceAll(body, "'", `\'`)
 			prefix = fmt.Sprintf("printf '%%s\\n' '%s'", escaped)
 		} else {
+			body = unescapeBackticks(body)
 			escaped := strings.ReplaceAll(body, `"`, `\"`)
 			prefix = fmt.Sprintf("printf '%%s\\n' \"%s\"", escaped)
 		}

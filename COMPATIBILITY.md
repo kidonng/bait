@@ -61,7 +61,7 @@ The following constructs have no faithful Fish equivalent and are emitted verbat
 | `while cond; do … done` | `while cond … end` | |
 | `until cond; do … done` | `while not cond … end` | Negated condition loop |
 | `for x in …; do … done` | `for x in … … end` | Bare `for x` iterates `$argv` |
-| `case x in p) …;; esac` | `switch x` / `case 'p'` / `end` | Wildcards and multiple patterns supported |
+| `case x in p) …;; esac` | `switch x` / `case 'p'` / `end` | Wildcards and multiple patterns supported; patterns containing bracket classes (`[...]`) are translated to `if` / `else if string match -r` blocks as Fish `switch` only supports `*` and `?` globs |
 | `f() { … }`, `function f { … }` | `function f … end` | Function definition |
 | `{ … }` | `begin … end` | Anonymous command block |
 | `( … )` | `begin … end` | Anonymous command block (emits warning: subshell isolation is lost) |
@@ -71,6 +71,7 @@ The following constructs have no faithful Fish equivalent and are emitted verbat
 | `<<< WORD` | `printf '%s\n' WORD \| cmd` | Here-string pipeline |
 | `>&2 cmd`, `>out cmd` | `cmd >& 2`, `cmd >out` | Leading redirections are normalized to statement tails to match Fish syntax |
 | `#!/bin/bash`, `#!/usr/bin/env bash`, `sh`, `ash`, `dash` | `#!/usr/bin/env fish` | Shebang rewritten; interpreter flags dropped |
+| `\cmd` | `cmd` | Bash alias-bypass syntax normalized to plain command name |
 
 ### Conditionals & Tests (`[ ... ]` and `[[ ... ]]`)
 
@@ -165,6 +166,10 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 #### Literal `$` Escaping
 
 Literal unquoted trailing dollars (e.g. `echo 404$`) are escaped as `404\$` during AST normalization to prevent Fish variable syntax errors on bare `$` signs.
+
+#### Escaped Backtick (`\``) in Double Quotes
+
+In Bash double quotes, backticks must be escaped as `\`` to prevent legacy command substitution, and Bash quote removal reduces `\`` to `` ` ``. In Fish double quotes, backticks are not command substitutions and `\`` is preserved literally as `\``. `bait` normalizes `\`` inside double quotes and unquoted here-documents to `` ` `` so that output text matches Bash byte-for-byte.
 
 #### Fish Variable Bracing (`{$var}`)
 

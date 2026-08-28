@@ -23,10 +23,11 @@ func TestNVM(t *testing.T) {
 		t.Fatalf("translate failed: %v", err)
 	}
 
-	testRunner := `
+	setup := `
 set -gx NVM_DIR (pwd)/.nvm
 mkdir -p "$NVM_DIR"
-
+`
+	testRunner := `
 # 1. Verify nvm --version
 set ver (nvm --version)
 if test $status -ne 0 -o -z "$ver"
@@ -57,13 +58,13 @@ if test $status -ne 0 -a $status -ne 3
 end
 
 # 5. Verify nvm install and execution
-nvm install 20
+nvm install --lts
 if test $status -ne 0
     echo "FAILED: nvm install failed: status=$status" >&2
     exit 1
 end
 
-nvm use 20
+nvm use --lts
 if test $status -ne 0
     echo "FAILED: nvm use failed: status=$status" >&2
     exit 1
@@ -77,7 +78,7 @@ end
 echo "installed node version: $node_ver"
 
 # 6. Verify .nvmrc resolution via paired high-FD redirection
-echo "20" > .nvmrc
+echo "lts/*" > .nvmrc
 nvm use
 if test $status -ne 0
     echo "FAILED: nvm use with .nvmrc failed: status=$status" >&2
@@ -85,11 +86,14 @@ if test $status -ne 0
 end
 `
 
-	combinedScript := append(fishScript, []byte("\n"+testRunner)...)
-
+	combinedScript := append([]byte(setup), fishScript...)
+	combinedScript = append(combinedScript, []byte("\n"+testRunner)...)
 	_, stdout, stderr, err := runIsolatedFish(t, ctx, combinedScript)
 	if err != nil {
 		t.Fatalf("nvm verification in sandbox failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	if strings.Contains(stderr, "Unknown command") {
+		t.Fatalf("nvm execution encountered unknown command:\n%s", stderr)
 	}
 
 	t.Logf("nvm.sh successfully verified in sandbox:\n%s", strings.TrimSpace(stdout))
