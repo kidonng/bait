@@ -41,7 +41,7 @@ The following constructs have no faithful Fish equivalent and are emitted verbat
 - **Case Modification**: Only pattern-based (`${v^^pattern}`, `${v,,pattern}`) or single-character (`${v^}`, `${v,}`) transformations are unsupported; full conversions (`${v^^}`, `${v,,}`) are supported via `string upper` / `string lower`
 - **Unsupported Builtins**: Bash-only builtins without Fish equivalents (`shopt`, `let`, `hash`, `unalias`, `caller`, `compgen`, `compopt`, `enable`, `fc`)
 - **Shell Options**: `set` option flags (`set -e`, `set -u`, `set -o ...`) and bare `set` / `set -` (dropped with warning)
-- **High File Descriptor Redirections**: Redirections to file descriptors above 2 (`3>`, `4>&1`, etc.) on blocks, functions, or builtins are unsupported in Fish (supported only for external commands)
+- **High File Descriptor Redirections**: Redirections to file descriptors above 2 (`3>`, `4>&1`, etc.) on blocks, functions, or builtins are unsupported in Fish (supported only for external commands). For paired high-FD patterns across subshells/command substitutions (such as `{ ... "$(cmd 3>&1 1>&4)"; } 4>&1`), `bait` eliminates the redundant outer block redirection and redirects internal high-FD streams to stderr (`1>&2`) to avoid `EBADF`.
 - **Background Function Execution**: Functions cannot be started in the background in Fish (`func &`)
 - **Dynamic Array Indexing**: Variable array indexing (`arr[$i]`) and non-integer substring/slice offsets
 - **Export Flags**: `export -f`, `export -n`, etc.
@@ -67,8 +67,9 @@ The following constructs have no faithful Fish equivalent and are emitted verbat
 | `( … )` | `begin … end` | Anonymous command block (emits warning: subshell isolation is lost) |
 | `cmd &`, `end &` | `cmd &`, `end &` | Background execution (Fish does not support starting functions in the background; function calls with `&` emit a diagnostic warning) |
 | `<(cmd)` | `(cmd \| psub)` | Process substitution via Fish `psub` |
-| `<< EOF`, `<<- EOF` | `printf '%s\n' '...' \| cmd` | Here-document pipeline |
+| `<< EOF`, `<<- EOF` | `printf '%s\n' '...' \| cmd` | Here-document pipeline (supports simple commands as well as compound statements like `while ... do ... done <<EOF`) |
 | `<<< WORD` | `printf '%s\n' WORD \| cmd` | Here-string pipeline |
+| `>&2 cmd`, `>out cmd` | `cmd >& 2`, `cmd >out` | Leading redirections are normalized to statement tails to match Fish syntax |
 | `#!/bin/bash`, `#!/usr/bin/env bash`, `sh`, `ash`, `dash` | `#!/usr/bin/env fish` | Shebang rewritten; interpreter flags dropped |
 
 ### Conditionals & Tests (`[ ... ]` and `[[ ... ]]`)
@@ -98,7 +99,7 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 | `declare x=val`, `typeset x=val` | `set x val` (top-level) / `set --function x val` (in func) | Scoped declaration |
 | `declare -g x=val`, `typeset -g x=val` | `set x val` (top-level) / `set --global x val` (in func) | Explicit global declaration |
 | Reassignment to local `x=new` | `set x new` | Updates existing function-local without `--global` within the same function lexical scope; does not simulate caller-callee dynamic scoping |
-| `export X=val` | `export X=val` | Preserves `export` command syntax while normalizing assignments and expansions via Fish's `export` wrapper function; unsupported flags (e.g. `export -f`) warn and fall back to verbatim passthrough |
+| `export X=val`, `export PATH="${NEWPATH}"` | `export X=val`, `export PATH="$NEWPATH"` | Preserves `export` command syntax while normalizing assignments and expansions via Fish's `export` wrapper function; double quotes around single variable expansions are preserved to prevent empty values or list splitting from causing argument syntax errors; unsupported flags (e.g. `export -f`) warn and fall back to verbatim passthrough |
 | `arr=(a b c)` | `set arr a b c` | Native Fish list |
 | `arr[2]=val` | `set arr[3] val` | Array index shifted +1 (Fish is 1-based) |
 | `arr+=(val)` | `set --append arr val` | Appends element to list |
@@ -154,9 +155,9 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 | `${v-default}` | `$(set --query v && printf '%s\n' "$v" \|\| printf '%s\n' default)` |
 | `${v:+alternate}` | `$(test -n "$v" && printf '%s\n' alternate \|\| true)` |
 | `${v+alternate}` | `$(set --query v && printf '%s\n' alternate \|\| true)` |
-| `${f%.txt}`, `${f%%.*}` | `$(string replace --regex -- '\.txt$' '' $f)`, `$(string replace --regex -- '\..*$' '' $f)` |
-| `${p#prefix}`, `${p##*/}` | `$(string replace --regex -- '^prefix' '' $p)`, `$(string replace --regex -- '^.*/' '' $p)` |
-| `${s/pat/repl}`, `${s//pat/repl}` | `$(string replace --regex -- 'pat' 'repl' $s)`, `$(string replace --regex --all -- 'pat' 'repl' $s)` |
+| `${f%.txt}`, `${f%%.*}` | `$(string replace --regex -- '\.txt$' '' $f)`, `$(string replace --regex -- '\..*$' '' $f)` | Suffix removal; supports dynamic patterns (e.g. `${f%"$pat"}`) escaped via `string escape --style=regex` |
+| `${p#prefix}`, `${p##*/}` | `$(string replace --regex -- '^prefix' '' $p)`, `$(string replace --regex -- '^.*/' '' $p)` | Prefix removal; supports dynamic patterns (e.g. `${p#"$pat"}`) escaped via `string escape --style=regex` |
+| `${s/pat/repl}`, `${s//pat/repl}` | `$(string replace --regex -- 'pat' 'repl' $s)`, `$(string replace --regex --all -- 'pat' 'repl' $s)` | Pattern replacement; supports dynamic patterns (e.g. `${s/"$pat"/repl}`) escaped via `string escape --style=regex` |
 | `${s:offset:length}`, `${s:offset}` | `$(string sub --start=(offset+1) --length=length -- "$s")`, `$(string sub --start=(offset+1) -- "$s")` | Substring extraction (double-quoted to prevent empty variables from consuming stdin) |
 | `${arr[@]:1:2}` / `${arr[*]:1:2}`, `${arr[@]:1}` / `${arr[*]:1}` | `$arr[2..3]`, `$arr[2..-1]` (1-based slices) |
 | `${v^^}` / `${v,,}` | `$(string upper -- "$v")` / `$(string lower -- "$v")` | Uppercase / lowercase string conversion |
@@ -164,6 +165,10 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 #### Literal `$` Escaping
 
 Literal unquoted trailing dollars (e.g. `echo 404$`) are escaped as `404\$` during AST normalization to prevent Fish variable syntax errors on bare `$` signs.
+
+#### Fish Variable Bracing (`{$var}`)
+
+When an unquoted variable expansion is immediately followed by an alphanumeric character or underscore (e.g. `-x${tar_compression_flag}f`), `bait` transforms it to `{$var}` (e.g. `-x{$tar_compression_flag}f`) to prevent Fish from treating subsequent characters as part of the variable name. Positional parameters (e.g. `${1}f` $\to$ `$argv[1]f`) and special variables (e.g. `${?}x` $\to$ `{$status}x`) preserve their faithful mappings.
 
 ### Integer Arithmetic
 
@@ -190,4 +195,4 @@ When scripts use POSIX constructs that Fish does not provide natively, `bait` in
    - Splits on whitespace or custom `$IFS` (set from `IFS`).
 3. **`__bait_exec` dynamic commands**:
    - Injected for dynamic command string execution (`$cmd arg` $\to$ `__bait_exec $cmd arg`).
-   - Recursively dispatches dynamically split command words while strictly preserving positional boundaries; optional prefixes (e.g. `sudo=""`) are normalized to native Fish empty lists during translation.
+   - Recursively dispatches dynamically split command words while strictly preserving positional boundaries; optional prefixes (e.g. `sudo=""`) are normalized to native Fish empty lists during translation; recognizes and dispatches `command` and `builtin` prefixes natively.

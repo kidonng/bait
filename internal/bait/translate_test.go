@@ -2519,3 +2519,257 @@ func TestMultiWordScalarDeepPropagation(t *testing.T) {
 		t.Errorf("expected __bait_words $D in output, got:\n%s", string(got))
 	}
 }
+
+func TestLeadingRedirection(t *testing.T) {
+	src := ">&2 echo hello\n"
+	got, _, err := Translate([]byte(src))
+	if err != nil {
+		t.Fatalf("Translate failed: %v", err)
+	}
+	want := "echo hello >& 2\n"
+	if string(got) != want {
+		t.Errorf("expected %q, got %q", want, string(got))
+	}
+}
+
+func TestCompoundHeredoc(t *testing.T) {
+	src := "while IFS= read -r line; do\n" +
+		"    unpaired_line=\"$line\"\n" +
+		"done <<EOF\n" +
+		"test-content\n" +
+		"EOF\n"
+	got, _, err := Translate([]byte(src))
+	if err != nil {
+		t.Fatalf("Translate failed: %v", err)
+	}
+	if !strings.Contains(string(got), "printf '%s\\n' \"test-content\" | while IFS= read line") {
+		t.Errorf("expected pipeline into while read, got:\n%s", string(got))
+	}
+	if !strings.Contains(string(got), "set unpaired_line $line") {
+		t.Errorf("expected assignment translated to set, got:\n%s", string(got))
+	}
+}
+
+func TestBinaryChainAssignmentsAndCompound(t *testing.T) {
+	src := "A=1 && [ -f x ] && B=2 && if true; then echo hi; fi\n"
+	got, _, err := Translate([]byte(src))
+	if err != nil {
+		t.Fatalf("Translate failed: %v", err)
+	}
+	if !strings.Contains(string(got), "set A 1") || !strings.Contains(string(got), "set B 2") {
+		t.Errorf("expected set commands for assignments in chain, got:\n%s", string(got))
+	}
+}
+
+func TestDynamicPatternExpansion(t *testing.T) {
+	src := "echo \"${1#\"$PREFIX\"-}\"\n"
+	got, _, err := Translate([]byte(src))
+	if err != nil {
+		t.Fatalf("Translate failed: %v", err)
+	}
+	if !strings.Contains(string(got), `string escape --style=regex -- "$PREFIX"`) {
+		t.Errorf("expected dynamic regex escape with quotes, got:\n%s", string(got))
+	}
+
+	// Test dynamic suffix strip
+	suffixSrc := "echo \"${1%\"$SUFFIX\"}\"\n"
+	gotSuffix, _, err := Translate([]byte(suffixSrc))
+	if err != nil {
+		t.Fatalf("Translate suffix failed: %v", err)
+	}
+	if !strings.Contains(string(gotSuffix), `string escape --style=regex -- "$SUFFIX"`) {
+		t.Errorf("expected dynamic suffix regex escape, got:\n%s", string(gotSuffix))
+	}
+
+	// Test dynamic pattern replace
+	replSrc := "echo \"${1/\"$PAT\"/repl}\"\n"
+	gotRepl, _, err := Translate([]byte(replSrc))
+	if err != nil {
+		t.Fatalf("Translate repl failed: %v", err)
+	}
+	if !strings.Contains(string(gotRepl), `string escape --style=regex -- "$PAT"`) {
+		t.Errorf("expected dynamic replace regex escape, got:\n%s", string(gotRepl))
+	}
+}
+
+func TestDollarDashParameterExpansion(t *testing.T) {
+	src := "if [ \"${-#*e}\" != \"$-\" ]; then echo errexit; fi\n"
+	got, _, err := Translate([]byte(src))
+	if err != nil {
+		t.Fatalf("Translate failed: %v", err)
+	}
+	if strings.Contains(string(got), "$-") {
+		t.Errorf("output should not contain raw $- variable in fish, got:\n%s", string(got))
+	}
+	if !strings.Contains(string(got), "status is-interactive") {
+		t.Errorf("expected status is-interactive check in output, got:\n%s", string(got))
+	}
+}
+
+func TestHighFDRedirectionInSubshell(t *testing.T) {
+	t.Run("paired_block_redirection_eliminated_and_mapped_to_stderr", func(t *testing.T) {
+		src := "{ provided_version=\"$(nvm_rc_version 3>&1 1>&4)\"; } 4>&1\n"
+		got, warnings, err := Translate([]byte(src))
+		if err != nil {
+			t.Fatalf("Translate failed: %v", err)
+		}
+		if len(warnings) != 0 {
+			t.Errorf("expected 0 warnings for paired high-FD redirection, got %d: %v", len(warnings), warnings)
+		}
+		gotStr := string(got)
+		if strings.Contains(gotStr, "4>&") || strings.Contains(gotStr, "1>&4") {
+			t.Errorf("output should not contain uninherited FD 4 in fish, got:\n%s", gotStr)
+		}
+		if !strings.Contains(gotStr, "1>& 2") && !strings.Contains(gotStr, "1>&2") {
+			t.Errorf("expected 1>&4 to be mapped to stderr in subshell, got:\n%s", gotStr)
+		}
+	})
+
+	t.Run("paired_binary_chain_redirection", func(t *testing.T) {
+		src := "{ NVM_RC_VERSION=\"$(NVM_SILENT=\"${NVM_SILENT:-0}\" nvm_rc_version 3>&1 1>&4)\"; } 4>&1 && has_checked_nvmrc=1\n"
+		got, warnings, err := Translate([]byte(src))
+		if err != nil {
+			t.Fatalf("Translate failed: %v", err)
+		}
+		if len(warnings) != 0 {
+			t.Errorf("expected 0 warnings for paired high-FD redirection, got %d: %v", len(warnings), warnings)
+		}
+		gotStr := string(got)
+		if strings.Contains(gotStr, "4>&") {
+			t.Errorf("output should not contain redundant 4>&1 on block, got:\n%s", gotStr)
+		}
+		if !strings.Contains(gotStr, "has_checked_nvmrc 1") {
+			t.Errorf("expected binary chain operand in output, got:\n%s", gotStr)
+		}
+	})
+
+	t.Run("unpaired_high_fd_still_warns", func(t *testing.T) {
+		src := "{ echo hi; } 4>&1\n"
+		_, warnings, err := Translate([]byte(src))
+		if err != nil {
+			t.Fatalf("Translate failed: %v", err)
+		}
+		if len(warnings) == 0 {
+			t.Errorf("expected warning for unpaired high-FD redirection on block")
+		}
+	})
+}
+
+func TestExitCodeAssignmentNotMangled(t *testing.T) {
+	src := "EXIT_CODE=\"$?\"\n"
+	got, _, err := Translate([]byte(src))
+	if err != nil {
+		t.Fatalf("Translate failed: %v", err)
+	}
+	gotStr := string(got)
+	if !strings.Contains(gotStr, "set EXIT_CODE $status") {
+		t.Errorf("expected 'set EXIT_CODE $status', got:\n%s", gotStr)
+	}
+}
+
+func TestVariableFollowedByIdentifierChar(t *testing.T) {
+	t.Run("plain_variable", func(t *testing.T) {
+		src := "echo -x${tar_compression_flag}f\n"
+		got, _, err := Translate([]byte(src))
+		if err != nil {
+			t.Fatalf("Translate failed: %v", err)
+		}
+		gotStr := string(got)
+		if !strings.Contains(gotStr, "echo -x{$tar_compression_flag}f") {
+			t.Errorf("expected 'echo -x{$tar_compression_flag}f', got:\n%s", gotStr)
+		}
+	})
+
+	t.Run("positional_parameter_does_not_emit_invalid_fish_var", func(t *testing.T) {
+		src := "echo ${1}f\n"
+		got, _, err := Translate([]byte(src))
+		if err != nil {
+			t.Fatalf("Translate failed: %v", err)
+		}
+		gotStr := string(got)
+		if strings.Contains(gotStr, "{$1}") {
+			t.Errorf("must not emit {$1} in fish, got:\n%s", gotStr)
+		}
+		if !strings.Contains(gotStr, "$argv[1]f") {
+			t.Errorf("expected '$argv[1]f', got:\n%s", gotStr)
+		}
+	})
+
+	t.Run("special_status_and_pid_variables", func(t *testing.T) {
+		src := "echo ${?}x ${!}x ${PIPESTATUS}x ${status}x\n"
+		got, _, err := Translate([]byte(src))
+		if err != nil {
+			t.Fatalf("Translate failed: %v", err)
+		}
+		gotStr := string(got)
+		if !strings.Contains(gotStr, "{$status}x") {
+			t.Errorf("expected '{$status}x', got:\n%s", gotStr)
+		}
+		if !strings.Contains(gotStr, "{$last_pid}x") {
+			t.Errorf("expected '{$last_pid}x', got:\n%s", gotStr)
+		}
+		if !strings.Contains(gotStr, "{$pipestatus}x") {
+			t.Errorf("expected '{$pipestatus}x', got:\n%s", gotStr)
+		}
+		if !strings.Contains(gotStr, "{$_status}x") {
+			t.Errorf("expected '{$_status}x', got:\n%s", gotStr)
+		}
+	})
+}
+
+func TestExportQuotedValuePreserved(t *testing.T) {
+	src := "export PATH=\"${NEWPATH}\"\n"
+	got, _, err := Translate([]byte(src))
+	if err != nil {
+		t.Fatalf("Translate failed: %v", err)
+	}
+	gotStr := string(got)
+	if !strings.Contains(gotStr, "export PATH=\"$NEWPATH\"") {
+		t.Errorf("expected 'export PATH=\"$NEWPATH\"', got:\n%s", gotStr)
+	}
+}
+
+func TestLeadingRedirectionWithDynamicCommand(t *testing.T) {
+	src := ">&2 $cmd hello\n"
+	got, _, err := Translate([]byte(src))
+	if err != nil {
+		t.Fatalf("Translate failed: %v", err)
+	}
+	gotStr := string(got)
+	if strings.Contains(gotStr, ">&2 $cmd") || strings.Contains(gotStr, ">& 2 $cmd") {
+		t.Errorf("leading redirection was not normalized to tail, got:\n%s", gotStr)
+	}
+	if !strings.Contains(gotStr, "__bait_exec $cmd hello >& 2") {
+		t.Errorf("expected '__bait_exec $cmd hello >& 2', got:\n%s", gotStr)
+	}
+}
+
+func TestBaitExecCommandAndBuiltin(t *testing.T) {
+	if _, err := exec.LookPath("fish"); err != nil {
+		t.Skip("fish not installed")
+	}
+
+	t.Run("dispatches_command_prefix", func(t *testing.T) {
+		fishScript := fmt.Sprintf("%s\n__bait_exec \"command echo\" \"hello from command\"\n", baitExecHelper)
+		cmd := exec.Command("fish", "-c", fishScript)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("fish failed: %v, output: %s", err, string(out))
+		}
+		if strings.TrimSpace(string(out)) != "hello from command" {
+			t.Errorf("expected 'hello from command', got: %q", string(out))
+		}
+	})
+
+	t.Run("dispatches_builtin_prefix", func(t *testing.T) {
+		fishScript := fmt.Sprintf("%s\n__bait_exec \"builtin echo\" \"hello from builtin\"\n", baitExecHelper)
+		cmd := exec.Command("fish", "-c", fishScript)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("fish failed: %v, output: %s", err, string(out))
+		}
+		if strings.TrimSpace(string(out)) != "hello from builtin" {
+			t.Errorf("expected 'hello from builtin', got: %q", string(out))
+		}
+	})
+}

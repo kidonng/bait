@@ -25,6 +25,7 @@ type emitter struct {
 	warnings          []Warning
 	err               error
 	inFunction        bool
+	inSubshell        bool
 	needsBaitWords    bool
 	needsBaitExec     bool
 	needsBaitGetopts  bool
@@ -38,6 +39,7 @@ type emitter struct {
 func (e *emitter) newSubEmitter() *emitter {
 	sub := newEmitter()
 	sub.inFunction = e.inFunction
+	sub.inSubshell = e.inSubshell
 	if e.funcLocals != nil {
 		sub.funcLocals = make(map[string]bool, len(e.funcLocals))
 		for k, v := range e.funcLocals {
@@ -107,13 +109,122 @@ func (e *emitter) render(node syntax.Node) string {
 
 // redirect renders a single redirection manually: the mvdan printer
 // cannot print a bare *Redirect node.
+func isHighFDTarget(r *syntax.Redirect) (int, bool) {
+	if r.Op != syntax.DplOut && r.Op != syntax.DplIn {
+		return 0, false
+	}
+	if r.Word == nil || len(r.Word.Parts) != 1 {
+		return 0, false
+	}
+	lit, ok := r.Word.Parts[0].(*syntax.Lit)
+	if !ok {
+		return 0, false
+	}
+	n, err := strconv.Atoi(lit.Value)
+	if err != nil || n <= 2 {
+		return 0, false
+	}
+	return n, true
+}
+
+func hasHighFDTargetRedir(redirs []*syntax.Redirect) bool {
+	for _, r := range redirs {
+		if _, ok := isHighFDTarget(r); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func stmtHasHighFDTargetRedir(st *syntax.Stmt) bool {
+	if st == nil {
+		return false
+	}
+	if hasHighFDTargetRedir(st.Redirs) {
+		return true
+	}
+	found := false
+	syntax.Walk(st.Cmd, func(n syntax.Node) bool {
+		if s, ok := n.(*syntax.Stmt); ok {
+			if hasHighFDTargetRedir(s.Redirs) {
+				found = true
+				return false
+			}
+		}
+		return !found
+	})
+	return found
+}
+
+func stmtHasTargetFD(st *syntax.Stmt, target int) bool {
+	if st == nil {
+		return false
+	}
+	for _, r := range st.Redirs {
+		if n, ok := isHighFDTarget(r); ok && n == target {
+			return true
+		}
+	}
+	found := false
+	syntax.Walk(st.Cmd, func(n syntax.Node) bool {
+		if s, ok := n.(*syntax.Stmt); ok {
+			for _, r := range s.Redirs {
+				if n, ok := isHighFDTarget(r); ok && n == target {
+					found = true
+					return false
+				}
+			}
+		}
+		return !found
+	})
+	return found
+}
+
+func (e *emitter) isPairedHighFDRedir(s *syntax.Stmt, r *syntax.Redirect) bool {
+	if r.Op != syntax.DplOut || r.N == nil {
+		return false
+	}
+	fd, err := strconv.Atoi(r.N.Value)
+	if err != nil || fd <= 2 {
+		return false
+	}
+	if r.Word == nil || len(r.Word.Parts) != 1 {
+		return false
+	}
+	lit, ok := r.Word.Parts[0].(*syntax.Lit)
+	if !ok || lit.Value != "1" {
+		return false
+	}
+	found := false
+	syntax.Walk(s.Cmd, func(n syntax.Node) bool {
+		if cs, ok := n.(*syntax.CmdSubst); ok {
+			for _, st := range cs.Stmts {
+				if stmtHasTargetFD(st, fd) {
+					found = true
+					return false
+				}
+			}
+		}
+		return !found
+	})
+	return found
+}
+
+// redirect renders a single redirection manually: the mvdan printer
+// cannot print a bare *Redirect node.
 func (e *emitter) redirect(r *syntax.Redirect) string {
 	s := ""
 	if r.N != nil {
 		s += r.N.Value
 	}
 	s += r.Op.String()
-	return s + " " + e.renderWordSmart(r.Word)
+	word := e.renderWordSmart(r.Word)
+	if e.inSubshell && r.Op == syntax.DplOut {
+		if _, ok := isHighFDTarget(r); ok {
+			word = "2"
+		}
+	}
+	return s + " " + word
 }
 
 // tails renders the redirections and background marker that trail a
@@ -121,6 +232,9 @@ func (e *emitter) redirect(r *syntax.Redirect) string {
 func (e *emitter) tails(s *syntax.Stmt) string {
 	out := ""
 	for _, r := range s.Redirs {
+		if e.isPairedHighFDRedir(s, r) {
+			continue
+		}
 		out += " " + e.redirect(r)
 	}
 	if s.Background {
@@ -131,6 +245,9 @@ func (e *emitter) tails(s *syntax.Stmt) string {
 
 func (e *emitter) checkHighFDRedir(s *syntax.Stmt, kind string) {
 	for _, r := range s.Redirs {
+		if e.isPairedHighFDRedir(s, r) {
+			continue
+		}
 		if r.N != nil {
 			if n, err := strconv.Atoi(r.N.Value); err == nil && n > 2 {
 				e.warn(r.Pos(), "redirection to file descriptor %d on %s is not supported in fish; emitted verbatim", n, kind)
@@ -409,7 +526,7 @@ func (e *emitter) simple(s *syntax.Stmt) {
 				return
 			}
 		}
-		if hasStructuralCmdSubst(s) {
+		if hasStructuralCmdSubst(s) || (e.inSubshell && hasHighFDTargetRedir(s.Redirs)) {
 			e.emitSimpleFish(s, c)
 			return
 		}
@@ -417,12 +534,44 @@ func (e *emitter) simple(s *syntax.Stmt) {
 			if _, ok := singleBareParam(c.Args[0]); ok {
 				e.needsBaitExec = true
 				e.needsBaitWords = true
+				if hasLeadingRedir(s) || (e.inSubshell && hasHighFDTargetRedir(s.Redirs)) {
+					line := e.render(s.Cmd)
+					if s.Negated {
+						line = "! " + line
+					}
+					line += e.tails(s)
+					e.lines("__bait_exec " + line)
+					return
+				}
 				e.lines("__bait_exec " + e.render(s))
 				return
 			}
 		}
+		if hasLeadingRedir(s) || (e.inSubshell && hasHighFDTargetRedir(s.Redirs)) {
+			line := e.render(s.Cmd)
+			if s.Negated {
+				line = "! " + line
+			}
+			line += e.tails(s)
+			e.lines(line)
+			return
+		}
 	}
 	e.lines(e.render(s))
+}
+
+func hasLeadingRedir(s *syntax.Stmt) bool {
+	if s == nil || s.Cmd == nil || len(s.Redirs) == 0 {
+		return false
+	}
+	cmdPos := s.Cmd.Pos()
+	for _, r := range s.Redirs {
+		rp := r.Pos()
+		if rp.Line() < cmdPos.Line() || (rp.Line() == cmdPos.Line() && rp.Col() < cmdPos.Col()) {
+			return true
+		}
+	}
+	return false
 }
 
 // warnBashOnlyBuiltin flags bash builtins that fish lacks entirely (or
@@ -634,7 +783,7 @@ func hasStructuralCmdSubst(n syntax.Node) bool {
 			return false
 		case *syntax.CmdSubst:
 			for _, st := range ps.Stmts {
-				if hasStructural(st) {
+				if hasStructural(st) || stmtNeedsRewrite(st) || stmtHasHighFDTargetRedir(st) {
 					found = true
 					return false
 				}
@@ -643,6 +792,26 @@ func hasStructuralCmdSubst(n syntax.Node) bool {
 		return true
 	})
 	return found
+}
+
+func stmtNeedsRewrite(st *syntax.Stmt) bool {
+	if st == nil {
+		return false
+	}
+	if hasLeadingRedir(st) || hasHighFDTargetRedir(st.Redirs) {
+		return true
+	}
+	if b, ok := st.Cmd.(*syntax.BinaryCmd); ok && chainNeedsRewrite(b) {
+		return true
+	}
+	if c, ok := st.Cmd.(*syntax.CallExpr); ok {
+		if len(c.Assigns) == 0 && len(c.Args) > 0 {
+			if _, ok := singleBareParam(c.Args[0]); ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // renderWordSmart renders a word as fish text. Words whose command
@@ -735,6 +904,7 @@ func (e *emitter) cmdSubstText(cs *syntax.CmdSubst) (string, bool) {
 		return "", false
 	}
 	sub := e.newSubEmitter()
+	sub.inSubshell = true
 	for _, st := range cs.Stmts {
 		sub.stmt(st)
 	}
@@ -770,6 +940,7 @@ func (e *emitter) procSubstText(ps *syntax.ProcSubst) (string, bool) {
 		return "(true | psub)", true
 	}
 	sub := e.newSubEmitter()
+	sub.inSubshell = true
 	for _, st := range ps.Stmts {
 		sub.stmt(st)
 	}
@@ -1154,6 +1325,10 @@ func (e *emitter) binary(s *syntax.Stmt) {
 func chainNeedsRewrite(b *syntax.BinaryCmd) bool {
 	found := false
 	syntax.Walk(b, func(n syntax.Node) bool {
+		if st, ok := n.(*syntax.Stmt); ok && (hasLeadingRedir(st) || hasHighFDTargetRedir(st.Redirs)) {
+			found = true
+			return false
+		}
 		c, ok := n.(*syntax.CallExpr)
 		if !ok {
 			return true
@@ -1230,6 +1405,9 @@ func binOpText(op syntax.BinCmdOperator) string {
 // chain leaves.
 func (e *emitter) chainSideText(st *syntax.Stmt) string {
 	if !hasStructural(st) {
+		if b, ok := st.Cmd.(*syntax.BinaryCmd); ok && chainNeedsRewrite(b) {
+			return e.inlineStmtText(st)
+		}
 		return e.chainLeaf(st)
 	}
 	return e.inlineStmtText(st)
@@ -1269,6 +1447,14 @@ func (e *emitter) chainLeaf(st *syntax.Stmt) string {
 		}
 		if hasStructuralCmdSubst(st) {
 			return e.inlineStmtText(st)
+		}
+		if hasLeadingRedir(st) || (e.inSubshell && hasHighFDTargetRedir(st.Redirs)) {
+			line := e.render(st.Cmd)
+			if st.Negated {
+				line = "! " + line
+			}
+			line += e.tails(st)
+			return line
 		}
 		return e.render(st)
 	}
@@ -2106,7 +2292,7 @@ func (e *emitter) assignValue(a *syntax.Assign) string {
 	if len(a.Value.Parts) == 1 {
 		if q, ok := a.Value.Parts[0].(*syntax.DblQuoted); ok && len(q.Parts) == 1 {
 			if pe, ok := q.Parts[0].(*syntax.ParamExp); ok && bareParam(pe) && pe.Param != nil {
-				return "$" + e.varName(pe.Param.Value)
+				return "$" + pe.Param.Value
 			}
 		}
 	}
@@ -2145,6 +2331,11 @@ func (e *emitter) declClause(s *syntax.Stmt, d *syntax.DeclClause) {
 			}
 			if a.Name != nil {
 				val := e.assignValue(a)
+				if a.Value != nil && len(a.Value.Parts) == 1 {
+					if _, ok := a.Value.Parts[0].(*syntax.DblQuoted); ok {
+						val = e.renderWordSmart(a.Value)
+					}
+				}
 				args = append(args, fmt.Sprintf("%s=%s", e.varName(a.Name.Value), val))
 			}
 		}
@@ -2267,7 +2458,7 @@ func (e *emitter) rewriteParams(f *syntax.File) {
 				for _, item := range node.Items {
 					syntax.Walk(item, func(cn syntax.Node) bool {
 						if w, ok := cn.(*syntax.Word); ok {
-							w.Parts = e.spliceParts(w.Parts)
+							w.Parts = e.spliceParts(w.Parts, false)
 						}
 						return true
 					})
@@ -2297,19 +2488,38 @@ func (e *emitter) rewriteParams(f *syntax.File) {
 				node.Parts = []syntax.WordPart{namedParam(name)}
 				return true
 			}
-			node.Parts = e.spliceParts(node.Parts)
+			node.Parts = e.spliceParts(node.Parts, false)
 			return true
 		}
 		return true
 	})
 }
+func needsFishBracing(parts []syntax.WordPart, i int) bool {
+	if i+1 >= len(parts) {
+		return false
+	}
+	lit, ok := parts[i+1].(*syntax.Lit)
+	if !ok || len(lit.Value) == 0 {
+		return false
+	}
+	r := lit.Value[0]
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_'
+}
 
-func (e *emitter) spliceParts(parts []syntax.WordPart) []syntax.WordPart {
+func (e *emitter) spliceParts(parts []syntax.WordPart, inDblQuotes bool) []syntax.WordPart {
 	out := make([]syntax.WordPart, 0, len(parts)+1)
-	for _, part := range parts {
+	for i := range parts {
+		part := parts[i]
 		switch p := part.(type) {
 		case *syntax.ParamExp:
-			out = append(out, e.paramReplacements(p)...)
+			replaced := e.paramReplacements(p)
+			if !inDblQuotes && needsFishBracing(parts, i) && len(replaced) == 1 {
+				if pe, ok := replaced[0].(*syntax.ParamExp); ok && bareParam(pe) && pe.Param != nil {
+					out = append(out, litPart("{$"+pe.Param.Value+"}"))
+					continue
+				}
+			}
+			out = append(out, replaced...)
 		case *syntax.ArithmExp:
 			if txt, ok := e.arithmText(p.X); ok {
 				out = append(out, mathSubst(txt))
@@ -2318,7 +2528,7 @@ func (e *emitter) spliceParts(parts []syntax.WordPart) []syntax.WordPart {
 				out = append(out, p)
 			}
 		case *syntax.DblQuoted:
-			p.Parts = e.spliceParts(p.Parts)
+			p.Parts = e.spliceParts(p.Parts, true)
 			out = append(out, p)
 		default:
 			out = append(out, p)
@@ -2435,7 +2645,9 @@ func substPart(args ...string) syntax.WordPart {
 }
 func stringUnarySubst(subcmd, name string) syntax.WordPart {
 	var ref *syntax.Word
-	if isDigits(name) {
+	if name == "-" {
+		ref = dq(statusDashPart())
+	} else if isDigits(name) {
 		ref = dq(argvParam(), litPart("["+name+"]"))
 	} else {
 		ref = dq(namedParam(name))
@@ -2710,13 +2922,19 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 	name := e.varName(pe.Param.Value)
 	var ref *syntax.Word
 	varPlain := "$" + name
-	if isDigits(name) {
+	varQuoted := "\"" + varPlain + "\""
+	if pe.Param.Value == "-" {
+		e.warn(pe.Pos(), "$- has no fish equivalent; fish uses status subcommands (e.g. status is-interactive)")
+		ref = dq(statusDashPart())
+		varPlain = "\"$(status is-interactive && echo i || echo '')\""
+		varQuoted = varPlain
+	} else if isDigits(name) {
 		ref = dq(argvParam(), litPart("["+name+"]"))
 		varPlain = "$argv[" + name + "]"
+		varQuoted = "\"" + varPlain + "\""
 	} else {
 		ref = dq(namedParam(name))
 	}
-	varQuoted := "\"" + varPlain + "\""
 	printVal := func(val *syntax.Word) *syntax.Stmt {
 		return callStmt(litWord("printf"), litWord(`%s\n`), val)
 	}
@@ -2834,7 +3052,7 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 		return []syntax.WordPart{substPart(args...)}, true
 
 	case pe.Repl != nil:
-		re, ok := globToRegex(e.render(pe.Repl.Orig), true)
+		regexArg, ok := e.renderDynamicRegex(pe.Repl.Orig, false, false, true)
 		if !ok {
 			return nil, false
 		}
@@ -2843,7 +3061,7 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 			args = append(args, "--all")
 		}
 		args = append(args, "--",
-			fishSingleQuote(re),
+			regexArg,
 			fishSingleQuote(e.render(pe.Repl.With)),
 			varPlain)
 		return []syntax.WordPart{substPart(args...)}, true
@@ -2854,20 +3072,17 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 		// parameter expansions; rewrite them before rendering, since the
 		// outer walk visits this node before its nested words.
 		if exp.Word != nil {
-			exp.Word.Parts = e.spliceParts(exp.Word.Parts)
+		exp.Word.Parts = e.spliceParts(exp.Word.Parts, false)
 		}
 		switch exp.Op {
-		case syntax.DefaultUnsetOrNull:
-			chain := binCmd(syntax.OrStmt,
-				binCmd(syntax.AndStmt,
-					callStmt(litWord("test"), litWord("-n"), ref),
-					printVal(ref)),
-				printVal(e.argWord(exp.Word)))
-			return []syntax.WordPart{&syntax.CmdSubst{Stmts: []*syntax.Stmt{chain}}}, true
-
-		case syntax.DefaultUnset:
+		case syntax.DefaultUnsetOrNull, syntax.DefaultUnset:
+			if (exp.Word == nil || isEmptyValue(exp.Word)) && isDigits(name) {
+				return []syntax.WordPart{argvParam(), litPart("[" + name + "]")}, true
+			}
 			var cond *syntax.Stmt
-			if isDigits(name) {
+			if exp.Op == syntax.DefaultUnsetOrNull {
+				cond = callStmt(litWord("test"), litWord("-n"), ref)
+			} else if isDigits(name) {
 				cond = callStmt(litWord("test"), litWord("(count $argv)"), litWord("-ge"), litWord(name))
 			} else {
 				cond = callStmt(litWord("set"), litWord("--query"), litWord(name))
@@ -2900,20 +3115,19 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 				if isDigits(name) {
 					return []syntax.WordPart{argvParam(), litPart("[" + name + "]")}, true
 				}
+				if name == "-" {
+					return []syntax.WordPart{statusDashPart()}, true
+				}
 				return []syntax.WordPart{namedParam(name)}, true
 			}
 			lazy := exp.Op == syntax.RemSmallPrefix || exp.Op == syntax.RemSmallSuffix
-			body, ok := globToRegex(e.render(exp.Word), lazy)
+			isPrefix := exp.Op == syntax.RemSmallPrefix || exp.Op == syntax.RemLargePrefix
+			regexArg, ok := e.renderDynamicRegex(exp.Word, isPrefix, !isPrefix, lazy)
 			if !ok {
 				return nil, false
 			}
-			if exp.Op == syntax.RemSmallPrefix || exp.Op == syntax.RemLargePrefix {
-				body = "^" + body
-			} else {
-				body += "$"
-			}
 			return []syntax.WordPart{substPart("string", "replace", "--regex", "--",
-				fishSingleQuote(body), "''", varPlain)}, true
+				regexArg, "''", varPlain)}, true
 		case syntax.UpperAll:
 			if exp.Word != nil {
 				e.warn(pe.Pos(), "case modification with pattern is not supported; left untranslated")
@@ -3081,6 +3295,93 @@ func globToRegex(pat string, lazy bool) (string, bool) {
 	return b.String(), true
 }
 
+func containsParam(w *syntax.Word) bool {
+	if w == nil {
+		return false
+	}
+	found := false
+	syntax.Walk(w, func(n syntax.Node) bool {
+		if _, ok := n.(*syntax.ParamExp); ok {
+			found = true
+			return false
+		}
+		if _, ok := n.(*syntax.CmdSubst); ok {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+func (e *emitter) renderDynamicRegex(w *syntax.Word, isPrefix bool, isSuffix bool, lazy bool) (string, bool) {
+	if !containsParam(w) {
+		body, ok := globToRegex(e.render(w), lazy)
+		if !ok {
+			return "", false
+		}
+		if isPrefix {
+			body = "^" + body
+		}
+		if isSuffix {
+			body += "$"
+		}
+		return fishSingleQuote(body), true
+	}
+
+	var segments []string
+	if isPrefix {
+		segments = append(segments, fishSingleQuote("^"))
+	}
+
+	var walkParts func(parts []syntax.WordPart) bool
+	walkParts = func(parts []syntax.WordPart) bool {
+		for _, p := range parts {
+			switch pt := p.(type) {
+			case *syntax.Lit:
+				re, ok := globToRegex(pt.Value, lazy)
+				if !ok {
+					return false
+				}
+				if re != "" {
+					segments = append(segments, fishSingleQuote(re))
+				}
+			case *syntax.SglQuoted:
+				re := regexp.QuoteMeta(pt.Value)
+				if re != "" {
+					segments = append(segments, fishSingleQuote(re))
+				}
+			case *syntax.DblQuoted:
+				if !walkParts(pt.Parts) {
+					return false
+				}
+			case *syntax.ParamExp:
+				rendered := e.renderWordSmart(&syntax.Word{Parts: []syntax.WordPart{pt}})
+				segments = append(segments, fmt.Sprintf("(string escape --style=regex -- \"%s\")", rendered))
+			default:
+				rendered := e.renderWordSmart(&syntax.Word{Parts: []syntax.WordPart{pt}})
+				if strings.HasPrefix(rendered, "$") {
+					segments = append(segments, fmt.Sprintf("(string escape --style=regex -- \"%s\")", rendered))
+				} else {
+					segments = append(segments, fmt.Sprintf("(string escape --style=regex -- %s)", rendered))
+				}
+			}
+		}
+		return true
+	}
+
+	if !walkParts(w.Parts) {
+		return "", false
+	}
+	if isSuffix {
+		segments = append(segments, fishSingleQuote("$"))
+	}
+	if len(segments) == 0 {
+		return "''", true
+	}
+	return strings.Join(segments, ""), true
+}
+
 func findClosingBracket(runes []rune, start int) int {
 	if start+1 >= len(runes) {
 		return -1
@@ -3202,7 +3503,13 @@ const baitExecHelper = `function __bait_exec
     end
     set --local words (string match --regex --all '\S+' -- "$argv[1]")
     if test (count $words) -gt 0
-        $words $argv[2..-1]
+        if test "$words[1]" = "command"
+            command $words[2..-1] $argv[2..-1]
+        else if test "$words[1]" = "builtin"
+            builtin $words[2..-1] $argv[2..-1]
+        else
+            $words $argv[2..-1]
+        end
     else if test (count $argv) -gt 1
         __bait_exec $argv[2..-1]
     end
@@ -3328,25 +3635,40 @@ func (e *emitter) emitHdoc(s *syntax.Stmt, hdoc *syntax.Redirect, rest []*syntax
 	}
 	origRedirs := s.Redirs
 	s.Redirs = rest
-	cmdText := e.render(s)
+	var cmdText string
+	if hasStructural(s) {
+		cmdText = e.inlineStmtText(s)
+	} else {
+		cmdText = e.render(s)
+	}
 	s.Redirs = origRedirs
 
+	var prefix string
 	if hdoc.Op == syntax.WordHdoc {
 		wordText := e.render(hdoc.Word)
-		e.printf("printf '%%s\\n' %s | %s", wordText, cmdText)
-		return
+		prefix = fmt.Sprintf("printf '%%s\\n' %s", wordText)
+	} else {
+		body := ""
+		if hdoc.Hdoc != nil {
+			body = e.render(hdoc.Hdoc)
+		}
+		if isQuotedHdocWord(hdoc.Word) {
+			escaped := strings.ReplaceAll(body, "'", `\'`)
+			prefix = fmt.Sprintf("printf '%%s\\n' '%s'", escaped)
+		} else {
+			escaped := strings.ReplaceAll(body, `"`, `\"`)
+			prefix = fmt.Sprintf("printf '%%s\\n' \"%s\"", escaped)
+		}
 	}
 
-	body := ""
-	if hdoc.Hdoc != nil {
-		body = e.render(hdoc.Hdoc)
-	}
-	if isQuotedHdocWord(hdoc.Word) {
-		escaped := strings.ReplaceAll(body, "'", `\'`)
-		e.printf("printf '%%s\\n' '%s' | %s", escaped, cmdText)
+	if strings.Contains(cmdText, "\n") {
+		lines := strings.Split(cmdText, "\n")
+		e.printf("%s | %s", prefix, lines[0])
+		for _, l := range lines[1:] {
+			e.printf("%s", l)
+		}
 	} else {
-		escaped := strings.ReplaceAll(body, `"`, `\"`)
-		e.printf("printf '%%s\\n' \"%s\" | %s", escaped, cmdText)
+		e.printf("%s | %s", prefix, cmdText)
 	}
 }
 
