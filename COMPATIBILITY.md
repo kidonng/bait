@@ -74,7 +74,7 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 | `unset x`, `unset -v x y` | `set --erase x`, `set --erase x y` | Erases variable |
 | `unset -f func` | `functions --erase func` | Erases function definition |
 | `unset 'arr[0]'` | `set --erase arr[1]` | Erases specific array element |
-| `read -r line`, `read _` | `read line`, `read _unused` | Drops `-r` (default in Fish); rewrites `_` to `_unused` (Fish `$_` is read-only) |
+| `read -r line`, `read _`, `read status` | `read line`, `read _unused`, `read _status` | Drops `-r` (default in Fish); automatically mangles variable names conflicting with Fish verified read-only variables (`_` $\to$ `_unused`, `status` $\to$ `_status`, `version` $\to$ `_version`, `history` $\to$ `_history`, `hostname` $\to$ `_hostname`), while Fish-internal variables and mutable variables (e.g. `HOME`, `USER`) remain untouched |
 | `set` (bare), `set -` | *(dropped with warning)* | Prints shell state / trace flags in Bash; dropped in Fish |
 | `set -e`, `set -u`, `set +x`, `set -o ...` | *(dropped with warning)* | Fish has no shell option flags |
 | `eval "..."` | `eval "..."` | Passthrough (emits warning: Fish `eval` executes Fish syntax; incompatible Bash syntax will fail at runtime) |
@@ -105,7 +105,7 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 | `$DIRSTACK` | `$dirstack` | Directory stack array |
 | `$RANDOM`, `$SRANDOM` | `$(random)`, `$(random 0 4294967295)` | Random numbers (0–32767 and 32-bit unsigned 0–4294967295) |
 | `$EPOCHSECONDS` | `$(date +%s)` | Unix epoch timestamp |
-| `$BASH`, `$BASH_COMMAND`, `$FUNCNAME` | `$(status fish-path)`, `$(status current-command)`, `$(status current-function)` | Execution introspection |
+| `$BASH`, `$BASH_COMMAND`, `$FUNCNAME`, `$FUNCNAME[0]` | `$(status fish-path)`, `$(status current-command)`, `$(status current-function)` | Unified execution introspection layer |
 | `$IFS` | `$BAIT_IFS` | Internal IFS state for `__bait_words` field splitting |
 | `$-` (standalone) | `$(status is-interactive && echo i \|\| echo '')` | Emits diagnostic warning (no exact equivalent; fish uses `status` subcommands like `status is-interactive`) |
 
@@ -157,7 +157,7 @@ When scripts use POSIX constructs that Fish does not provide natively, `bait` in
    - Pure Fish function managing `$OPTIND` and `$OPTARG`, supporting short flags, argument binding, and quiet (`:`) mode.
 2. **`__bait_words` field splitting**:
    - Injected when unquoted variables or command substitutions require field splitting matching POSIX `$IFS` in structural loop contexts (`for x in $var` $\to$ `for x in (__bait_words $var)` and `for x in $(cmd)` $\to$ `for x in (__bait_words $(cmd))`).
-   - Ordinary command arguments follow "Passthrough First", with CLI options and dynamic flag accumulations handled cleanly via assignment-side listification instead of magic call-site heuristics.
+   - **List-valued environment variables**: Fish automatically creates lists from all environment variables whose name ends in `PATH` (such as `$PATH`, `$CDPATH`, `$MANPATH`, `$PKG_CONFIG_PATH`, `$LD_LIBRARY_PATH`). These variables are recognized as native lists and passed directly without `__bait_words` wrapping in loops (`for p in $PATH`), while being safely quoted in scalar contexts (`switch "$PATH"`).
    - Splits on whitespace or `$BAIT_IFS` (set from `IFS`).
 3. **`__bait_exec` dynamic commands**:
    - Injected for dynamic command string execution (`$cmd arg` $\to$ `__bait_exec $cmd arg`).

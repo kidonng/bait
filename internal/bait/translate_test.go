@@ -979,6 +979,11 @@ func TestReadFlags(t *testing.T) {
 			"echo a b c | read -r _ v _\n",
 			"echo a b c | read _unused v _unused\n",
 		},
+		{
+			"read reserved variables mangled",
+			"read -r status version code\n",
+			"read _status _version code\n",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1094,6 +1099,196 @@ func TestTier2(t *testing.T) {
 			}
 			if string(got) != tc.want {
 				t.Errorf("tier2 mismatch\n in:   %q\n got:  %q\n want: %q",
+					tc.in, got, tc.want)
+			}
+		})
+	}
+}
+func TestVariableMangling(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			"status assignment and expansion mangled to _status",
+			"status=\"active\"\necho $status\n",
+			"set _status \"active\"\necho $_status\n",
+		},
+		{
+			"version assignment and expansion mangled to _version",
+			"version=\"1.0\"\necho $version\n",
+			"set _version \"1.0\"\necho $_version\n",
+		},
+		{
+			"for loop underscore variable mangled to _unused",
+			"for _ in a b; do echo ok; done\n",
+			"for _unused in a b\n    echo ok\nend\n",
+		},
+		{
+			"underscore assignment and expansion mangled to _unused",
+			"_=\"foo\"\necho $_\n",
+			"set _unused \"foo\"\necho $_unused\n",
+		},
+		{
+			"bare underscore expansion mangled to _unused",
+			"echo $_\n",
+			"echo $_unused\n",
+		},
+		{
+			"for loop status variable mangled to _status",
+			"for status in a b; do echo $status; done\n",
+			"for _status in a b\n    echo $_status\nend\n",
+		},
+		{
+			"history variable mangled to _history",
+			"history=\"cmd1\"\necho $history\n",
+			"set _history \"cmd1\"\necho $_history\n",
+		},
+		{
+			"hostname variable mangled to _hostname",
+			"hostname=\"srv1\"\necho $hostname\n",
+			"set _hostname \"srv1\"\necho $_hostname\n",
+		},
+		{
+			"mutable variables like HOME and USER are not mangled",
+			"HOME=\"/tmp\"\nUSER=\"alice\"\necho $HOME $USER\n",
+			"set HOME \"/tmp\"\nset USER \"alice\"\necho $HOME $USER\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, warnings, err := Translate([]byte(tc.in))
+			if err != nil {
+				t.Fatalf("Translate(%q) error: %v", tc.in, err)
+			}
+			for _, w := range warnings {
+				t.Errorf("unexpected warning: %v", w)
+			}
+			if string(got) != tc.want {
+				t.Errorf("mismatch\n in:   %q\n got:  %q\n want: %q",
+					tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestListValuedEnvVars(t *testing.T) {
+	tests := []struct {
+		name     string
+		in       string
+		want     string
+		contains string
+	}{
+		{
+			name: "for loop over PATH untouched",
+			in:   "for p in $PATH; do echo $p; done\n",
+			want: "for p in $PATH\n    echo $p\nend\n",
+		},
+		{
+			name: "for loop over CDPATH untouched",
+			in:   "for p in $CDPATH; do echo $p; done\n",
+			want: "for p in $CDPATH\n    echo $p\nend\n",
+		},
+		{
+			name: "for loop over MANPATH untouched",
+			in:   "for p in $MANPATH; do echo $p; done\n",
+			want: "for p in $MANPATH\n    echo $p\nend\n",
+		},
+		{
+			name: "for loop over custom PATH suffix variable untouched",
+			in:   "for p in $PKG_CONFIG_PATH; do echo $p; done\n",
+			want: "for p in $PKG_CONFIG_PATH\n    echo $p\nend\n",
+		},
+		{
+			name:     "for loop over non-PATH variable wrapped in bait_words",
+			in:       "for p in $DIR_LIST; do echo $p; done\n",
+			contains: "for p in (__bait_words $DIR_LIST)",
+		},
+		{
+			name: "switch on PATH quoted",
+			in:   "case $PATH in *) echo match;; esac\n",
+			want: "switch \"$PATH\"\ncase '*'\n    echo match\nend\n",
+		},
+		{
+			name: "switch on CDPATH quoted",
+			in:   "case $CDPATH in *) echo match;; esac\n",
+			want: "switch \"$CDPATH\"\ncase '*'\n    echo match\nend\n",
+		},
+		{
+			name: "switch on custom PATH suffix variable quoted",
+			in:   "case $PKG_CONFIG_PATH in *) echo match;; esac\n",
+			want: "switch \"$PKG_CONFIG_PATH\"\ncase '*'\n    echo match\nend\n",
+		},
+		{
+			name: "switch on non-PATH variable unquoted",
+			in:   "case $DIR_LIST in *) echo match;; esac\n",
+			want: "switch $DIR_LIST\ncase '*'\n    echo match\nend\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, warnings, err := Translate([]byte(tc.in))
+			if err != nil {
+				t.Fatalf("Translate(%q) error: %v", tc.in, err)
+			}
+			for _, w := range warnings {
+				t.Errorf("unexpected warning: %v", w)
+			}
+			if tc.contains != "" && !strings.Contains(string(got), tc.contains) {
+				t.Errorf("expected output to contain %q, got:\n%s", tc.contains, got)
+			}
+			if tc.want != "" && string(got) != tc.want {
+				t.Errorf("mismatch\n in:   %q\n got:  %q\n want: %q",
+					tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPseudoArrayContextVars(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			"BASH_SOURCE index 0",
+			"echo ${BASH_SOURCE[0]}\n",
+			"echo $(status filename)\n",
+		},
+		{
+			"BASH_SOURCE index @",
+			"echo ${BASH_SOURCE[@]}\n",
+			"echo $(status filename)\n",
+		},
+		{
+			"FUNCNAME index 0",
+			"echo ${FUNCNAME[0]}\n",
+			"echo $(status current-function)\n",
+		},
+		{
+			"GROUPS index 0",
+			"echo ${GROUPS[0]}\n",
+			"echo $(id -g)\n",
+		},
+		{
+			"regular array index untouched offset",
+			"echo ${arr[0]}\n",
+			"echo $arr[1]\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, warnings, err := Translate([]byte(tc.in))
+			if err != nil {
+				t.Fatalf("Translate(%q) error: %v", tc.in, err)
+			}
+			for _, w := range warnings {
+				t.Errorf("unexpected warning: %v", w)
+			}
+			if string(got) != tc.want {
+				t.Errorf("mismatch\n in:   %q\n got:  %q\n want: %q",
 					tc.in, got, tc.want)
 			}
 		})

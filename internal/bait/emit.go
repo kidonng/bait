@@ -666,21 +666,78 @@ func (e *emitter) procSubstText(ps *syntax.ProcSubst) (string, bool) {
 	return "(begin\n" + strings.Join(lines, "\n") + "\n" + endPad + "end | psub)", true
 }
 
-// stripReadRawFlags removes bash's read -r flag. fish's read builtin has
-// no -r option: it never processes backslashes on input, so bash's raw
-// mode is already the default, and an unrecognized "-r" would be taken
-// for a variable name.
-func stripReadRawFlags(c *syntax.CallExpr) {
+// fishReservedVars maps user variable names from Bash that collide with
+// Fish built-in read-only variables to safe mangled names.
+// Verified via `set --show <var>` in Fish runtime:
+// - "_" is read-only (holds command argument); mapped to "_unused"
+// - "status" is read-only (holds exit code); mapped to "_status"
+// - "version" is read-only (holds fish version); mapped to "_version"
+// - "history" is read-only (holds command history list); mapped to "_history"
+// - "hostname" is read-only (holds machine hostname); mapped to "_hostname"
+// Fish-internal variables (e.g. fish_pid, fish_killring) and mutable variables
+// (e.g. HOME, USER, IFS, argv) are excluded.
+var fishReservedVars = map[string]string{
+	"_":        "_unused",
+	"status":   "_status",
+	"version":  "_version",
+	"history":  "_history",
+	"hostname": "_hostname",
+}
+
+// mangleVarName returns the safe mangled variable name if name collides with
+// a Fish reserved or read-only variable.
+func mangleVarName(name string) string {
+	if mangled, ok := fishReservedVars[name]; ok {
+		return mangled
+	}
+	return name
+}
+
+// fishPathVarRegex matches unquoted variable expansions whose names end in PATH.
+var fishPathVarRegex = regexp.MustCompile(`\$(\{[A-Za-z0-9_]*PATH\}|[A-Za-z0-9_]*PATH\b)`)
+
+// isFishListEnvVar reports whether an environment variable is automatically
+// created as a list by fish. Fish automatically splits all environment
+// variables whose name ends in "PATH" (like PATH, CDPATH, MANPATH, PKG_CONFIG_PATH)
+// on colons into native lists.
+func isFishListEnvVar(name string) bool {
+	return strings.HasSuffix(name, "PATH")
+}
+
+func containsUnquotedFishListVar(s string) bool {
+	return fishPathVarRegex.MatchString(s)
+}
+
+// bashContextVars defines Bash context introspection variables that map to
+// Fish command substitutions instead of normal variables.
+var bashContextVars = map[string][]string{
+	"0":            {"status", "filename"},
+	"BASH_SOURCE":  {"status", "filename"},
+	"BASH_ARGV0":   {"status", "filename"},
+	"BASH":         {"status", "fish-path"},
+	"BASH_COMMAND": {"status", "current-command"},
+	"FUNCNAME":     {"status", "current-function"},
+	"UID":          {"id", "-u"},
+	"EUID":         {"id", "-u"},
+	"GROUPS":       {"id", "-g"},
+}
+
+// normalizeReadCmd adapts a bash read command to fish:
+// 1. Removes the -r flag (fish read never processes backslashes, so raw mode is default).
+// 2. Applies variable name mangling for target variable names to prevent colliding with
+//    fish read-only or reserved variables (e.g. "_" -> "_unused", "status" -> "_status").
+func normalizeReadCmd(c *syntax.CallExpr) {
 	if len(c.Args) == 0 || !isLitWord(c.Args[0], "read") {
 		return
 	}
-	filtered := c.Args[:0]
-	for i, w := range c.Args {
-		if i > 0 && isLitWord(w, "-r") {
+	filtered := c.Args[:1]
+	for i := 1; i < len(c.Args); i++ {
+		w := c.Args[i]
+		if isLitWord(w, "-r") {
 			continue
 		}
-		if i > 0 && isLitWord(w, "_") {
-			filtered = append(filtered, litWord("_unused"))
+		if lit, ok := isBareLit(w); ok && !strings.HasPrefix(lit, "-") {
+			filtered = append(filtered, litWord(mangleVarName(lit)))
 			continue
 		}
 		filtered = append(filtered, w)
@@ -688,6 +745,14 @@ func stripReadRawFlags(c *syntax.CallExpr) {
 	c.Args = filtered
 }
 
+func isBareLit(w *syntax.Word) (string, bool) {
+	if len(w.Parts) == 1 {
+		if lit, ok := w.Parts[0].(*syntax.Lit); ok {
+			return lit.Value, true
+		}
+	}
+	return "", false
+}
 func isLitWord(w *syntax.Word, val string) bool {
 	if len(w.Parts) != 1 {
 		return false
@@ -711,7 +776,7 @@ func (e *emitter) normalize(f *syntax.File) {
 			if len(c.Args) > 0 && isLitWord(c.Args[0], "eval") && c.Args[0].Pos().Col() > 0 {
 				e.warn(c.Args[0].Pos(), "eval executes fish syntax; incompatible bash syntax will fail at runtime; emitted verbatim")
 			}
-			stripReadRawFlags(c)
+			normalizeReadCmd(c)
 		}
 		return true
 	})
@@ -996,8 +1061,8 @@ func (e *emitter) forClause(s *syntax.Stmt, f *syntax.ForClause) {
 				items[i] = "$argv"
 				continue
 			}
-			if name == "PATH" {
-				items[i] = "$PATH"
+			if isFishListEnvVar(name) {
+				items[i] = "$" + name
 				continue
 			}
 			name = e.varName(name)
@@ -1018,7 +1083,7 @@ func (e *emitter) forClause(s *syntax.Stmt, f *syntax.ForClause) {
 	}
 	tail := e.tails(s)
 	e.wrapperComments(s)
-	e.printf("for %s in %s", iter.Name.Value, strings.Join(items, " "))
+	e.printf("for %s in %s", e.varName(iter.Name.Value), strings.Join(items, " "))
 	e.body(f.Do, f.DoLast)
 	e.printf("end%s", tail)
 }
@@ -1036,7 +1101,7 @@ func (e *emitter) caseClause(s *syntax.Stmt, cl *syntax.CaseClause) {
 		e.warn(cl.Word.Pos(), "$- has no fish equivalent; fish uses status subcommands (e.g. status is-interactive)")
 		wTxt = "(status is-interactive && echo i || echo '')"
 	}
-	if strings.Contains(wTxt, "$PATH") && !strings.HasPrefix(wTxt, `"`) && !strings.HasPrefix(wTxt, "'") {
+	if containsUnquotedFishListVar(wTxt) && !strings.HasPrefix(wTxt, `"`) && !strings.HasPrefix(wTxt, "'") {
 		wTxt = `"` + wTxt + `"`
 	}
 	e.printf("switch %s", wTxt)
@@ -1947,6 +2012,10 @@ func (e *emitter) rewriteParams(f *syntax.File) {
 				return true
 			}
 			if name, ok := e.soleArrayAll(node); ok {
+				if cv, isCtx := bashContextVars[name]; isCtx {
+					node.Parts = []syntax.WordPart{substPart(cv...)}
+					return true
+				}
 				node.Parts = []syntax.WordPart{namedParam(name)}
 				return true
 			}
@@ -1995,6 +2064,12 @@ func (e *emitter) paramReplacements(pe *syntax.ParamExp) []syntax.WordPart {
 		}
 		return []syntax.WordPart{pe}
 	}
+	if cv, ok := bashContextVars[name]; ok {
+		return []syntax.WordPart{substPart(cv...)}
+	}
+	if mangled, ok := fishReservedVars[name]; ok {
+		return []syntax.WordPart{namedParam(mangled)}
+	}
 	switch name {
 	case "@", "*":
 		return []syntax.WordPart{argvParam()}
@@ -2009,18 +2084,6 @@ func (e *emitter) paramReplacements(pe *syntax.ParamExp) []syntax.WordPart {
 		return []syntax.WordPart{namedParam("fish_pid")}
 	case "#":
 		return []syntax.WordPart{substPart("count", "$argv")}
-	case "0", "BASH_SOURCE", "BASH_ARGV0":
-		return []syntax.WordPart{substPart("status", "filename")}
-	case "BASH":
-		return []syntax.WordPart{substPart("status", "fish-path")}
-	case "BASH_COMMAND":
-		return []syntax.WordPart{substPart("status", "current-command")}
-	case "FUNCNAME":
-		return []syntax.WordPart{substPart("status", "current-function")}
-	case "UID", "EUID":
-		return []syntax.WordPart{substPart("id", "-u")}
-	case "GROUPS":
-		return []syntax.WordPart{substPart("id", "-g")}
 	case "HOSTNAME":
 		return []syntax.WordPart{namedParam("hostname")}
 	case "HOSTTYPE", "MACHTYPE":
@@ -2421,17 +2484,19 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 		return []syntax.WordPart{pe}, true
 
 	case pe.Index != nil:
+		if cv, ok := bashContextVars[name]; ok {
+			tok, _ := e.arrayIndex(pe.Index)
+			if tok != "1" && tok != "@" && tok != "" {
+				e.warn(pe.Pos(), "context array index %s beyond depth 0 is not supported in fish; emitted current context", tok)
+			}
+			return []syntax.WordPart{substPart(cv...)}, true
+		}
+
 		tok, ok := e.arrayIndex(pe.Index)
 		switch {
 		case !ok:
 			e.warn(pe.Pos(), "dynamic array index cannot be shifted; left untranslated")
 			return []syntax.WordPart{pe}, true
-		case name == "BASH_SOURCE" && (tok == "1" || tok == "@"):
-			return []syntax.WordPart{substPart("status", "filename")}, true
-		case name == "FUNCNAME" && (tok == "1" || tok == "@"):
-			return []syntax.WordPart{substPart("status", "current-function")}, true
-		case name == "GROUPS" && (tok == "1" || tok == "@"):
-			return []syntax.WordPart{substPart("id", "-g")}, true
 		case tok == "@":
 			return []syntax.WordPart{namedParam(name)}, true
 		default:
@@ -2745,7 +2810,7 @@ func (e *emitter) varName(name string) string {
 	if name == "DIRSTACK" {
 		return "dirstack"
 	}
-	return name
+	return mangleVarName(name)
 }
 
 func singleBareParam(w *syntax.Word) (*syntax.ParamExp, bool) {
