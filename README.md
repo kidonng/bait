@@ -42,5 +42,5 @@ However, it can already translate the most popular installer scripts and enable 
 
 ## Documentation
 
-- **[Compatibility Guide](./COMPATIBILITY.md)**: Full reference for supported syntax, control flow, scoping rules, parameter expansions, integer arithmetic, on-demand runtime helpers (`getopts`, `__bait_words`, `__bait_exec`), documented runtime differences, and tested real-world scripts.
+- **[Compatibility Guide](./COMPATIBILITY.md)**: Full reference for supported syntax, control flow, scoping rules, parameter expansions, integer arithmetic, runtime differences, and unsupported constructs.
 - **[Architecture & Developer Guidance](./AGENTS.md)**: Core design principles, uniform scoping philosophy, repository layout, and contributor workflows.

@@ -2,18 +2,56 @@
 
 `bait` translates Bash scripts into clean, idiomatic, and directly executable Fish shell scripts.
 
-This guide inventories the compatibility mappings, runtime differences, and diagnostic warnings between Bash and the generated Fish code.
+## Overview
 
-## Translation Policy
+- **Passthrough First**: Constructs natively supported by modern Fish (pipes, redirects, combiners, commands, per-command env `VAR=val cmd`, backgrounding, quotes) pass through byte-for-byte.
+- **Idiomatic Fish**: Incompatible syntax is translated into native Fish keywords, builtins, and modern `$(cmd)` command substitutions.
+- **Zero-Footprint Runtime**: Self-contained pure-Fish helpers are injected only when scripts require missing POSIX semantics; plain scripts carry no runtime dependencies.
+- **Explicit Diagnostics**: Constructs without a faithful Fish equivalent emit diagnostic warnings on stderr (suppressible via `--quiet`).
 
-- **Native Passthrough**: What modern Fish natively supports (pipes, redirects, combiners, commands, per-command env `VAR=val cmd`, backgrounding, quotes, standard builtins) is passed through byte-for-byte with zero rewrite overhead.
-- **Idiomatic Translation**: Constructs incompatible with Fish syntax are rewritten into native Fish keywords, builtins, and long-option flags (`set --function`, `set --append`, `string match --regex`, etc.).
-- **Syntax Version & Command Substitutions**: Targeted at modern Fish (v3.4+ / v3.7+ / v4.x). Command substitutions consistently use the modern POSIX-aligned `$(cmd)` form for parameter expansions and arithmetic to avoid ambiguous list interpretation. Process substitution `<(cmd)` translates to Fish's native `psub` pipeline using classic parentheses `(cmd | psub)`.
-- **On-Demand Helpers**: If a script relies on behaviors Fish lacks natively (POSIX `getopts`, unquoted field splitting, dynamic command strings), `bait` injects minimal, self-contained pure-Fish helpers at the top of the file. Plain scripts have zero runtime footprint.
-- **Explicit Warnings**: Constructs with no faithful equivalent are emitted verbatim (or rewritten with semantic degradation) with a line/column diagnostic warning on stderr (suppressible with `--quiet`).
 ---
 
-## 1. Control Flow & Structure
+## 1. Runtime Differences
+
+While `bait` strives for behavioral equivalence, Fish semantics differ from Bash in several intentional ways:
+
+1. **Subshell Isolation Loss**:
+   - Subshells `( … )` become `begin … end` (both at statement level and nested inside command substitutions or pipelines). Fish has no subshell isolation; variable and directory mutations persist after the block. Every occurrence emits a warning.
+2. **List Expansions & Quoting**:
+   - In Bash, `"$@"` expands to separate words, while `"$*"` expands to a single space-joined string.
+   - In Fish, quoting a list `"$argv"` joins all elements into a single space-separated string. Therefore, `"$@"` and `"${arr[@]}"` translate to unquoted `$argv` and `$arr` to preserve argument splitting, while `"$*"` translates to `"$argv"` to preserve single joined string semantics.
+3. **Command Substitution Splitting**:
+   - Fish splits command substitutions `$(cmd)` on newlines only, whereas Bash splits on all whitespace characters (POSIX `$IFS`).
+4. **Globbing Behavior**:
+   - In Fish, unmatched globs abort the command (equivalent to Bash's `failglob`).
+   - The `?` character is treated as a literal by default in modern Fish (`qmark-noglob`).
+
+---
+
+## 2. Unsupported Constructs (Warnings Emitted)
+
+The following constructs have no faithful Fish equivalent and are emitted verbatim (or rewritten with semantic degradation) alongside a line/column diagnostic warning:
+
+- **Loops**: C-style `for ((i=0; i<n; i++))` loops and `select` loops
+- **Process Substitution**: Output process substitution `>(cmd)`
+- **Arithmetic Operators**: Ternary `?:`, bitwise (`& | ^ ~ << >>`), and logical operators inside `$(( ... ))`
+- **Case Fallthrough**: `;&` and `;;&`
+- **Variable Attributes**: `readonly`, namerefs (`declare -n`)
+- **Parameter Assertions**: `${v:=def}`, `${v?=error}`
+- **Case Modification**: Pattern-based (`${v^^pattern}`, `${v,,pattern}`) or single-character (`${v^}`, `${v,}`) transformations
+- **Unsupported Builtins**: Bash-only builtins without Fish equivalents (`shopt`, `let`, `hash`, `unalias`, `caller`, `compgen`, `compopt`, `enable`, `fc`)
+- **Shell Options**: `set` option flags (`set -e`, `set -u`, `set -o ...`) and bare `set` / `set -` (dropped with warning)
+- **Dynamic Array Indexing**: Variable array indexing (`arr[$i]`) and non-integer substring/slice offsets
+- **Export Flags**: `export -f`, `export -n`, etc.
+- **Word Boundaries**: Embedded `$@` or `$*` inside words (e.g. `prefix$@suffix`)
+- **Interactive Shell Detection**: Standalone `$-` parameter expansion (warns and rewrites to `status is-interactive` fallback)
+- **Dynamic Evaluation**: `eval` statements pass through verbatim (Fish `eval` executes Fish syntax; dynamic execution of incompatible Bash syntax will fail at runtime)
+
+---
+
+## 3. Translation Reference
+
+### Control Flow & Structure
 
 | Bash | Fish | Notes |
 |---|---|---|
@@ -31,9 +69,7 @@ This guide inventories the compatibility mappings, runtime differences, and diag
 | `<<< WORD` | `printf '%s\n' WORD \| cmd` | Here-string pipeline |
 | `#!/bin/bash`, `#!/usr/bin/env bash`, `sh`, `ash`, `dash` | `#!/usr/bin/env fish` | Shebang rewritten; interpreter flags dropped |
 
----
-
-## 2. Conditionals & Tests (`[ ... ]` and `[[ ... ]]`)
+### Conditionals & Tests (`[ ... ]` and `[[ ... ]]`)
 
 | Bash | Fish | Purpose |
 |---|---|---|
@@ -48,9 +84,7 @@ This guide inventories the compatibility mappings, runtime differences, and diag
 | `[[ cond1 \|\| cond2 ]]` | `cond1 \|\| cond2` | Logical OR |
 | `[[ (c1 \|\| c2) && c3 ]]` | `begin c1 \|\| c2; end && c3` | Grouped condition |
 
----
-
-## 3. Variables, Scoping & State Builtins
+### Variables, Scoping & State Builtins
 
 Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates assignments predictably without magic heuristics:
 
@@ -79,11 +113,9 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 | `set -e`, `set -u`, `set +x`, `set -o ...` | *(dropped with warning)* | Fish has no shell option flags |
 | `eval "..."` | `eval "..."` | Passthrough (emits warning: Fish `eval` executes Fish syntax; incompatible Bash syntax will fail at runtime) |
 
----
+### Parameter Expansions & Special Variables
 
-## 4. Parameter Expansions & Special Variables
-
-### Special Variables
+#### Special Variables
 
 | Bash | Fish | Description |
 |---|---|---|
@@ -93,7 +125,7 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 | `$#` | `$(count $argv)` | Number of positional arguments |
 | `$0`, `$BASH_SOURCE[0]`, `$BASH_ARGV0` | `$(status filename)` | Current script path |
 | `$1`…`$N` | `$argv[1]`…`$argv[N]` | Positional arguments |
-| `"$@"`, `${arr[@]}` | `$argv`, `$arr` | Unquoted list (see [Documented Differences](#documented-differences)) |
+| `"$@"`, `${arr[@]}` | `$argv`, `$arr` | Unquoted list (see [Runtime Differences](#1-runtime-differences)) |
 | `"$*"` | `"$argv"` | Space-joined single string |
 | `$*`, `${arr[*]}` | `$argv`, `$arr` | Unquoted list |
 | `$UID`, `$EUID` | `$(id -u)` | User ID |
@@ -111,7 +143,7 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 
 *Note: Bash-internal completion variables (`COMP_*`), debug stack arrays (`BASH_ARGC`, `BASH_LINENO`), and prompt variables (`PS0`…`PS4`) are not mapped to Fish.*
 
-### Parameter Operators
+#### Parameter Operators
 
 | Bash | Fish |
 |---|---|
@@ -128,13 +160,11 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 | `${arr[@]:1:2}`, `${arr[@]:1}` | `$arr[2..3]`, `$arr[2..-1]` (1-based slices) |
 | `${v^^}` / `${v,,}` | `$(string upper -- "$v")` / `$(string lower -- "$v")` | Uppercase / lowercase string conversion |
 
-### Literal `$` Escaping
+#### Literal `$` Escaping
 
 Literal unquoted trailing dollars (e.g. `echo 404$`) are escaped as `404\$` during AST normalization to prevent Fish variable syntax errors on bare `$` signs.
 
----
-
-## 5. Integer Arithmetic
+### Integer Arithmetic
 
 Bash arithmetic `$(( ... ))` and statements `(( ... ))` are integer-only. `bait` translates them to Fish `math --scale=0` (truncation toward zero, matching Bash negatives):
 
@@ -146,9 +176,7 @@ Bash arithmetic `$(( ... ))` and statements `(( ... ))` are integer-only. `bait`
 | `((x > 0))` | `test "$x" -gt 0` (comparisons map to `test` flags `-gt`, `-lt`, `-eq`, etc.) |
 | `((count))` | `test "$count" -ne 0` (truthiness test) |
 
----
-
-## 6. On-Demand Runtime Helpers
+### On-Demand Runtime Helpers
 
 When scripts use POSIX constructs that Fish does not provide natively, `bait` injects lightweight, self-contained pure-Fish helper functions at the top of the file:
 
@@ -162,51 +190,3 @@ When scripts use POSIX constructs that Fish does not provide natively, `bait` in
 3. **`__bait_exec` dynamic commands**:
    - Injected for dynamic command string execution (`$cmd arg` $\to$ `__bait_exec $cmd arg`).
    - Evaporates empty prefixes (e.g. `sudo=""`) while strictly preserving positional boundaries.
-
----
-
-## 7. Documented Differences
-
-While `bait` strives for 100% behavioral equivalence, Fish semantics differ from Bash in several intentional ways:
-
-1. **Subshell Isolation Loss**:
-   - Subshells `( … )` become `begin … end` (both at statement level and nested inside command substitutions or pipelines). Fish has no subshell; variable and `cd` state persists after the block. Every occurrence is reported as a warning.
-2. **List Expansions & Quoting**:
-   - In Bash, `"$@"` expands to separate quoted words, while `"$*"` expands to a single joined string.
-   - In Fish, quoting a list `"$argv"` joins all elements into a single space-separated string. Therefore, `"$@"` and `"${arr[@]}"` translate to unquoted `$argv` and `$arr` to preserve argument splitting, while `"$*"` translates to `"$argv"` to preserve single joined string semantics.
-3. **Command Substitution Splitting**:
-   - Fish splits command substitutions `$(cmd)` on newlines only, not on spaces.
-4. **Globbing Behavior**:
-   - In Fish, unmatched globs abort the command (equivalent to Bash's `failglob`).
-   - The `?` character is treated as a literal by default in modern Fish (`qmark-noglob`).
-
----
-
-## 8. Unsupported Constructs (Warnings Emitted)
-
-The following constructs have no faithful Fish equivalent and are emitted verbatim (or rewritten with semantic degradation) alongside a diagnostic warning:
-- C-style `for ((i=0; i<n; i++))` loops and `select` loops
-- Output process substitution `>(cmd)`
-- Ternary `?:`, bitwise (`& | ^ ~ << >>`), and logical operators inside `$(( ... ))`
-- Case fallthrough (`;&` and `;;&`)
-- Variable attributes (`readonly`, namerefs `declare -n`)
-- Unsupported parameter assignment/assertions (`${v:=def}`, `${v?=error}`)
-- Pattern-based case modification (`${v^^pattern}`, `${v,,pattern}`) and single-character case modification (`${v^}`, `${v,}`)
-- Bash-only builtins without Fish equivalents (`shopt`, `let`, `hash`, `unalias`, `caller`, `compgen`, `compopt`, `enable`, `fc`)
-- `set` shell option flags (`set -e`, `set -u`, `set -o ...`) and bare `set` / `set -` (dropped with warning)
-- Dynamic array indexing (`arr[$i]`) and non-integer substring/slice offsets
-- Export command flags (`export -f`, `export -n`, etc.)
-- Embedded `$@` or `$*` inside words (e.g. `prefix$@suffix`)
-- Standalone `$-` parameter expansion (emits diagnostic warning and rewrites to `$(status is-interactive && echo i || echo '')`; recommend native `status` subcommands)
-- Subshell isolation loss (`(...)` translated to a `begin` block)
-- `eval` statement passthrough (emits diagnostic warning; Fish `eval` executes Fish syntax, so dynamic execution of incompatible Bash syntax will fail at runtime)
----
-
-## 9. Real-World Tested Installers
-
-The translator is continuously validated by running original Bash installers alongside translated Fish outputs in isolated sandbox environments:
-
-- **Pixi installer** (`https://pixi.sh/install.sh`, ~400 lines) — `read -r`, nested `case`, `for`, string manipulation.
-- **Starship installer** (`https://starship.rs/install.sh`, ~400 lines) — nested `for`, field splitting, `IFS` scoping, binary accumulation.
-- **uv installer** (`https://astral.sh/uv/install.sh`, ~2200 lines) — complex here-docs, archive pattern matching, subshells in conditionals, function call graphs.
-- **Rustup installer** (`https://sh.rustup.rs`, ~1000 lines) — `getopts` argument loop, literal dollar escaping, TLS/ciphersuite detection, CLI flag parsing.

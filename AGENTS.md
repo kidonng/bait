@@ -7,39 +7,33 @@
 ## Architectural Principles
 
 1. **Leverage Modern Fish Native Compatibility (Passthrough First)**
-   - Modern Fish (v3.7+ and v4.x) natively supports or provides wrappers for many POSIX/Bash constructs (pipes, redirections, combiners, command substitutions, brace expansions, per-command env `VAR=val cmd`, backgrounding, and builtins like `alias`, `pushd`, `trap`, `umask`, `eval`, `wait`).
+   - Modern Fish (v3.7+ and v4.x) natively supports or provides wrappers for many POSIX/Bash constructs (pipes, redirections, combiners, command substitutions, brace expansions, per-command environment variables, backgrounding, and builtins).
    - **Rule**: Never rewrite what Fish already natively accepts. Unchanged constructs pass through byte-for-byte (modulo printer whitespace normalization).
 
 2. **Minimal & Principled Transformation**
    - Translate only constructs structurally or lexically incompatible with Fish:
-     - **Control Flow**: Convert keywords to Fish block syntax (`if/else if/else/end`, `while/end`, `for/end`, `switch/case/end`, `function ... end`).
-     - **Uniform Scoping**:
-       - Function-body assignments without `local` map to `set --global`.
-       - Explicit `local` (or `declare` / `typeset` within functions) maps to `set --function`; top-level `declare` or `typeset` maps to plain `set`.
-       - Reassignment to declared locals emits plain `set` (retaining function scope).
-       - **Strict Rule**: No function name heuristics (e.g. `main` is treated identically to any other function). Do not simulate caller-callee dynamic scoping.
-     - **Parameter Expansions & Builtins**: Map POSIX/Bash expansions (`$?`, `$0`, `$#`, `$@`, `${v:-def}`, `${v/a/b}`) and state commands (`set`, `shift`, `unset`, `read`) to Fish builtins using long options (`set --function`, `set --global`, `set --append`, `string replace -- ...`).
-     - **Variable Mangling System**: Variables that collide with Fish verified read-only names (`_` $\to$ `_unused`, `status` $\to$ `_status`, `version` $\to$ `_version`, `history` $\to$ `_history`, `hostname` $\to$ `_hostname`) are mangled systematically across declarations, assignments, loop bindings, and reads, excluding Fish-internal and mutable variables.
-     - **Native List-Valued Environment Variables**: Following Fish's native implementation, all environment variables whose name ends in `PATH` (such as `PATH`, `CDPATH`, `MANPATH`, `PKG_CONFIG_PATH`, `LD_LIBRARY_PATH`) automatically become lists. They are passed directly without `__bait_words` wrapping in loop contexts and safely quoted in scalar contexts.
-     - **Context Introspection Layer**: Bash context pseudo-arrays and variables (`$0`, `$BASH_SOURCE`, `$FUNCNAME`, `$UID`, `$GROUPS`) map to a unified Fish context command layer (`status filename`, `status current-function`, `id -u`, etc.), completely decoupled from generic array index offset logic.
-    - **On-Demand Runtime Helpers & Word Splitting**:
-      - **Assignment-Side Listification**: Rather than intercepting call-sites with magic variable-name heuristics, multi-token CLI flags and string accumulations (`FLAGS="$FLAGS -a -b"`, `ARGS="$ARGS $(cmd)"`) are transformed at the assignment site into native Fish lists (`set FLAGS $FLAGS -a -b`). Downstream commands naturally expand `$FLAGS` into multiple arguments via Fish's native list semantics, strictly adhering to "Passthrough First" and the "No Heuristics" principle.
-      - `getopts`: Pure-Fish option parser tracking `$OPTIND` and `$OPTARG`.
-      - `__bait_words`: Unquoted variable expansion and command substitution field splitting matching POSIX `$IFS` in structural loop contexts (`for in $var` / `for in $(cmd)`).
-      - `__bait_exec`: Dynamic command string execution with flag splitting.
+     - **Control Flow**: Transform Bash compound statements into Fish block syntax (`if/else if/else/end`, `while/end`, `for/end`, `switch/case/end`, `function ... end`).
+     - **Uniform Lexical Scoping**: Map variable scopes predictably (unadorned function assignments to global scope, explicit declarations to function scope). Never use function-name heuristics (e.g. `main` is treated identically to any other function) and never simulate dynamic caller-callee scoping.
+     - **Explicit Long-Option Builtins**: Prefer readable, explicit Fish builtin flags (such as `--function`, `--global`, `--append`) over ambiguous or implicit state flags.
+     - **Symmetric Variable Collision Avoidance**: Systematically mangle variable names that collide with Fish read-only variables across all binding, declaration, and expansion sites. Never use one-sided or ad-hoc renames.
+     - **Native List Semantics over Call-Site Heuristics**: Adhere to Fish's native list semantics (e.g. list-valued environment variables and assignment-side listification for argument/flag accumulation) instead of guessing call-site word splitting via variable name heuristics.
+     - **Decoupled Context Introspection**: Unify execution context introspection (script paths, function frames, execution IDs) behind a dedicated translation layer decoupled from generic array index arithmetic.
+     - **Zero-Footprint Runtime Helpers**: Inject pure-Fish helper functions strictly on-demand when modern Fish lacks native semantics; clean scripts must carry zero runtime overhead.
 
 3. **Explicit Warning Contract over Silent Breakage**
-   - When encountering constructs with no faithful Fish equivalent (C-style `for ((;;))` loops, `select`, ternary `?:`, namerefs, unsupported builtins like `shopt`), emit the construct verbatim and print a diagnostic warning to stderr with line/column coordinates.
+   - When encountering constructs with no faithful Fish equivalent (e.g. C-style loops, namerefs, unsupported builtins), emit the construct verbatim and print a diagnostic warning to stderr with source coordinates.
    - Never silently truncate or generate invalid scripts.
 
 4. **Hermetic Development & Differential Testing**
    - All tools and shell versions are hermetically pinned via `flake.nix`.
-   - **Differential Equivalence (`internal/bait`)**: `TestBashFishEquivalence` executes snippets concurrently under GNU Bash and Fish, asserting identical stdout, stderr, and exit status.
-   - **Sandbox E2E Suite (`e2e`)**: Real-world installers tested in isolated environments:
-     - Pixi installer (`https://pixi.sh/install.sh`)
-     - Starship installer (`https://starship.rs/install.sh`)
-     - uv installer (`https://astral.sh/uv/install.sh`)
-     - Rustup installer (`https://sh.rustup.rs`)
+   - **Differential Equivalence (`internal/bait`)**: Validate translations by executing original scripts under GNU Bash and translated outputs under Fish concurrently, asserting identical stdout, stderr, and exit status.
+   - **Sandbox E2E Suite (`e2e`)**: Continuously verify against complex real-world installer scripts in isolated environments.
+
+## Maintenance Rules
+
+- **High-Level Decisions Only**: Keep this document focused strictly on architectural invariants, principles, and workflows. Never treat it as a changelog or feature dump.
+- **No Implementation Enumerations**: Do not list specific variable names, parameter expansions, helper functions, AST passes, or regex patterns here.
+- **Single Source of Truth**: Syntax mapping and compatibility belong in `COMPATIBILITY.md`; concrete translation logic and helpers belong in code and tests.
 
 ## Developer Workflows
 
@@ -52,12 +46,8 @@
 
 ## Repository Layout
 
-- `cmd/bait/`: CLI binary entry point (`package main`, streaming stdin/stdout, file translation, `--quiet` flag).
-- `internal/bait/`: Core translation engine (`package bait`, import path `github.com/kidonng/bait/internal/bait`):
-  - `translate.go`: High-level entry points and AST parsing via `mvdan.cc/sh/v3/syntax`.
-  - `emit.go`: AST normalization, structural emission, pure-Fish runtime helpers, and diagnostic warning collection.
-  - `shebang.go`: Shebang line inspection and rewriting.
-  - `translate_test.go`: Unit tests, warning assertions, and `TestBashFishEquivalence` differential test runner.
+- `cmd/bait/`: CLI binary entry point (streaming stdin/stdout, file translation, `--quiet` flag).
+- `internal/bait/`: Core translation engine (AST parsing, normalization, pure-Fish emission, diagnostics).
 - `e2e/`: End-to-end sandbox integration tests verifying translated real-world installers against live Fish runtimes.
-- `COMPATIBILITY.md`: User-facing compatibility inventory and differences.
-- `flake.nix` & `flake.lock`: Nix build packages, apps (`bait`, `test`), and development shell (`bait-test`).
+- `COMPATIBILITY.md`: Exhaustive user-facing compatibility inventory, syntax mappings, and runtime differences.
+- `flake.nix` & `flake.lock`: Hermetic Nix environment, packages, and test runners.
