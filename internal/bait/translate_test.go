@@ -452,6 +452,31 @@ func TestWarnings(t *testing.T) {
 			"cmd <<EOF1 <<EOF2\na\nEOF1\nb\nEOF2\n",
 			"multiple here-documents on a single command are not supported",
 		},
+		{
+			"high FD redirect on block",
+			"{ echo hi; } 3>log\n",
+			"redirection to file descriptor 3 on block is not supported in fish",
+		},
+		{
+			"high FD redirect on function",
+			"my_func() { echo hi; } 3>log\n",
+			"redirection to file descriptor 3 on function is not supported in fish",
+		},
+		{
+			"high FD redirect on builtin",
+			"set 3>log\n",
+			"redirection to file descriptor 3 on builtin is not supported in fish",
+		},
+		{
+			"background function definition",
+			"my_func() { echo hi; } &\n",
+			"fish does not support running functions in the background",
+		},
+		{
+			"background function call",
+			"my_func() { echo hi; }\nmy_func &\n",
+			"fish does not support running functions in the background",
+		},
 	}
 
 	for _, tc := range tests {
@@ -1006,6 +1031,26 @@ func TestBashFishEquivalence(t *testing.T) {
 				"}\n" +
 				"test_shift0\n",
 		},
+		{
+			name: "single bracket var test -v",
+			src: "FOO=bar\n" +
+				"if [ -v FOO ]; then\n" +
+				"    echo \"FOO is set\"\n" +
+				"fi\n" +
+				"if [ ! -v BAR ]; then\n" +
+				"    echo \"BAR is not set\"\n" +
+				"fi\n" +
+				"test -v FOO && echo \"test FOO is set\"\n",
+		},
+		{
+			name: "custom ifs with read builtin",
+			src: "split_read() {\n" +
+				"    IFS=':'\n" +
+				"    read a b c <<<'one:two:three'\n" +
+				"    echo \"a=$a b=$b c=$c\"\n" +
+				"}\n" +
+				"split_read\n",
+		},
 	}
 
 	for _, tc := range tests {
@@ -1275,6 +1320,16 @@ func TestVariableMangling(t *testing.T) {
 			"set _hostname \"srv1\"\necho $_hostname\n",
 		},
 		{
+			"CMD_DURATION mangled to _CMD_DURATION",
+			"CMD_DURATION=\"100\"\necho $CMD_DURATION\n",
+			"set _CMD_DURATION \"100\"\necho $_CMD_DURATION\n",
+		},
+		{
+			"status_generation mangled to _status_generation",
+			"status_generation=1\necho $status_generation\n",
+			"set _status_generation 1\necho $_status_generation\n",
+		},
+		{
 			"mutable variables like HOME and USER are not mangled",
 			"HOME=\"/tmp\"\nUSER=\"alice\"\necho $HOME $USER\n",
 			"set HOME \"/tmp\"\nset USER \"alice\"\necho $HOME $USER\n",
@@ -1348,6 +1403,16 @@ func TestListValuedEnvVars(t *testing.T) {
 			name: "switch on non-PATH variable unquoted",
 			in:   "case $DIR_LIST in *) echo match;; esac\n",
 			want: "switch $DIR_LIST\ncase '*'\n    echo match\nend\n",
+		},
+		{
+			name: "for loop over LANGUAGE untouched",
+			in:   "for l in $LANGUAGE; do echo $l; done\n",
+			want: "for l in $LANGUAGE\n    echo $l\nend\n",
+		},
+		{
+			name: "switch on LANGUAGE quoted",
+			in:   "case $LANGUAGE in *) echo match;; esac\n",
+			want: "switch \"$LANGUAGE\"\ncase '*'\n    echo match\nend\n",
 		},
 	}
 	for _, tc := range tests {
@@ -1504,7 +1569,7 @@ func TestTier2Params(t *testing.T) {
 			"run $argv\n",
 		},
 		{"unquoted star becomes argv", "run $*\n", "run $argv\n"},
-		{"UID and EUID maps to id -u", "echo $UID $EUID ${UID}\n", "echo $(id -u) $(id -u) $(id -u)\n"},
+		{"UID maps to id -u and EUID is native", "echo $UID $EUID ${UID}\n", "echo $(id -u) $EUID $(id -u)\n"},
 		{"GROUPS maps to id -g", "echo $GROUPS ${GROUPS[0]}\n", "echo $(id -g) $(id -g)\n"},
 		{"HOSTNAME maps to hostname", "echo \"host: $HOSTNAME ${HOSTNAME}\"\n", "echo \"host: $hostname $hostname\"\n"},
 		{"HOSTTYPE and MACHTYPE maps to uname -m", "echo $HOSTTYPE $MACHTYPE\n", "echo $(uname -m) $(uname -m)\n"},
@@ -2212,6 +2277,36 @@ func TestTestClause(t *testing.T) {
 			"double bracket in chain",
 			"[[ -n \"$x\" ]] && echo yes\n",
 			"test -n \"$x\" && echo yes\n",
+		},
+		{
+			"single bracket var test -v",
+			"[ -v VAR ]\n",
+			"set -q VAR\n",
+		},
+		{
+			"single bracket negated var test -v",
+			"[ ! -v VAR ]\n",
+			"! set -q VAR\n",
+		},
+		{
+			"builtin test var test -v",
+			"test -v VAR\n",
+			"set -q VAR\n",
+		},
+		{
+			"builtin test negated var test -v",
+			"test ! -v VAR\n",
+			"! set -q VAR\n",
+		},
+		{
+			"if with single bracket var test -v",
+			"if [ -v VAR ]; then echo yes; fi\n",
+			"if set -q VAR\n    echo yes\nend\n",
+		},
+		{
+			"single bracket var test in chain",
+			"[ -v VAR ] && echo yes\n",
+			"set -q VAR && echo yes\n",
 		},
 	}
 	for _, tc := range tests {

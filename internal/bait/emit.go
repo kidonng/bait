@@ -32,6 +32,7 @@ type emitter struct {
 	knownLists        map[string]bool
 	multiWordScalars  map[string]bool
 	commandPrefixVars map[string]bool
+	knownFuncs        map[string]bool
 }
 
 func (e *emitter) newSubEmitter() *emitter {
@@ -46,6 +47,7 @@ func (e *emitter) newSubEmitter() *emitter {
 	sub.knownLists = e.knownLists
 	sub.multiWordScalars = e.multiWordScalars
 	sub.commandPrefixVars = e.commandPrefixVars
+	sub.knownFuncs = e.knownFuncs
 	return sub
 }
 
@@ -71,6 +73,7 @@ func newEmitter() *emitter {
 		knownLists:        make(map[string]bool),
 		multiWordScalars:  make(map[string]bool),
 		commandPrefixVars: make(map[string]bool),
+		knownFuncs:        make(map[string]bool),
 	}
 }
 
@@ -125,6 +128,36 @@ func (e *emitter) tails(s *syntax.Stmt) string {
 	}
 	return out
 }
+
+func (e *emitter) checkHighFDRedir(s *syntax.Stmt, kind string) {
+	for _, r := range s.Redirs {
+		if r.N != nil {
+			if n, err := strconv.Atoi(r.N.Value); err == nil && n > 2 {
+				e.warn(r.Pos(), "redirection to file descriptor %d on %s is not supported in fish; emitted verbatim", n, kind)
+			}
+		}
+	}
+}
+
+var fishBuiltins = map[string]bool{
+	"alias": true, "and": true, "argparse": true, "begin": true, "bg": true,
+	"bind": true, "block": true, "breakpoint": true, "builtin": true, "case": true,
+	"cd": true, "command": true, "commandline": true, "complete": true, "contains": true,
+	"continue": true, "count": true, "disown": true, "echo": true, "else": true,
+	"emit": true, "end": true, "eval": true, "exec": true, "exit": true,
+	"false": true, "fg": true, "fish": true, "fish_indent": true, "fish_opt": true,
+	"for": true, "function": true, "functions": true, "history": true, "if": true,
+	"jobs": true, "math": true, "not": true, "or": true, "path": true,
+	"printf": true, "pwd": true, "random": true, "read": true, "realpath": true,
+	"return": true, "set": true, "set_color": true, "shift": true, "source": true,
+	".": true, "status": true, "string": true, "switch": true, "test": true,
+	"[": true, "time": true, "true": true, "type": true, "ulimit": true,
+	"umask": true, "unset": true, "vared": true, "wait": true, "while": true,
+}
+
+func isFishBuiltin(name string) bool {
+	return fishBuiltins[name]
+}
 func (e *emitter) comment(c syntax.Comment) {
 	text := c.Text
 	if !strings.HasPrefix(text, "#") {
@@ -163,6 +196,9 @@ func (e *emitter) condText(cond []*syntax.Stmt) string {
 		}
 		if c, ok := st.Cmd.(*syntax.CallExpr); ok {
 			e.warnBashOnlyBuiltin(st, c)
+			if _, _, ok := matchTestDashV(c); ok {
+				return e.inlineStmtText(st)
+			}
 			if len(c.Args) == 0 && len(c.Assigns) > 0 {
 				assignTxt := e.inlineStmtText(st)
 				if st.Negated {
@@ -184,6 +220,12 @@ func (e *emitter) condText(cond []*syntax.Stmt) string {
 }
 
 func (e *emitter) file(f *syntax.File) {
+	syntax.Walk(f, func(n syntax.Node) bool {
+		if fd, ok := n.(*syntax.FuncDecl); ok && fd.Name != nil {
+			e.knownFuncs[fd.Name.Value] = true
+		}
+		return true
+	})
 	var body bytes.Buffer
 	origBuf := e.buf
 	e.buf = body
@@ -217,6 +259,37 @@ func (e *emitter) file(f *syntax.File) {
 }
 
 func (e *emitter) stmt(s *syntax.Stmt) {
+	if s.Background {
+		switch cmd := s.Cmd.(type) {
+		case *syntax.FuncDecl:
+			e.warn(s.Position, "fish does not support running functions in the background; emitted verbatim")
+		case *syntax.CallExpr:
+			if len(cmd.Args) > 0 {
+				name := e.renderWordSmart(cmd.Args[0])
+				if e.knownFuncs[name] {
+					e.warn(s.Position, "fish does not support running functions in the background; emitted verbatim")
+				}
+			}
+		}
+	}
+	switch cmd := s.Cmd.(type) {
+	case *syntax.Block, *syntax.Subshell, *syntax.IfClause, *syntax.WhileClause, *syntax.ForClause, *syntax.CaseClause:
+		e.checkHighFDRedir(s, "block")
+	case *syntax.FuncDecl:
+		e.checkHighFDRedir(s, "function")
+		if cmd.Body != nil {
+			e.checkHighFDRedir(cmd.Body, "function")
+		}
+	case *syntax.CallExpr:
+		if len(cmd.Args) > 0 {
+			name := e.renderWordSmart(cmd.Args[0])
+			if e.knownFuncs[name] {
+				e.checkHighFDRedir(s, "function")
+			} else if isFishBuiltin(name) {
+				e.checkHighFDRedir(s, "builtin")
+			}
+		}
+	}
 	if hdoc, rest := extractHdoc(s.Redirs); hdoc != nil {
 		e.emitHdoc(s, hdoc, rest)
 		return
@@ -272,8 +345,53 @@ func (e *emitter) lines(s string) {
 // by the mvdan printer, which replays attached comments, negation,
 // redirections, and the background marker -- all of which are also valid
 // fish.
+func matchTestDashV(c *syntax.CallExpr) (*syntax.Word, bool, bool) {
+	if c == nil || len(c.Args) == 0 {
+		return nil, false, false
+	}
+	isBracket := isLitWord(c.Args[0], "[")
+	isTest := isLitWord(c.Args[0], "test")
+	if !isBracket && !isTest {
+		return nil, false, false
+	}
+	args := c.Args[1:]
+	if isBracket {
+		if len(args) == 0 || !isLitWord(args[len(args)-1], "]") {
+			return nil, false, false
+		}
+		args = args[:len(args)-1]
+	}
+	if len(args) == 2 && isLitWord(args[0], "-v") {
+		return args[1], false, true
+	}
+	if len(args) == 3 && isLitWord(args[0], "!") && isLitWord(args[1], "-v") {
+		return args[2], true, true
+	}
+	return nil, false, false
+}
+
+func (e *emitter) renderTestDashV(operand *syntax.Word, negated bool) string {
+	raw := e.render(operand)
+	unquoted := unquoteArg(raw)
+	shifted := e.shiftArrayIndex(operand.Pos(), unquoted)
+	res := "set -q " + shifted
+	if negated {
+		res = "! " + res
+	}
+	return res
+}
+
 func (e *emitter) simple(s *syntax.Stmt) {
 	if c, ok := s.Cmd.(*syntax.CallExpr); ok {
+		if operand, negated, ok := matchTestDashV(c); ok {
+			line := e.renderTestDashV(operand, negated)
+			if s.Negated {
+				line = "! " + line
+			}
+			line += e.tails(s)
+			e.lines(line)
+			return
+		}
 		if len(c.Assigns) == 0 && len(c.Args) > 0 && isLitWord(c.Args[0], "shift") {
 			e.shiftCmd(s, c)
 			return
@@ -683,21 +801,17 @@ func (e *emitter) procSubstText(ps *syntax.ProcSubst) (string, bool) {
 
 // fishReservedVars maps user variable names from Bash that collide with
 // Fish built-in read-only variables to safe mangled names.
-// Verified via `set --show <var>` in Fish runtime:
-// - "_" is read-only (holds command argument); mapped to "_unused"
-// - "status" is read-only (holds exit code); mapped to "_status"
-// - "version" is read-only (holds fish version); mapped to "_version"
-// - "history" is read-only (holds command history list); mapped to "_history"
-// - "hostname" is read-only (holds machine hostname); mapped to "_hostname"
 // Fish-internal variables (e.g. fish_pid, fish_killring) and mutable variables
 // (e.g. HOME, USER, IFS, argv) are excluded.
 var fishReservedVars = map[string]string{
-	"_":          "_unused",
-	"status":     "_status",
-	"version":    "_version",
-	"history":    "_history",
-	"hostname":   "_hostname",
-	"pipestatus": "_pipestatus",
+	"_":                 "_unused",
+	"status":            "_status",
+	"version":           "_version",
+	"history":           "_history",
+	"hostname":          "_hostname",
+	"pipestatus":        "_pipestatus",
+	"CMD_DURATION":      "_CMD_DURATION",
+	"status_generation": "_status_generation",
 }
 
 // mangleVarName returns the safe mangled variable name if name collides with
@@ -710,14 +824,14 @@ func mangleVarName(name string) string {
 }
 
 // fishPathVarRegex matches unquoted variable expansions whose names end in PATH.
-var fishPathVarRegex = regexp.MustCompile(`\$(\{[A-Za-z0-9_]*PATH\}|[A-Za-z0-9_]*PATH\b)`)
+var fishPathVarRegex = regexp.MustCompile(`\$(\{[A-Za-z0-9_]*PATH\}|[A-Za-z0-9_]*PATH\b|\{LANGUAGE\}|LANGUAGE\b)`)
 
 // isFishListEnvVar reports whether an environment variable is automatically
 // created as a list by fish. Fish automatically splits all environment
 // variables whose name ends in "PATH" (like PATH, CDPATH, MANPATH, PKG_CONFIG_PATH)
-// on colons into native lists.
+// and LANGUAGE on colons into native lists.
 func isFishListEnvVar(name string) bool {
-	return strings.HasSuffix(name, "PATH")
+	return strings.HasSuffix(name, "PATH") || name == "LANGUAGE"
 }
 
 func containsUnquotedFishListVar(s string) bool {
@@ -734,7 +848,6 @@ var bashContextVars = map[string][]string{
 	"BASH_COMMAND": {"status", "current-command"},
 	"FUNCNAME":     {"status", "current-function"},
 	"UID":          {"id", "-u"},
-	"EUID":         {"id", "-u"},
 	"GROUPS":       {"id", "-g"},
 }
 
@@ -1059,6 +1172,10 @@ func chainNeedsRewrite(b *syntax.BinaryCmd) bool {
 				return false
 			}
 		}
+		if _, _, ok := matchTestDashV(c); ok {
+			found = true
+			return false
+		}
 		return true
 	})
 	return found
@@ -1123,6 +1240,13 @@ func (e *emitter) chainSideText(st *syntax.Stmt) string {
 func (e *emitter) chainLeaf(st *syntax.Stmt) string {
 	c, ok := st.Cmd.(*syntax.CallExpr)
 	if !ok || len(c.Args) != 0 || len(c.Assigns) == 0 {
+		if operand, negated, ok := matchTestDashV(c); ok {
+			line := e.renderTestDashV(operand, negated)
+			if st.Negated {
+				line = "! " + line
+			}
+			return line
+		}
 		if c != nil && len(c.Args) > 0 && (isLitWord(c.Args[0], "shift") || isLitWord(c.Args[0], "unset")) {
 			txt := e.inlineStmtText(st)
 			if strings.Contains(txt, "\n") {
@@ -1745,7 +1869,9 @@ func casePatternString(p *syntax.Word) (string, bool) {
 
 func (e *emitter) funcDecl(s *syntax.Stmt, fd *syntax.FuncDecl) {
 	tail := e.tails(s)
-	e.wrapperComments(s)
+	if fd.Body != nil && len(fd.Body.Redirs) > 0 {
+		tail += e.tails(fd.Body)
+	}
 	e.printf("function %s", fd.Name.Value)
 	saved := e.inFunction
 	savedLocals := e.funcLocals
@@ -2225,9 +2351,6 @@ func (e *emitter) paramReplacements(pe *syntax.ParamExp) []syntax.WordPart {
 	switch name {
 	case "@", "*":
 		return []syntax.WordPart{argvParam()}
-	case "IFS":
-		e.needsBaitWords = true
-		return []syntax.WordPart{namedParam("BAIT_IFS")}
 	case "?":
 		return []syntax.WordPart{namedParam("status")}
 	case "!":
@@ -3018,10 +3141,6 @@ func dq(parts ...syntax.WordPart) *syntax.Word {
 }
 
 func (e *emitter) varName(name string) string {
-	if name == "IFS" {
-		e.needsBaitWords = true
-		return "BAIT_IFS"
-	}
 	if name == "PIPESTATUS" {
 		return "pipestatus"
 	}
@@ -3056,15 +3175,15 @@ const baitWordsHelper = `function __bait_words --no-scope-shadowing
     if test (count $argv) -eq 0
         return 0
     end
-    if set --query BAIT_IFS; and test -z "$BAIT_IFS"
+    if set --query IFS; and test -z "$IFS"
         for a in $argv
             printf '%s\n' $a
         end
         return 0
     end
-    if set --query BAIT_IFS; and test -n "$BAIT_IFS"
+    if set --query IFS; and test "$IFS" != (printf '\n \t' | string collect)
         set -l cur $argv
-        for d in (string split "" -- "$BAIT_IFS")
+        for d in (string split "" -- "$IFS")
             test -n "$d"; and set cur (string split -- "$d" $cur)
         end
         for w in $cur
@@ -3143,7 +3262,8 @@ const baitGetoptsHelper = `function getopts --no-scope-shadowing
         set __bait_clean_opts (string sub --start=2 -- "$__bait_optstring")
     end
 
-    set --local __bait_match (string match --regex --index -- "\\Q$__bait_opt\\E:?" "$__bait_clean_opts")
+    set --local __bait_escaped_opt (string escape --style=regex -- "$__bait_opt")
+    set --local __bait_match (string match --regex --index -- "$__bait_escaped_opt:?" "$__bait_clean_opts")
     if test -z "$__bait_match"
         set OPTARG "$__bait_opt"
         set $__bait_varname "?"

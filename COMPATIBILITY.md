@@ -41,6 +41,8 @@ The following constructs have no faithful Fish equivalent and are emitted verbat
 - **Case Modification**: Only pattern-based (`${v^^pattern}`, `${v,,pattern}`) or single-character (`${v^}`, `${v,}`) transformations are unsupported; full conversions (`${v^^}`, `${v,,}`) are supported via `string upper` / `string lower`
 - **Unsupported Builtins**: Bash-only builtins without Fish equivalents (`shopt`, `let`, `hash`, `unalias`, `caller`, `compgen`, `compopt`, `enable`, `fc`)
 - **Shell Options**: `set` option flags (`set -e`, `set -u`, `set -o ...`) and bare `set` / `set -` (dropped with warning)
+- **High File Descriptor Redirections**: Redirections to file descriptors above 2 (`3>`, `4>&1`, etc.) on blocks, functions, or builtins are unsupported in Fish (supported only for external commands)
+- **Background Function Execution**: Functions cannot be started in the background in Fish (`func &`)
 - **Dynamic Array Indexing**: Variable array indexing (`arr[$i]`) and non-integer substring/slice offsets
 - **Export Flags**: `export -f`, `export -n`, etc.
 - **Word Boundaries**: Embedded `$@` or `$*` inside words (e.g. `prefix$@suffix`)
@@ -63,7 +65,7 @@ The following constructs have no faithful Fish equivalent and are emitted verbat
 | `f() { … }`, `function f { … }` | `function f … end` | Function definition |
 | `{ … }` | `begin … end` | Anonymous command block |
 | `( … )` | `begin … end` | Anonymous command block (emits warning: subshell isolation is lost) |
-| `cmd &`, `end &` | `cmd &`, `end &` | Background execution |
+| `cmd &`, `end &` | `cmd &`, `end &` | Background execution (Fish does not support starting functions in the background; function calls with `&` emit a diagnostic warning) |
 | `<(cmd)` | `(cmd \| psub)` | Process substitution via Fish `psub` |
 | `<< EOF`, `<<- EOF` | `printf '%s\n' '...' \| cmd` | Here-document pipeline |
 | `<<< WORD` | `printf '%s\n' WORD \| cmd` | Here-string pipeline |
@@ -73,7 +75,7 @@ The following constructs have no faithful Fish equivalent and are emitted verbat
 
 | Bash | Fish | Purpose |
 |---|---|---|
-| `[ ... ]` | `[ ... ]` | Native passthrough (Fish ships `[` as an alias for `test`) |
+| `[ ... ]` | `[ ... ]` / `set -q VAR` | Native passthrough (Fish ships `[` as an alias for `test`); `[ -v VAR ]` and `test -v VAR` are rewritten to `set -q VAR` as Fish `test` lacks `-v` |
 | `[[ -n "$x" ]]`, `[[ -f file ]]` | `test -n "$x"`, `test -f file` | Unary string and file tests |
 | `[[ "$a" == "$b" ]]`, `[[ $a = b ]]` | `test "$a" = "$b"`, `test $a = b` | String equality |
 | `[[ $a == glob* ]]`, `[[ $a != glob* ]]` | `string match -q -- 'glob*' $a`, `! string match -q -- 'glob*' $a` | Wildcard pattern matching |
@@ -108,7 +110,7 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 | `unset x`, `unset -v x y` | `set --erase x`, `set --erase x y` | Erases variable |
 | `unset -f func` | `functions --erase func` | Erases function definition |
 | `unset 'arr[0]'` | `set --erase arr[1]` | Erases specific array element |
-| `read -r line`, `read _`, `read status`, `read pipestatus` | `read line`, `read _unused`, `read _status`, `read _pipestatus` | Drops `-r` (default in Fish); automatically mangles variable names conflicting with Fish verified read-only variables (`_` $\to$ `_unused`, `status` $\to$ `_status`, `version` $\to$ `_version`, `history` $\to$ `_history`, `hostname` $\to$ `_hostname`, `pipestatus` $\to$ `_pipestatus`), while Fish-internal variables and mutable variables (e.g. `HOME`, `USER`) remain untouched |
+| `read -r line`, `read _`, `read status`, `read pipestatus` | `read line`, `read _unused`, `read _status`, `read _pipestatus` | Drops `-r` (default in Fish); automatically mangles variable names conflicting with Fish verified read-only variables (`_` $\to$ `_unused`, `status` $\to$ `_status`, `version` $\to$ `_version`, `history` $\to$ `_history`, `hostname` $\to$ `_hostname`, `pipestatus` $\to$ `_pipestatus`, `CMD_DURATION` $\to$ `_CMD_DURATION`, `status_generation` $\to$ `_status_generation`), while Fish-internal variables and mutable variables (e.g. `HOME`, `USER`, `IFS`) remain untouched |
 | `set` (bare), `set -` | *(dropped with warning)* | Prints shell state / trace flags in Bash; dropped in Fish |
 | `set -e`, `set -u`, `set +x`, `set -o ...` | *(dropped with warning)* | Fish has no shell option flags |
 | `eval "..."` | `eval "..."` | Passthrough (emits warning: Fish `eval` executes Fish syntax; incompatible Bash syntax will fail at runtime) |
@@ -128,7 +130,7 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 | `"$@"`, `${arr[@]}` | `$argv`, `$arr` | Unquoted list (see [Runtime Differences](#1-runtime-differences)) |
 | `"$*"` | `"$argv"` | Space-joined single string |
 | `$*`, `${arr[*]}` | `$argv`, `$arr` | Unquoted list |
-| `$UID`, `$EUID` | `$(id -u)` | User ID |
+| `$UID` | `$(id -u)` | User ID |
 | `$GROUPS` | `$(id -g)` | Primary group ID |
 | `$HOSTNAME` | `$hostname` | Hostname |
 | `$HOSTTYPE`, `$MACHTYPE` | `$(uname -m)` | Machine architecture |
@@ -138,7 +140,6 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 | `$RANDOM`, `$SRANDOM` | `$(random)`, `$(random 0 4294967295)` | Random numbers (0–32767 and 32-bit unsigned 0–4294967295) |
 | `$EPOCHSECONDS` | `$(date +%s)` | Unix epoch timestamp |
 | `$BASH`, `$BASH_COMMAND`, `$FUNCNAME`, `$FUNCNAME[0]` | `$(status fish-path)`, `$(status current-command)`, `$(status current-function)` | Unified execution introspection layer |
-| `$IFS` | `$BAIT_IFS` | Internal IFS state for `__bait_words` field splitting |
 | `$-` (standalone) | `$(status is-interactive && echo i \|\| echo '')` | Emits diagnostic warning (no exact equivalent; fish uses `status` subcommands like `status is-interactive`) |
 
 *Note: Bash-internal completion variables (`COMP_*`), debug stack arrays (`BASH_ARGC`, `BASH_LINENO`), and prompt variables (`PS0`…`PS4`) are not mapped to Fish.*
@@ -185,8 +186,8 @@ When scripts use POSIX constructs that Fish does not provide natively, `bait` in
    - Pure Fish function managing `$OPTIND` and `$OPTARG`, supporting short flags, argument binding, and quiet (`:`) mode.
 2. **`__bait_words` field splitting**:
    - Injected when unquoted variables or command substitutions require field splitting matching POSIX `$IFS` in structural contexts (`for x in $var`, `for x in $(cmd)`) or at unquoted command argument call sites (`cmd $FLAGS` $\to$ `cmd $(__bait_words $FLAGS)`).
-   - **List-valued environment variables**: Fish automatically creates lists from all environment variables whose name ends in `PATH` (such as `$PATH`, `$CDPATH`, `$MANPATH`, `$PKG_CONFIG_PATH`, `$LD_LIBRARY_PATH`). These variables are recognized as native lists and passed directly without `__bait_words` wrapping in loops (`for p in $PATH`), while being safely quoted in scalar contexts (`switch "$PATH"`).
-   - Splits on whitespace or `$BAIT_IFS` (set from `IFS`).
+   - **List-valued environment variables**: Fish automatically creates lists from all environment variables whose name ends in `PATH` (such as `$PATH`, `$CDPATH`, `$MANPATH`, `$PKG_CONFIG_PATH`, `$LD_LIBRARY_PATH`) as well as `LANGUAGE`. These variables are recognized as native lists and passed directly without `__bait_words` wrapping in loops (`for p in $PATH`), while being safely quoted in scalar contexts (`switch "$PATH"`).
+   - Splits on whitespace or custom `$IFS` (set from `IFS`).
 3. **`__bait_exec` dynamic commands**:
    - Injected for dynamic command string execution (`$cmd arg` $\to$ `__bait_exec $cmd arg`).
    - Recursively dispatches dynamically split command words while strictly preserving positional boundaries; optional prefixes (e.g. `sudo=""`) are normalized to native Fish empty lists during translation.
