@@ -315,7 +315,7 @@ var bashOnlyBuiltins = map[string]string{
 	"let":     "use 'math' instead",
 	"shopt":   "fish has no shell options",
 	"unalias": "fish aliases are functions; use 'functions --erase' instead",
-	"caller":  "use 'status stack-trace' instead",
+	"caller":  "use 'status print-stack-trace' instead",
 	"compgen": "use 'complete' instead",
 	"compopt": "use 'complete' instead",
 	"enable":  "fish does not support enabling/disabling builtins",
@@ -357,9 +357,7 @@ func (e *emitter) shiftCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 	if n, err := strconv.Atoi(arg); err == nil {
 		switch {
 		case n <= 0:
-			if tail != "" {
-				e.printf("true%s", tail)
-			}
+			e.printf("true%s", tail)
 		case n == 1:
 			e.printf("set --erase argv[1]%s", tail)
 		default:
@@ -749,16 +747,52 @@ func normalizeReadCmd(c *syntax.CallExpr) {
 		return
 	}
 	filtered := c.Args[:1]
+	inOptions := true
 	for i := 1; i < len(c.Args); i++ {
 		w := c.Args[i]
-		if isLitWord(w, "-r") {
-			continue
+		if inOptions {
+			lit, isLit := isBareLit(w)
+			if isLit && lit == "--" {
+				inOptions = false
+				filtered = append(filtered, w)
+				continue
+			}
+			if isLit && strings.HasPrefix(lit, "-") && len(lit) > 1 {
+				// Strip 'r' from the flag if present
+				cleaned := "-" + strings.ReplaceAll(lit[1:], "r", "")
+				optChar := rune(lit[len(lit)-1])
+				// Options taking an argument: p (prompt), u (fd), t (timeout),
+				// n/N (nchars), d (delim), i (initial text), a (array name)
+				takesArg := strings.ContainsRune("putnNdia", optChar)
+				consumesNext := takesArg && (len(lit) == 2 || (len(lit) > 2 && lit[len(lit)-1] == byte(optChar) && !strings.ContainsRune("putnNdia", rune(lit[1]))))
+
+				if cleaned != "-" {
+					filtered = append(filtered, litWord(cleaned))
+				}
+				if consumesNext && i+1 < len(c.Args) {
+					i++
+					argWord := c.Args[i]
+					if optChar == 'a' {
+						if argLit, ok := isBareLit(argWord); ok {
+							filtered = append(filtered, litWord(mangleVarName(argLit)))
+						} else {
+							filtered = append(filtered, argWord)
+						}
+					} else {
+						// Non-variable option arguments (prompt, fd, timeout, etc.) preserved verbatim
+						filtered = append(filtered, argWord)
+					}
+				}
+				continue
+			}
+			inOptions = false
 		}
-		if lit, ok := isBareLit(w); ok && !strings.HasPrefix(lit, "-") {
+		// Positional variable name
+		if lit, ok := isBareLit(w); ok {
 			filtered = append(filtered, litWord(mangleVarName(lit)))
-			continue
+		} else {
+			filtered = append(filtered, w)
 		}
-		filtered = append(filtered, w)
 	}
 	c.Args = filtered
 }
@@ -806,8 +840,8 @@ func (e *emitter) analyzeVariables(f *syntax.File) {
 		return true
 	})
 
-	// Iteratively propagate multi-word scalar tracking
-	for iter := 0; iter < 3; iter++ {
+	// Iteratively propagate multi-word scalar tracking until convergence
+	for {
 		changed := false
 		syntax.Walk(f, func(n syntax.Node) bool {
 			if c, ok := n.(*syntax.CallExpr); ok {
@@ -1272,7 +1306,7 @@ func (e *emitter) caseClause(s *syntax.Stmt, cl *syntax.CaseClause) {
 	wTxt := e.render(cl.Word)
 	if isDollarDash(cl.Word) {
 		e.warn(cl.Word.Pos(), "$- has no fish equivalent; fish uses status subcommands (e.g. status is-interactive)")
-		wTxt = "(status is-interactive && echo i || echo '')"
+		wTxt = "$(status is-interactive && echo i || echo '')"
 	}
 	if containsUnquotedFishListVar(wTxt) && !strings.HasPrefix(wTxt, `"`) && !strings.HasPrefix(wTxt, "'") {
 		wTxt = `"` + wTxt + `"`
@@ -1911,28 +1945,31 @@ func (e *emitter) arrayIndex(idx syntax.ArithmExpr) (string, bool) {
 }
 
 // soleArrayAll reports whether the word is exactly "${arr[@]}" or
-// "${arr[*]}" (optionally quoted) and returns the variable name.
-func (e *emitter) soleArrayAll(w *syntax.Word) (string, bool) {
+// "${arr[*]}" (optionally quoted) and returns the variable name, whether
+// the subscript token was "*", and whether the word was double-quoted.
+func (e *emitter) soleArrayAll(w *syntax.Word) (name string, isStar bool, quoted bool, ok bool) {
 	if len(w.Parts) != 1 {
-		return "", false
+		return "", false, false, false
 	}
 	part := w.Parts[0]
+	isQuoted := false
 	if q, ok := part.(*syntax.DblQuoted); ok {
 		if len(q.Parts) != 1 {
-			return "", false
+			return "", false, false, false
 		}
 		part = q.Parts[0]
+		isQuoted = true
 	}
 	pe, ok := part.(*syntax.ParamExp)
 	if !ok || pe.Param == nil || pe.Length || pe.Slice != nil ||
 		pe.Repl != nil || pe.Exp != nil || pe.Index == nil {
-		return "", false
+		return "", false, false, false
 	}
 	tok, ok := e.arrayIndex(pe.Index)
 	if !ok || (tok != "@" && tok != "*") {
-		return "", false
+		return "", false, false, false
 	}
-	return e.varName(pe.Param.Value), true
+	return e.varName(pe.Param.Value), tok == "*", isQuoted, true
 }
 func (e *emitter) assignValue(a *syntax.Assign) string {
 	// A missing value is a typed-nil *Word, which must not reach the
@@ -1992,6 +2029,11 @@ func (e *emitter) declClause(s *syntax.Stmt, d *syntax.DeclClause) {
 		}
 		return
 	}
+	if e.hasReadonlyFlag(d.Args) {
+		e.warn(s.Position, "readonly attribute has no fish equivalent; emitted verbatim")
+		e.printf("%s", e.render(s))
+		return
+	}
 	scope := ""
 	switch d.Variant.Value {
 	case "local":
@@ -2037,6 +2079,18 @@ func (e *emitter) hasGlobalFlag(args []*syntax.Assign) bool {
 	for _, a := range args {
 		if a.Naked && e.argText(a) == "-g" {
 			return true
+		}
+	}
+	return false
+}
+
+func (e *emitter) hasReadonlyFlag(args []*syntax.Assign) bool {
+	for _, a := range args {
+		if a.Naked {
+			txt := e.argText(a)
+			if strings.HasPrefix(txt, "-") && strings.ContainsRune(txt[1:], 'r') {
+				return true
+			}
 		}
 	}
 	return false
@@ -2105,9 +2159,13 @@ func (e *emitter) rewriteParams(f *syntax.File) {
 				node.Parts = []syntax.WordPart{argvParam()}
 				return true
 			}
-			if name, ok := e.soleArrayAll(node); ok {
+			if name, isStar, quoted, ok := e.soleArrayAll(node); ok {
 				if cv, isCtx := bashContextVars[name]; isCtx {
 					node.Parts = []syntax.WordPart{substPart(cv...)}
+					return true
+				}
+				if quoted && isStar {
+					node.Parts = []syntax.WordPart{&syntax.DblQuoted{Parts: []syntax.WordPart{namedParam(name)}}}
 					return true
 				}
 				node.Parts = []syntax.WordPart{namedParam(name)}
@@ -2564,10 +2622,23 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 				e.warn(pe.Pos(), "slice lengths must be plain integers; left untranslated")
 				return nil, false
 			}
-			end = strconv.Itoa(start + n)
+			if start < 0 {
+				endVal := start + n - 1
+				if endVal >= 0 {
+					end = "-1"
+				} else {
+					end = strconv.Itoa(endVal)
+				}
+			} else {
+				end = strconv.Itoa(start + n)
+			}
+		}
+		startStr := strconv.Itoa(start + 1)
+		if start < 0 {
+			startStr = strconv.Itoa(start)
 		}
 		return []syntax.WordPart{namedParam(name),
-			litPart(fmt.Sprintf("[%d..%s]", start+1, end))}, true
+			litPart(fmt.Sprintf("[%s..%s]", startStr, end))}, true
 
 	case pe.Index != nil && pe.Exp != nil &&
 		(pe.Exp.Op == syntax.RemSmallSuffix || pe.Exp.Op == syntax.RemLargeSuffix ||
@@ -2623,7 +2694,11 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 			e.warn(pe.Pos(), "substring offsets must be plain integers; left untranslated")
 			return nil, false
 		}
-		args := []string{"string", "sub", "--start=" + strconv.Itoa(start+1)}
+		startArg := strconv.Itoa(start + 1)
+		if start < 0 {
+			startArg = strconv.Itoa(start)
+		}
+		args := []string{"string", "sub", "--start=" + startArg}
 		if pe.Slice.Length != nil {
 			n, ok := intLiteral(pe.Slice.Length)
 			if !ok {
@@ -2811,19 +2886,40 @@ func binCmd(op syntax.BinCmdOperator, x, y *syntax.Stmt) *syntax.Stmt {
 	return &syntax.Stmt{Cmd: &syntax.BinaryCmd{Op: op, X: x, Y: y}}
 }
 
-// intLiteral extracts a plain non-negative integer from an arithmetic
+// intLiteral extracts a plain integer (positive, zero, or negative) from an arithmetic
 // leaf; dynamic expressions are not supported yet.
 func intLiteral(n syntax.ArithmExpr) (int, bool) {
-	w, ok := n.(*syntax.Word)
-	if !ok || len(w.Parts) != 1 {
+	if n == nil {
 		return 0, false
 	}
-	l, ok := w.Parts[0].(*syntax.Lit)
-	if !ok || !isDigits(l.Value) {
+	switch a := n.(type) {
+	case *syntax.ParenArithm:
+		return intLiteral(a.X)
+	case *syntax.UnaryArithm:
+		if a.Op == syntax.Minus && !a.Post {
+			sub, ok := intLiteral(a.X)
+			if !ok {
+				return 0, false
+			}
+			return -sub, true
+		}
+		if a.Op == syntax.Plus && !a.Post {
+			return intLiteral(a.X)
+		}
+		return 0, false
+	case *syntax.Word:
+		if len(a.Parts) != 1 {
+			return 0, false
+		}
+		l, ok := a.Parts[0].(*syntax.Lit)
+		if !ok {
+			return 0, false
+		}
+		v, err := strconv.Atoi(strings.TrimSpace(l.Value))
+		return v, err == nil
+	default:
 		return 0, false
 	}
-	v, err := strconv.Atoi(l.Value)
-	return v, err == nil
 }
 
 // globToRegex converts a bash glob pattern to a Go regex body. lazy

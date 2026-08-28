@@ -38,7 +38,7 @@ The following constructs have no faithful Fish equivalent and are emitted verbat
 - **Case Fallthrough**: `;&` and `;;&`
 - **Variable Attributes**: `readonly`, namerefs (`declare -n`)
 - **Parameter Assertions**: `${v:=def}`, `${v?=error}`
-- **Case Modification**: Pattern-based (`${v^^pattern}`, `${v,,pattern}`) or single-character (`${v^}`, `${v,}`) transformations
+- **Case Modification**: Only pattern-based (`${v^^pattern}`, `${v,,pattern}`) or single-character (`${v^}`, `${v,}`) transformations are unsupported; full conversions (`${v^^}`, `${v,,}`) are supported via `string upper` / `string lower`
 - **Unsupported Builtins**: Bash-only builtins without Fish equivalents (`shopt`, `let`, `hash`, `unalias`, `caller`, `compgen`, `compopt`, `enable`, `fc`)
 - **Shell Options**: `set` option flags (`set -e`, `set -u`, `set -o ...`) and bare `set` / `set -` (dropped with warning)
 - **Dynamic Array Indexing**: Variable array indexing (`arr[$i]`) and non-integer substring/slice offsets
@@ -184,7 +184,7 @@ When scripts use POSIX constructs that Fish does not provide natively, `bait` in
    - Injected when scripts call `getopts :optstring var [args...]`.
    - Pure Fish function managing `$OPTIND` and `$OPTARG`, supporting short flags, argument binding, and quiet (`:`) mode.
 2. **`__bait_words` field splitting**:
-   - Injected when unquoted variables or command substitutions require field splitting matching POSIX `$IFS` in structural contexts (`for x in $var`, `for x in $(cmd)`) or at unquoted command argument call sites (`cmd $FLAGS` $\to$ `cmd (__bait_words $FLAGS)`).
+   - Injected when unquoted variables or command substitutions require field splitting matching POSIX `$IFS` in structural contexts (`for x in $var`, `for x in $(cmd)`) or at unquoted command argument call sites (`cmd $FLAGS` $\to$ `cmd $(__bait_words $FLAGS)`).
    - **List-valued environment variables**: Fish automatically creates lists from all environment variables whose name ends in `PATH` (such as `$PATH`, `$CDPATH`, `$MANPATH`, `$PKG_CONFIG_PATH`, `$LD_LIBRARY_PATH`). These variables are recognized as native lists and passed directly without `__bait_words` wrapping in loops (`for p in $PATH`), while being safely quoted in scalar contexts (`switch "$PATH"`).
    - Splits on whitespace or `$BAIT_IFS` (set from `IFS`).
 3. **`__bait_exec` dynamic commands**:

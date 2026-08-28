@@ -227,6 +227,18 @@ func TestTier1(t *testing.T) {
 				"end\n",
 		},
 		{
+			"case dollar dash generic branch",
+			"case $- in\n" +
+				"\t*x*)\n" +
+				"\t\techo xtrace\n" +
+				"\t\t;;\n" +
+				"esac\n",
+			"switch $(status is-interactive && echo i || echo '')\n" +
+				"case '*x*'\n" +
+				"    echo xtrace\n" +
+				"end\n",
+		},
+		{
 			"function definition",
 			"greet() {\n" +
 				"\techo \"hello $1\"\n" +
@@ -414,6 +426,11 @@ func TestWarnings(t *testing.T) {
 			"dollar dash standalone warning",
 			"echo \"$-\"\n",
 			"status subcommands",
+		},
+		{
+			"caller builtin warning",
+			"caller 0\n",
+			"status print-stack-trace",
 		},
 		{
 			"eval passthrough warning",
@@ -958,6 +975,37 @@ func TestBashFishEquivalence(t *testing.T) {
 			src: "s=\"\"\n" +
 				"echo \"empty_sub:[${s:0:2}]\"\n",
 		},
+		{
+			name: "negative substring and slice offset",
+			src: "s=\"hello world\"\n" +
+				"echo \"sub1:${s: -3}\"\n" +
+				"echo \"sub2:${s: -5:2}\"\n" +
+				"arr=(alpha beta gamma delta)\n" +
+				"echo \"arr1:${arr[@]: -2}\"\n" +
+				"echo \"arr2:${arr[@]: -3:1}\"\n",
+		},
+		{
+			name: "quoted star preserves single string merge",
+			src: "print_args() {\n" +
+				"    echo \"count:$#\"\n" +
+				"    for a in \"$@\"; do\n" +
+				"        echo \"arg:[$a]\"\n" +
+				"    done\n" +
+				"}\n" +
+				"items=(foo bar baz)\n" +
+				"print_args \"${items[*]}\"\n" +
+				"print_args \"${items[@]}\"\n",
+		},
+		{
+			name: "shift 0 in condition and block",
+			src: "test_shift0() {\n" +
+				"    if true; then\n" +
+				"        shift 0\n" +
+				"    fi\n" +
+				"    shift 0 && echo \"after shift 0\"\n" +
+				"}\n" +
+				"test_shift0\n",
+		},
 	}
 
 	for _, tc := range tests {
@@ -1044,6 +1092,21 @@ func TestReadFlags(t *testing.T) {
 			"read reserved variables mangled",
 			"read -r status version code\n",
 			"read _status _version code\n",
+		},
+		{
+			"read with prompt preserved and variable mangled",
+			"read -p \"status: \" status\n",
+			"read -p \"status: \" _status\n",
+		},
+		{
+			"read with fd preserved and variable mangled",
+			"read -u 3 status\n",
+			"read -u 3 _status\n",
+		},
+		{
+			"read -r with bare prompt preserved and variable mangled",
+			"read -r -p prompt status\n",
+			"read -p prompt _status\n",
 		},
 	}
 	for _, tc := range tests {
@@ -1372,6 +1435,9 @@ func TestTier2Warnings(t *testing.T) {
 		{"dynamic array index in test -v", "[[ -v arr[$i] ]]\n", "dynamic array index"},
 		{"case modification with pattern", "echo ${v^^[a-z]}\n", "case modification with pattern"},
 		{"single character case modification", "echo ${v^}\n", "no fish equivalent"},
+		{"declare readonly flag", "declare -r MAX=10\n", "readonly"},
+		{"typeset readonly flag", "typeset -r MAX=10\n", "readonly"},
+		{"local readonly flag in function", "f() { local -r x=1; }\n", "readonly"},
 	}
 
 	for _, tc := range tests {
@@ -1626,6 +1692,16 @@ func TestTier2Ops(t *testing.T) {
 			"echo $(string sub --start=3 --length=3 -- \"$s\")\n",
 		},
 		{
+			"substring negative offset",
+			"echo ${s: -3}\n",
+			"echo $(string sub --start=-3 -- \"$s\")\n",
+		},
+		{
+			"substring negative offset with length",
+			"echo ${s: -3:2}\n",
+			"echo $(string sub --start=-3 --length=2 -- \"$s\")\n",
+		},
+		{
 			"replace bracket class",
 			"echo ${s/[0-9]/d}\n",
 			"echo $(string replace --regex -- '[0-9]' 'd' $s)\n",
@@ -1686,10 +1762,13 @@ func TestTier2Arrays(t *testing.T) {
 		{"append element", "arr+=(tail)\n", "set --append arr tail\n"},
 		{"whole list star", "echo ${arr[*]}\n", "echo $arr\n"},
 		{
-			"quoted whole list star drops quotes",
+			"quoted whole list star keeps quotes",
 			"run \"${arr[*]}\"\n",
-			"run $arr\n",
+			"run \"$arr\"\n",
 		},
+		{"list slice negative offset", "echo ${arr[@]: -2:1}\n", "echo $arr[-2..-2]\n"},
+		{"list slice negative offset to end", "echo ${arr[@]: -2}\n", "echo $arr[-2..-1]\n"},
+		{"list slice star negative offset", "echo ${arr[*]: -3:2}\n", "echo $arr[-3..-2]\n"},
 		{"list count star", "echo ${#arr[*]}\n", "echo $(count $arr)\n"},
 		{"list slice star", "echo ${arr[*]:1:2}\n", "echo $arr[2..3]\n"},
 	}
@@ -1752,7 +1831,7 @@ func TestShiftBuiltin(t *testing.T) {
 		{"shift 1", "shift 1\n", "set --erase argv[1]\n"},
 		{"shift 2", "shift 2\n", "set --erase argv[1..2]\n"},
 		{"shift dynamic", "shift $n\n", "set --erase argv[1..$n]\n"},
-		{"shift 0 is no-op", "shift 0\n", ""},
+		{"shift 0 is no-op", "shift 0\n", "true\n"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2326,5 +2405,22 @@ func TestEvalPassthroughWithWarning(t *testing.T) {
 	}
 	if !strings.Contains(w.Text, "eval executes fish syntax") {
 		t.Errorf("expected warning text to mention eval executes fish syntax, got: %s", w.Text)
+	}
+}
+
+func TestMultiWordScalarDeepPropagation(t *testing.T) {
+	src := "A=\"a b c\"\n" +
+		"B=\"$A\"\n" +
+		"C=\"$B\"\n" +
+		"D=\"$C\"\n" +
+		"for x in $D; do\n" +
+		"    echo \"$x\"\n" +
+		"done\n"
+	got, _, err := Translate([]byte(src))
+	if err != nil {
+		t.Fatalf("Translate failed: %v", err)
+	}
+	if !strings.Contains(string(got), "__bait_words $D") {
+		t.Errorf("expected __bait_words $D in output, got:\n%s", string(got))
 	}
 }
