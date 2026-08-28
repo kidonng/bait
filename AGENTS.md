@@ -15,13 +15,13 @@
      - **Control Flow**: Convert keywords to Fish block syntax (`if/else if/else/end`, `while/end`, `for/end`, `switch/case/end`, `function ... end`).
      - **Uniform Scoping**:
        - Function-body assignments without `local` map to `set --global`.
-       - Explicit `local`, `declare`, or `typeset` map to `set --function`.
+       - Explicit `local` (or `declare` / `typeset` within functions) maps to `set --function`; top-level `declare` or `typeset` maps to plain `set`.
        - Reassignment to declared locals emits plain `set` (retaining function scope).
        - **Strict Rule**: No function name heuristics (e.g. `main` is treated identically to any other function). Do not simulate caller-callee dynamic scoping.
-     - **Parameter Expansions & Builtins**: Map POSIX/Bash expansions (`$?`, `$0`, `$#`, `$@`, `${v:-def}`, `${v/a/b}`) and state commands (`set`, `shift`, `unset`, `read`) to Fish builtins using long options (`set --local`, `set --append`, `string replace -- ...`).
+     - **Parameter Expansions & Builtins**: Map POSIX/Bash expansions (`$?`, `$0`, `$#`, `$@`, `${v:-def}`, `${v/a/b}`) and state commands (`set`, `shift`, `unset`, `read`) to Fish builtins using long options (`set --function`, `set --global`, `set --append`, `string replace -- ...`).
      - **On-Demand Runtime Helpers**: When scripts require semantics Fish lacks natively, inject minimal, self-contained helpers at file top:
        - `getopts`: Pure-Fish option parser tracking `$OPTIND` and `$OPTARG`.
-       - `__bait_words`: Unquoted variable expansion field splitting matching POSIX `$IFS`.
+       - `__bait_words`: Unquoted variable expansion and command substitution field splitting matching POSIX `$IFS`.
        - `__bait_exec`: Dynamic command string execution with flag splitting.
 
 3. **Explicit Warning Contract over Silent Breakage**
@@ -50,7 +50,7 @@
 
 - `cmd/bait/`: CLI binary entry point (streaming stdin/stdout, file translation, `--quiet` flag).
 - `internal/bait/`: Core translation engine:
-  - `translate.go`: High-level entry points and AST parsing via `mvdan.sh/v3/syntax`.
+  - `translate.go`: High-level entry points and AST parsing via `mvdan.cc/sh/v3/syntax`.
   - `emit.go`: AST normalization, structural emission, pure-Fish runtime helpers, and diagnostic warning collection.
   - `shebang.go`: Shebang line inspection and rewriting.
   - `translate_test.go`: Unit tests, warning assertions, and `TestBashFishEquivalence` differential test runner.

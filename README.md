@@ -4,7 +4,7 @@
 
 This project is similar to the existing [babelfish](https://github.com/bouk/babelfish) project, which is also based on [mvdan/sh](https://github.com/mvdan/sh). However, bait translates bash scripts much better, in terms of supported features and output quality.
 
-Bait passthrough structs as much as possible when modern fish shell features can be leveraged. Common bash snippets could come out barely changed after translation.
+Bait passes through constructs as much as possible when modern fish shell features can be leveraged. Common bash snippets could come out barely changed after translation.
 
 ## Quickstart
 
@@ -18,7 +18,7 @@ echo 'VAR=hello; echo "$VAR"' | nix run github:kidonng/bait
 nix run github:kidonng/bait -- install.sh > install.fish
 
 # Suppress translation warnings on stderr
-nix run github:kidonng/bait -- -quiet install.sh > install.fish
+nix run github:kidonng/bait -- --quiet install.sh > install.fish
 ```
 
 Inside the cloned repository:

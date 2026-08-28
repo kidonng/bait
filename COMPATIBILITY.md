@@ -29,7 +29,7 @@ This guide inventories the compatibility mappings, runtime differences, and diag
 | `<(cmd)` | `(cmd \| psub)` | Process substitution via Fish `psub` |
 | `<< EOF`, `<<- EOF` | `printf '%s\n' '...' \| cmd` | Here-document pipeline |
 | `<<< WORD` | `printf '%s\n' WORD \| cmd` | Here-string pipeline |
-| `#!/bin/bash`, `#!/usr/bin/env bash`, `sh`, `dash` | `#!/usr/bin/env fish` | Shebang rewritten; interpreter flags dropped |
+| `#!/bin/bash`, `#!/usr/bin/env bash`, `sh`, `ash`, `dash` | `#!/usr/bin/env fish` | Shebang rewritten; interpreter flags dropped |
 
 ---
 
@@ -40,7 +40,7 @@ This guide inventories the compatibility mappings, runtime differences, and diag
 | `[ ... ]` | `[ ... ]` | Native passthrough (Fish ships `[` as an alias for `test`) |
 | `[[ -n "$x" ]]`, `[[ -f file ]]` | `test -n "$x"`, `test -f file` | Unary string and file tests |
 | `[[ "$a" == "$b" ]]`, `[[ $a = b ]]` | `test "$a" = "$b"`, `test $a = b` | String equality |
-| `[[ $a == glob* ]]`, `[[ $a != glob* ]]` | `string match -q -- 'glob*' $a` | Wildcard pattern matching |
+| `[[ $a == glob* ]]`, `[[ $a != glob* ]]` | `string match -q -- 'glob*' $a`, `! string match -q -- 'glob*' $a` | Wildcard pattern matching |
 | `[[ $str =~ regex ]]` | `string match -r -q -- 'regex' $str` | Regular expression matching |
 | `[[ -v VAR ]]` | `set -q VAR` | Variable existence check |
 | `[[ $- == *i* ]]`, `case $- in *i*)` | `status is-interactive` | Interactive shell check |
@@ -65,13 +65,14 @@ Fish uses explicit scoping flags (`--local`, `--function`, `--global`). `bait` t
 | `arr=(a b c)` | `set arr a b c` | Native Fish list |
 | `arr[2]=val` | `set arr[3] val` | Array index shifted +1 (Fish is 1-based) |
 | `arr+=(val)` | `set --append arr val` | Appends element to list |
-| `set -- a b`, `set a b` | `set argv a b` | Positional parameter assignment |
+| `set -- a b`, `set - a b`, `set a b` | `set argv a b` | Positional parameter assignment |
 | `set --` | `set argv` | Clears positional parameters |
 | `shift`, `shift N` | `set --erase argv[1]`, `set --erase argv[1..N]` | Shifts positional arguments |
 | `unset x`, `unset -v x y` | `set --erase x`, `set --erase x y` | Erases variable |
 | `unset -f func` | `functions --erase func` | Erases function definition |
 | `unset 'arr[0]'` | `set --erase arr[1]` | Erases specific array element |
 | `read -r line` | `read line` | Fish's `read` drops `-r` (Fish `-r` would set a variable named `r`) |
+| `set` (bare), `set -` | *(dropped with warning)* | Prints shell state / trace flags in Bash; dropped in Fish |
 | `set -e`, `set -u`, `set +x`, `set -o ...` | *(dropped with warning)* | Fish has no shell option flags |
 
 ---
@@ -96,9 +97,11 @@ Fish uses explicit scoping flags (`--local`, `--function`, `--global`). `bait` t
 | `$HOSTTYPE`, `$MACHTYPE` | `$(uname -m)` | Machine architecture |
 | `$OSTYPE` | `$(uname -s \| string lower)` | Operating system (lowercase) |
 | `$PIPESTATUS` | `$pipestatus` | Array of pipeline exit codes |
+| `$DIRSTACK` | `$dirstack` | Directory stack array |
 | `$RANDOM`, `$SRANDOM` | `$(random 0 32767)`, `$(random)` | Random numbers |
 | `$EPOCHSECONDS` | `$(date +%s)` | Unix epoch timestamp |
 | `$BASH`, `$BASH_COMMAND`, `$FUNCNAME` | `$(status fish-path)`, `$(status current-command)`, `$(status current-function)` | Execution introspection |
+| `$IFS` | `$BAIT_IFS` | Internal IFS state for `__bait_words` field splitting |
 
 *Note: Bash-internal completion variables (`COMP_*`), debug stack arrays (`BASH_ARGC`, `BASH_LINENO`), and prompt variables (`PS0`…`PS4`) are not mapped to Fish.*
 
@@ -108,13 +111,19 @@ Fish uses explicit scoping flags (`--local`, `--function`, `--global`). `bait` t
 |---|---|
 | `${var}` | `$var` (braces stripped) |
 | `${#var}` / `${#arr[@]}` | `$(string length -- $var)` / `$(count $arr)` |
-| `${v:-default}`, `${v-default}` | `$(test -n "$v" && printf '%s\n' "$v" \|\| printf '%s\n' default)` |
-| `${v:+alternate}` | `$(test -n "$v" && printf '%s\n' alternate)` |
-| `${f%.txt}`, `${f%%.*}` | `string replace --regex -- '\.txt$' '' $f`, `string replace --regex -- '\..*$' '' $f` |
-| `${p#prefix}`, `${p##*/}` | `string replace --regex -- '^prefix' '' $p`, `string replace --regex -- '^.*/' '' $p` |
-| `${s/pat/repl}`, `${s//pat/repl}` | `string replace --regex -- 'pat' 'repl' $s`, `string replace --regex --all -- 'pat' 'repl' $s` |
-| `${s:offset:length}` | `string sub --start=(offset+1) --length=length -- $s` |
-| `${arr[@]:1:2}` | `$arr[2..3]` (1-based slices) |
+| `${v:-default}` | `$(test -n "$v" && printf '%s\n' "$v" \|\| printf '%s\n' default)` |
+| `${v-default}` | `$(set --query v && printf '%s\n' "$v" \|\| printf '%s\n' default)` |
+| `${v:+alternate}` | `$(test -n "$v" && printf '%s\n' alternate \|\| true)` |
+| `${v+alternate}` | `$(set --query v && printf '%s\n' alternate \|\| true)` |
+| `${f%.txt}`, `${f%%.*}` | `$(string replace --regex -- '\.txt$' '' $f)`, `$(string replace --regex -- '\..*$' '' $f)` |
+| `${p#prefix}`, `${p##*/}` | `$(string replace --regex -- '^prefix' '' $p)`, `$(string replace --regex -- '^.*/' '' $p)` |
+| `${s/pat/repl}`, `${s//pat/repl}` | `$(string replace --regex -- 'pat' 'repl' $s)`, `$(string replace --regex --all -- 'pat' 'repl' $s)` |
+| `${s:offset:length}`, `${s:offset}` | `$(string sub --start=(offset+1) --length=length -- $s)`, `$(string sub --start=(offset+1) -- $s)` |
+| `${arr[@]:1:2}`, `${arr[@]:1}` | `$arr[2..3]`, `$arr[2..-1]` (1-based slices) |
+
+### Literal `$` Escaping
+
+Literal unquoted trailing dollars (e.g. `echo 404$`) are escaped as `404\$` during AST normalization to prevent Fish variable syntax errors on bare `$` signs.
 
 ---
 
@@ -140,13 +149,11 @@ When scripts use POSIX constructs that Fish does not provide natively, `bait` in
    - Injected when scripts call `getopts :optstring var [args...]`.
    - Pure Fish function managing `$OPTIND` and `$OPTARG`, supporting short flags, argument binding, and quiet (`:`) mode.
 2. **`__bait_words` field splitting**:
-   - Injected when unquoted variables appear in word-splitting contexts (e.g. `for x in $var` $\to$ `for x in (__bait_words $var)`).
+   - Injected when unquoted variables or command substitutions appear in word-splitting contexts (e.g. `for x in $var` $\to$ `for x in (__bait_words $var)`).
    - Splits on whitespace or `$BAIT_IFS` (set from `IFS`).
 3. **`__bait_exec` dynamic commands**:
    - Injected for dynamic command string execution (`$cmd arg` $\to$ `__bait_exec $cmd arg`).
    - Evaporates empty prefixes (e.g. `sudo=""`) while strictly preserving positional boundaries.
-4. **Literal `$` escaping**:
-   - Literal unquoted trailing dollars (e.g. `echo 404$`) are escaped as `404\$` to prevent Fish variable syntax errors.
 
 ---
 
@@ -172,12 +179,18 @@ While `bait` strives for 100% behavioral equivalence, Fish semantics differ from
 The following constructs have no faithful Fish equivalent and are emitted verbatim with a diagnostic warning:
 
 - C-style `for ((i=0; i<n; i++))` loops and `select` loops
+- Output process substitution `>(cmd)`
 - Ternary `?:`, bitwise (`& | ^ ~ << >>`), and logical operators inside `$(( ... ))`
 - Case fallthrough (`;&` and `;;&`)
 - Variable attributes (`readonly`, namerefs `declare -n`)
+- Unsupported parameter assignment/assertions (`${v:=def}`, `${v?=error}`)
 - Case modification operators (`${v^^}`, `${v,,}`)
-- Bash-only builtins without Fish equivalents (`shopt`, `let`, `hash`, `unalias`, `caller`, `compgen`)
-
+- Bash-only builtins without Fish equivalents (`shopt`, `let`, `hash`, `unalias`, `caller`, `compgen`, `compopt`, `enable`, `fc`)
+- `set` shell option flags (`set -e`, `set -u`, `set -o ...`) and bare `set` / `set -` (dropped with warning)
+- Dynamic array indexing (`arr[$i]`) and non-integer substring/slice offsets
+- Export command flags (`export -f`, `export -n`, etc.)
+- Embedded `$@` or `$*` inside words (e.g. `prefix$@suffix`)
+- Standalone `$-` parameter expansion (emits diagnostic warning; recommend status subcommands)
 ---
 
 ## 9. Real-World Tested Installers
