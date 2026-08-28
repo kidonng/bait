@@ -19,16 +19,19 @@ const indentUnit = "    "
 // printer verbatim, which preserves tier-0 constructs unchanged.
 // Unsupported statements are emitted verbatim and reported as warnings.
 type emitter struct {
-	buf            bytes.Buffer
-	depth          int
-	printer        *syntax.Printer
-	warnings       []Warning
-	err            error
-	inFunction       bool
-	needsBaitWords   bool
-	needsBaitExec    bool
-	needsBaitGetopts bool
-	funcLocals       map[string]bool
+	buf               bytes.Buffer
+	depth             int
+	printer           *syntax.Printer
+	warnings          []Warning
+	err               error
+	inFunction        bool
+	needsBaitWords    bool
+	needsBaitExec     bool
+	needsBaitGetopts  bool
+	funcLocals        map[string]bool
+	knownLists        map[string]bool
+	multiWordScalars  map[string]bool
+	commandPrefixVars map[string]bool
 }
 
 func (e *emitter) newSubEmitter() *emitter {
@@ -40,6 +43,9 @@ func (e *emitter) newSubEmitter() *emitter {
 			sub.funcLocals[k] = v
 		}
 	}
+	sub.knownLists = e.knownLists
+	sub.multiWordScalars = e.multiWordScalars
+	sub.commandPrefixVars = e.commandPrefixVars
 	return sub
 }
 
@@ -61,7 +67,10 @@ func (e *emitter) inheritSub(sub *emitter) {
 
 func newEmitter() *emitter {
 	return &emitter{
-		printer: syntax.NewPrinter(syntax.SpaceRedirects(true)),
+		printer:           syntax.NewPrinter(syntax.SpaceRedirects(true)),
+		knownLists:        make(map[string]bool),
+		multiWordScalars:  make(map[string]bool),
+		commandPrefixVars: make(map[string]bool),
 	}
 }
 
@@ -761,10 +770,122 @@ func isLitWord(w *syntax.Word, val string) bool {
 	return ok && lit.Value == val
 }
 
+func (e *emitter) analyzeVariables(f *syntax.File) {
+	syntax.Walk(f, func(n syntax.Node) bool {
+		if c, ok := n.(*syntax.CallExpr); ok {
+			if len(c.Assigns) == 0 && len(c.Args) > 1 {
+				if pe, ok := singleBareParam(c.Args[0]); ok && pe.Param != nil {
+					e.commandPrefixVars[pe.Param.Value] = true
+				}
+			}
+			for _, a := range c.Assigns {
+				if a.Name == nil {
+					continue
+				}
+				if a.Array != nil {
+					e.knownLists[a.Name.Value] = true
+				}
+			}
+		}
+		if d, ok := n.(*syntax.DeclClause); ok {
+			for _, a := range d.Args {
+				if a.Name != nil && a.Array != nil {
+					e.knownLists[a.Name.Value] = true
+				}
+			}
+		}
+		return true
+	})
+
+	// Iteratively propagate multi-word scalar tracking
+	for iter := 0; iter < 3; iter++ {
+		changed := false
+		syntax.Walk(f, func(n syntax.Node) bool {
+			if c, ok := n.(*syntax.CallExpr); ok {
+				for _, a := range c.Assigns {
+					if a.Name == nil || e.knownLists[a.Name.Value] {
+						continue
+					}
+					if !e.multiWordScalars[a.Name.Value] && isMultiWordAssign(a, e.multiWordScalars) {
+						e.multiWordScalars[a.Name.Value] = true
+						changed = true
+					}
+				}
+			}
+			return true
+		})
+		if !changed {
+			break
+		}
+	}
+}
+
+func isMultiWordAssign(a *syntax.Assign, multiWordScalars map[string]bool) bool {
+	if a.Value == nil {
+		return false
+	}
+	hasCmdSubst := false
+	syntax.Walk(a.Value, func(n syntax.Node) bool {
+		switch n.(type) {
+		case *syntax.CmdSubst:
+			hasCmdSubst = true
+			return false
+		}
+		return true
+	})
+	if hasCmdSubst {
+		return true
+	}
+
+	for _, p := range a.Value.Parts {
+		switch pt := p.(type) {
+		case *syntax.Lit:
+			if strings.ContainsAny(pt.Value, " \t\n") {
+				return true
+			}
+		case *syntax.SglQuoted:
+			if strings.ContainsAny(pt.Value, " \t\n") {
+				return true
+			}
+		case *syntax.DblQuoted:
+			for _, dp := range pt.Parts {
+				switch dpt := dp.(type) {
+				case *syntax.Lit:
+					if strings.ContainsAny(dpt.Value, " \t\n") {
+						return true
+					}
+				case *syntax.ParamExp:
+					if dpt.Param != nil {
+						if a.Name != nil && dpt.Param.Value == a.Name.Value {
+							return true
+						}
+						if multiWordScalars[dpt.Param.Value] {
+							return true
+						}
+					}
+				case *syntax.CmdSubst:
+					return true
+				}
+			}
+		case *syntax.ParamExp:
+			if pt.Param != nil {
+				if a.Name != nil && pt.Param.Value == a.Name.Value {
+					return true
+				}
+				if multiWordScalars[pt.Param.Value] {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 // normalize applies mechanical AST fixes before emission: read-flag
 // removal, fish-side parameter rewrites, and arithmetic translation.
 func (e *emitter) normalize(f *syntax.File) {
 	e.escapeLiteralDollars(f)
+	e.analyzeVariables(f)
 	syntax.Walk(f, func(n syntax.Node) bool {
 		if c, ok := n.(*syntax.CallExpr); ok {
 			if len(c.Assigns) == 0 && len(c.Args) > 0 && isLitWord(c.Args[0], "getopts") {
@@ -777,6 +898,21 @@ func (e *emitter) normalize(f *syntax.File) {
 				e.warn(c.Args[0].Pos(), "eval executes fish syntax; incompatible bash syntax will fail at runtime; emitted verbatim")
 			}
 			normalizeReadCmd(c)
+			for i := 1; i < len(c.Args); i++ {
+				if pe, ok := singleBareParam(c.Args[i]); ok && pe.Param != nil {
+					name := pe.Param.Value
+					if e.multiWordScalars[name] && !e.knownLists[name] &&
+						name != "@" && name != "*" && name != "argv" &&
+						!isFishListEnvVar(name) {
+						e.needsBaitWords = true
+						c.Args[i] = &syntax.Word{
+							Parts: []syntax.WordPart{
+								substPart("__bait_words", "$"+e.varName(name)),
+							},
+						}
+					}
+				}
+			}
 		}
 		return true
 	})
@@ -1061,8 +1197,8 @@ func (e *emitter) forClause(s *syntax.Stmt, f *syntax.ForClause) {
 				items[i] = "$argv"
 				continue
 			}
-			if isFishListEnvVar(name) {
-				items[i] = "$" + name
+			if isFishListEnvVar(name) || e.knownLists[name] {
+				items[i] = "$" + e.varName(name)
 				continue
 			}
 			name = e.varName(name)
@@ -1091,10 +1227,36 @@ func (e *emitter) forClause(s *syntax.Stmt, f *syntax.ForClause) {
 func (e *emitter) caseClause(s *syntax.Stmt, cl *syntax.CaseClause) {
 	tail := e.tails(s)
 	e.wrapperComments(s)
-	if isDollarDash(cl.Word) && len(cl.Items) > 0 {
-		if e.emitInteractiveCase(s, cl, tail) {
+	if pred, ifItem, elseItem, ok := evalInteractiveCase(cl); ok {
+		if elseItem == nil {
+			e.printf("if %s", pred)
+			e.body(ifItem.Stmts, ifItem.Last)
+			for _, c := range cl.Last {
+				e.comment(c)
+			}
+			e.printf("end%s", tail)
 			return
 		}
+		if len(ifItem.Stmts) == 0 && len(ifItem.Last) == 0 {
+			e.printf("if not %s", pred)
+			e.body(elseItem.Stmts, elseItem.Last)
+			for _, c := range cl.Last {
+				e.comment(c)
+			}
+			e.printf("end%s", tail)
+			return
+		}
+		e.printf("if %s", pred)
+		e.body(ifItem.Stmts, ifItem.Last)
+		if len(elseItem.Stmts) > 0 || len(elseItem.Last) > 0 {
+			e.printf("else")
+			e.body(elseItem.Stmts, elseItem.Last)
+		}
+		for _, c := range cl.Last {
+			e.comment(c)
+		}
+		e.printf("end%s", tail)
+		return
 	}
 	wTxt := e.render(cl.Word)
 	if isDollarDash(cl.Word) {
@@ -1141,13 +1303,75 @@ func isDollarDash(w *syntax.Word) bool {
 	return false
 }
 
-func isInteractivePattern(p *syntax.Word) bool {
-	if p == nil {
-		return false
+type patToken struct {
+	val        string
+	isWildcard bool
+	isQuoted   bool
+}
+
+func tokenizePattern(w *syntax.Word) ([]patToken, bool) {
+	if w == nil {
+		return nil, false
 	}
-	raw, ok := casePatternString(p)
+	var tokens []patToken
+	for _, part := range w.Parts {
+		switch pt := part.(type) {
+		case *syntax.Lit:
+			val := pt.Value
+			for i := 0; i < len(val); {
+				if val[i] == '\\' && i+1 < len(val) {
+					tokens = append(tokens, patToken{
+						val:      string(val[i+1]),
+						isQuoted: true,
+					})
+					i += 2
+				} else if val[i] == '*' || val[i] == '?' {
+					tokens = append(tokens, patToken{
+						val:        string(val[i]),
+						isWildcard: true,
+					})
+					i++
+				} else {
+					tokens = append(tokens, patToken{
+						val: string(val[i]),
+					})
+					i++
+				}
+			}
+		case *syntax.SglQuoted:
+			for _, r := range pt.Value {
+				tokens = append(tokens, patToken{
+					val:      string(r),
+					isQuoted: true,
+				})
+			}
+		case *syntax.DblQuoted:
+			for _, qp := range pt.Parts {
+				if lit, ok := qp.(*syntax.Lit); ok {
+					for _, r := range lit.Value {
+						tokens = append(tokens, patToken{
+							val:      string(r),
+							isQuoted: true,
+						})
+					}
+				} else {
+					return nil, false
+				}
+			}
+		default:
+			return nil, false
+		}
+	}
+	return tokens, true
+}
+
+func matchFlagRule(p *syntax.Word) (pred string, matched bool, isWildcard bool) {
+	if p == nil {
+		return "", false, false
+	}
+	tokens, ok := tokenizePattern(p)
 	if !ok {
-		raw = ""
+		raw := ""
 		for _, part := range p.Parts {
 			switch pt := part.(type) {
 			case *syntax.Lit:
@@ -1162,107 +1386,146 @@ func isInteractivePattern(p *syntax.Word) bool {
 				raw += pt.Value
 			}
 		}
-	}
-	trimmed := strings.Trim(raw, "*?.^$")
-	return trimmed == "i" || trimmed == "I"
-}
-
-func hasInteractivePattern(patterns []*syntax.Word) bool {
-	for _, p := range patterns {
-		if isInteractivePattern(p) {
-			return true
+		trimmed := strings.Trim(raw, "*?.^$")
+		if strings.EqualFold(trimmed, "i") {
+			return "status is-interactive", true, false
 		}
-	}
-	return false
-}
-
-func isWildcardPattern(p *syntax.Word) bool {
-	if p == nil {
-		return false
-	}
-	if len(p.Parts) == 1 {
-		if lit, ok := p.Parts[0].(*syntax.Lit); ok {
-			return lit.Value == "*"
+		if raw == "*" {
+			return "", false, true
 		}
+		return "", false, false
 	}
-	return false
+	if len(tokens) == 1 && tokens[0].val == "*" && tokens[0].isWildcard {
+		return "", false, true
+	}
+	var meaningful []string
+	for _, tok := range tokens {
+		if tok.isWildcard {
+			continue
+		}
+		meaningful = append(meaningful, tok.val)
+	}
+	candidate := strings.Join(meaningful, "")
+	if strings.EqualFold(candidate, "i") {
+		return "status is-interactive", true, false
+	}
+	return "", false, false
 }
 
-func (e *emitter) emitInteractiveCase(s *syntax.Stmt, cl *syntax.CaseClause, tail string) bool {
+func evalInteractiveCase(cl *syntax.CaseClause) (pred string, ifItem, elseItem *syntax.CaseItem, ok bool) {
+	if !isDollarDash(cl.Word) {
+		return "", nil, nil, false
+	}
 	if len(cl.Items) == 1 {
 		item0 := cl.Items[0]
-		if hasInteractivePattern(item0.Patterns) {
-			e.printf("if status is-interactive")
-			e.body(item0.Stmts, item0.Last)
-			for _, c := range cl.Last {
-				e.comment(c)
+		for _, p := range item0.Patterns {
+			if pr, matched, _ := matchFlagRule(p); matched {
+				return pr, item0, nil, true
 			}
-			e.printf("end%s", tail)
-			return true
+		}
+	} else if len(cl.Items) == 2 {
+		item0, item1 := cl.Items[0], cl.Items[1]
+		var matchedPred string
+		for _, p := range item0.Patterns {
+			if pr, matched, _ := matchFlagRule(p); matched {
+				matchedPred = pr
+				break
+			}
+		}
+		var wildcard bool
+		if len(item1.Patterns) == 1 {
+			_, _, wildcard = matchFlagRule(item1.Patterns[0])
+		}
+		if matchedPred != "" && wildcard {
+			return matchedPred, item0, item1, true
 		}
 	}
-	if len(cl.Items) == 2 {
-		item0 := cl.Items[0]
-		item1 := cl.Items[1]
-		if hasInteractivePattern(item0.Patterns) &&
-			len(item1.Patterns) == 1 && isWildcardPattern(item1.Patterns[0]) {
-			if len(item0.Stmts) == 0 && len(item0.Last) == 0 {
-				e.printf("if not status is-interactive")
-				e.body(item1.Stmts, item1.Last)
-				for _, c := range cl.Last {
-					e.comment(c)
-				}
-				e.printf("end%s", tail)
-				return true
-			}
-			e.printf("if status is-interactive")
-			e.body(item0.Stmts, item0.Last)
-			if len(item1.Stmts) > 0 || len(item1.Last) > 0 {
-				e.printf("else")
-				e.body(item1.Stmts, item1.Last)
-			}
-			for _, c := range cl.Last {
-				e.comment(c)
-			}
-			e.printf("end%s", tail)
-			return true
-		}
+	return "", nil, nil, false
+}
+
+func evalInteractiveTest(b *syntax.BinaryTest) (pred string, ok bool) {
+	xWord, okX := b.X.(*syntax.Word)
+	yWord, okY := b.Y.(*syntax.Word)
+	if !okX || !okY {
+		return "", false
 	}
-	return false
+	dashX := isDollarDash(xWord)
+	dashY := isDollarDash(yWord)
+	if !dashX && !dashY {
+		return "", false
+	}
+	var pat *syntax.Word
+	if dashX {
+		pat = yWord
+	} else {
+		pat = xWord
+	}
+	flagPred, matched, _ := matchFlagRule(pat)
+	if !matched {
+		return "", false
+	}
+	opStr := b.Op.String()
+	switch opStr {
+	case "==", "=", "=~":
+		return flagPred, true
+	case "!=", "!~":
+		return "! " + flagPred, true
+	}
+	return "", false
 }
 
 func (e *emitter) renderCasePattern(p *syntax.Word) string {
-	if raw, ok := casePatternString(p); ok {
-		if raw == `\~` {
-			return "'~'"
-		}
-		if strings.HasPrefix(raw, `\~/`) {
-			return "'~" + raw[2:] + "'"
-		}
-		if strings.ContainsAny(raw, "*?~'\"") {
-			return "'" + strings.ReplaceAll(raw, "'", `\'`) + "'"
-		}
-		return raw
+	tokens, ok := tokenizePattern(p)
+	if !ok {
+		return e.render(p)
 	}
-	s := e.render(p)
-	if strings.Contains(s, `'~'/`) {
-		s = strings.ReplaceAll(s, `'~'/*`, `'~/*'`)
-		s = strings.ReplaceAll(s, `'~'/`, `'~/'`)
-		if strings.HasPrefix(s, `'~/`) && !strings.HasSuffix(s, `'`) {
-			s += `'`
+	if len(tokens) == 0 {
+		return `""`
+	}
+
+	hasLeadingTilde := tokens[0].val == "~"
+	hasWildcard := false
+	hasSlash := false
+	hasQuotedSpecial := false
+	needsQuoting := hasLeadingTilde
+
+	for _, tok := range tokens {
+		if tok.isWildcard {
+			hasWildcard = true
 		}
-	}
-	if s == `\~` {
-		s = `'~'`
-	} else if strings.HasPrefix(s, `\~/`) {
-		s = `'~` + s[2:] + `'`
-	}
-	if !strings.HasPrefix(s, "'") && !strings.HasPrefix(s, `"`) {
-		if strings.ContainsAny(s, "*?~") {
-			s = "'" + strings.ReplaceAll(s, "'", `\'`) + "'"
+		if tok.isQuoted {
+			hasQuotedSpecial = true
+		}
+		if tok.val == "/" {
+			hasSlash = true
+		}
+		if strings.ContainsAny(tok.val, " \t'\"$;&|()[]<>`") {
+			needsQuoting = true
 		}
 	}
-	return s
+	if hasWildcard || hasSlash || hasLeadingTilde || hasQuotedSpecial {
+		needsQuoting = true
+	}
+
+	if !needsQuoting {
+		var sb strings.Builder
+		for _, tok := range tokens {
+			sb.WriteString(tok.val)
+		}
+		return sb.String()
+	}
+
+	var sb strings.Builder
+	sb.WriteByte('\'')
+	for _, tok := range tokens {
+		if tok.val == "'" {
+			sb.WriteString(`\'`)
+		} else {
+			sb.WriteString(tok.val)
+		}
+	}
+	sb.WriteByte('\'')
+	return sb.String()
 }
 
 func (e *emitter) testClause(s *syntax.Stmt, tc *syntax.TestClause) {
@@ -1312,11 +1575,8 @@ func (e *emitter) renderUnaryTest(u *syntax.UnaryTest) string {
 }
 
 func (e *emitter) renderBinaryTest(b *syntax.BinaryTest) string {
-	if _, negated, ok := isInteractiveTest(b); ok {
-		if negated {
-			return "! status is-interactive"
-		}
-		return "status is-interactive"
+	if pred, ok := evalInteractiveTest(b); ok {
+		return pred
 	}
 	opStr := b.Op.String()
 	switch opStr {
@@ -1359,45 +1619,6 @@ func (e *emitter) renderBinaryTest(b *syntax.BinaryTest) string {
 	default:
 		return fmt.Sprintf("test %s %s %s", e.renderTestOperand(b.X), opStr, e.renderTestOperand(b.Y))
 	}
-}
-
-func isInteractiveTest(b *syntax.BinaryTest) (interactive bool, negated bool, ok bool) {
-	xWord, okX := b.X.(*syntax.Word)
-	yWord, okY := b.Y.(*syntax.Word)
-	if !okX || !okY {
-		return false, false, false
-	}
-	dashX := isDollarDash(xWord)
-	dashY := isDollarDash(yWord)
-	if !dashX && !dashY {
-		return false, false, false
-	}
-	var pat *syntax.Word
-	if dashX {
-		pat = yWord
-	} else {
-		pat = xWord
-	}
-	opStr := b.Op.String()
-	switch opStr {
-	case "==", "=":
-		if isInteractivePattern(pat) {
-			return true, false, true
-		}
-	case "!=":
-		if isInteractivePattern(pat) {
-			return true, true, true
-		}
-	case "=~":
-		if isInteractivePattern(pat) {
-			return true, false, true
-		}
-	case "!~":
-		if isInteractivePattern(pat) {
-			return true, true, true
-		}
-	}
-	return false, false, false
 }
 
 func (e *emitter) renderTestOperand(expr syntax.TestExpr) string {
@@ -1559,17 +1780,13 @@ func (e *emitter) assignStmt(s *syntax.Stmt, c *syntax.CallExpr) {
 				curScope = ""
 			}
 		}
-		if a.Name != nil {
-			if args, ok := e.selfRefAccumulation(a); ok {
-				e.printf("set %s%s %s", scopePrefix(curScope),
-					e.varName(a.Name.Value), strings.Join(args, " "))
-				continue
+		if a.Name != nil && e.commandPrefixVars[a.Name.Value] && isEmptyValue(a.Value) {
+			if curScope != "" {
+				e.printf("set %s %s", curScope, e.varName(a.Name.Value))
+			} else {
+				e.printf("set %s", e.varName(a.Name.Value))
 			}
-			if args, ok := e.flagListLiteral(a); ok {
-				e.printf("set %s%s %s", scopePrefix(curScope),
-					e.varName(a.Name.Value), strings.Join(args, " "))
-				continue
-			}
+			continue
 		}
 		switch {
 		case a.Name == nil:
@@ -1606,170 +1823,28 @@ func (e *emitter) assignStmt(s *syntax.Stmt, c *syntax.CallExpr) {
 	}
 }
 
-// selfRefAccumulation detects `X="$X more words"`, `X="$X $(cmd)"`, etc.:
-// bash accumulates a string that is word-split at unquoted use sites, while fish reaches
-// the same observable behavior by accumulating a native list. It returns the
-// arguments for `set X $X <words...>`, splitting literal parts on
-// whitespace, translating command substitutions into list items, and keeping
-// adjacent fragments in one word.
-func (e *emitter) selfRefAccumulation(a *syntax.Assign) ([]string, bool) {
-	if a.Value == nil || len(a.Value.Parts) == 0 || a.Name == nil {
-		return nil, false
+func isEmptyValue(w *syntax.Word) bool {
+	if w == nil || len(w.Parts) == 0 {
+		return true
 	}
-	varName := a.Name.Value
-	var parts []syntax.WordPart
-
-	if len(a.Value.Parts) == 1 {
-		if q, ok := a.Value.Parts[0].(*syntax.DblQuoted); ok && len(q.Parts) >= 2 {
-			parts = q.Parts
-		}
-	}
-	if parts == nil && len(a.Value.Parts) >= 2 {
-		if pe, ok := a.Value.Parts[0].(*syntax.ParamExp); ok && pe.Param != nil && pe.Param.Value == varName && bareParam(pe) {
-			parts = a.Value.Parts
-		} else if dq, ok := a.Value.Parts[0].(*syntax.DblQuoted); ok && len(dq.Parts) == 1 {
-			if pe, ok := dq.Parts[0].(*syntax.ParamExp); ok && pe.Param != nil && pe.Param.Value == varName && bareParam(pe) {
-				parts = append([]syntax.WordPart{pe}, a.Value.Parts[1:]...)
-			}
-		}
-	}
-	if parts == nil || len(parts) < 2 {
-		return nil, false
-	}
-
-	pe, ok := parts[0].(*syntax.ParamExp)
-	if !ok || pe.Param == nil || pe.Param.Value != varName || !bareParam(pe) {
-		return nil, false
-	}
-
-	switch p := parts[1].(type) {
-	case *syntax.Lit:
-		if !strings.HasPrefix(p.Value, " ") && !strings.HasPrefix(p.Value, "\t") {
-			return nil, false
-		}
-	case *syntax.CmdSubst, *syntax.ParamExp, *syntax.SglQuoted:
-	default:
-		return nil, false
-	}
-
-	var args []string
-	cur := ""
-	flush := func() {
-		if cur != "" {
-			args = append(args, cur)
-			cur = ""
-		}
-	}
-
-	for _, p := range parts[1:] {
-		switch p := p.(type) {
+	if len(w.Parts) == 1 {
+		switch p := w.Parts[0].(type) {
 		case *syntax.Lit:
-			v := p.Value
-			if v != strings.TrimLeft(v, " \t") {
-				flush()
-			}
-			for i, f := range strings.Fields(v) {
-				if i > 0 {
-					flush()
-				}
-				cur += f
-			}
-			if v != strings.TrimRight(v, " \t") {
-				flush()
-			}
-		case *syntax.ParamExp:
-			cur += e.render(&syntax.Word{Parts: []syntax.WordPart{p}})
-		case *syntax.CmdSubst:
-			flush()
-			args = append(args, e.renderWordSmart(&syntax.Word{Parts: []syntax.WordPart{p}}))
+			return p.Value == ""
 		case *syntax.SglQuoted:
-			v := p.Value
-			if strings.ContainsAny(v, " \t") {
-				flush()
-				for _, f := range strings.Fields(v) {
-					args = append(args, fishSingleQuote(f))
-				}
-			} else {
-				cur += fishSingleQuote(v)
-			}
+			return p.Value == ""
 		case *syntax.DblQuoted:
-			for _, sub := range p.Parts {
-				switch sub := sub.(type) {
-				case *syntax.Lit:
-					v := sub.Value
-					if v != strings.TrimLeft(v, " \t") {
-						flush()
-					}
-					for i, f := range strings.Fields(v) {
-						if i > 0 {
-							flush()
-						}
-						cur += f
-					}
-					if v != strings.TrimRight(v, " \t") {
-						flush()
-					}
-				case *syntax.CmdSubst:
-					flush()
-					args = append(args, e.renderWordSmart(&syntax.Word{Parts: []syntax.WordPart{sub}}))
-				default:
-					cur += e.render(&syntax.Word{Parts: []syntax.WordPart{sub}})
+			if len(p.Parts) == 0 {
+				return true
+			}
+			if len(p.Parts) == 1 {
+				if lit, ok := p.Parts[0].(*syntax.Lit); ok {
+					return lit.Value == ""
 				}
 			}
-		default:
-			return nil, false
 		}
 	}
-	flush()
-	return append([]string{"$" + varName}, args...), true
-}
-
-// flagListLiteral detects literal assignments of multiple CLI flags like
-// `FLAGS="--retry 3 -C -"` or `FLAGS="-a -b"`:
-// bash treats these as strings and relies on call-site word splitting.
-// In Fish, defining them as native lists allows direct invocation without
-// magical call-site heuristics.
-func (e *emitter) flagListLiteral(a *syntax.Assign) ([]string, bool) {
-	if a.Value == nil || len(a.Value.Parts) != 1 || a.Name == nil {
-		return nil, false
-	}
-	var litVal string
-	switch p := a.Value.Parts[0].(type) {
-	case *syntax.Lit:
-		litVal = p.Value
-	case *syntax.SglQuoted:
-		litVal = p.Value
-	case *syntax.DblQuoted:
-		if len(p.Parts) == 1 {
-			if l, ok := p.Parts[0].(*syntax.Lit); ok {
-				litVal = l.Value
-			}
-		}
-	}
-	if litVal == "" {
-		return nil, false
-	}
-	litVal = strings.TrimSpace(litVal)
-	if !strings.HasPrefix(litVal, "-") {
-		return nil, false
-	}
-	fields := strings.Fields(litVal)
-	if len(fields) < 2 {
-		return nil, false
-	}
-	hasFlag := false
-	for _, f := range fields {
-		if strings.HasPrefix(f, "-") {
-			hasFlag = true
-		}
-	}
-	if !hasFlag {
-		return nil, false
-	}
-	if fields[0] == "-" && len(fields) > 1 && !strings.HasPrefix(fields[1], "-") {
-		return nil, false
-	}
-	return fields, true
+	return false
 }
 
 func scopePrefix(scope string) string {
@@ -1934,6 +2009,14 @@ func (e *emitter) declClause(s *syntax.Stmt, d *syntax.DeclClause) {
 				}
 				e.funcLocals[a.Name.Value] = true
 			}
+			if e.commandPrefixVars[a.Name.Value] && isEmptyValue(a.Value) {
+				if scope != "" {
+					e.printf("set %s %s", scope, e.varName(a.Name.Value))
+				} else {
+					e.printf("set %s", e.varName(a.Name.Value))
+				}
+				continue
+			}
 			e.setLine(scope, e.varName(a.Name.Value), e.assignValue(a))
 		}
 	}
@@ -2002,7 +2085,7 @@ func (e *emitter) rewriteParams(f *syntax.File) {
 			}
 		case *syntax.TestClause:
 			if b, ok := node.X.(*syntax.BinaryTest); ok {
-				if _, _, isInter := isInteractiveTest(b); isInter {
+				if _, isInter := evalInteractiveTest(b); isInter {
 					return false
 				}
 			}
@@ -2854,14 +2937,15 @@ end
 `
 
 const baitExecHelper = `function __bait_exec
-    while test (count $argv) -gt 0; and test -z "$argv[1]"
-        set --erase argv[1]
-    end
     if test (count $argv) -eq 0
         return 0
     end
     set --local words (string match --regex --all '\S+' -- "$argv[1]")
-    $words $argv[2..-1]
+    if test (count $words) -gt 0
+        $words $argv[2..-1]
+    else if test (count $argv) -gt 1
+        __bait_exec $argv[2..-1]
+    end
 end
 
 `

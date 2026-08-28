@@ -1057,29 +1057,29 @@ func TestTier2(t *testing.T) {
 			"function f\n    set --global n 2\nend\n",
 		},
 		{
-			"self-referential accumulation becomes list append",
+			"self-referential accumulation preserves scalar string",
 			"OPTS=\"--silent\"\nOPTS=\"$OPTS --netrc\"\n",
-			"set OPTS \"--silent\"\nset OPTS $OPTS --netrc\n",
+			"set OPTS \"--silent\"\nset OPTS \"$OPTS --netrc\"\n",
 		},
 		{
-			"braced self-referential accumulation becomes list append",
+			"braced self-referential accumulation preserves scalar string",
 			"OPTS=\"--silent\"\nOPTS=\"${OPTS} --netrc\"\n",
-			"set OPTS \"--silent\"\nset OPTS $OPTS --netrc\n",
+			"set OPTS \"--silent\"\nset OPTS \"$OPTS --netrc\"\n",
 		},
 		{
-			"command substitution accumulation becomes list append",
+			"command substitution accumulation preserves scalar string",
 			"ARGS=\"-a\"\nARGS=\"$ARGS $(get_flags)\"\n",
-			"set ARGS \"-a\"\nset ARGS $ARGS $(get_flags)\n",
+			"set ARGS \"-a\"\nset ARGS \"$ARGS $(get_flags)\"\n",
 		},
 		{
-			"flag list literal becomes list",
+			"flag list literal preserves scalar string",
 			"FLAGS=\"--retry 3 -C -\"\n",
-			"set FLAGS --retry 3 -C -\n",
+			"set FLAGS \"--retry 3 -C -\"\n",
 		},
 		{
 			"adjacent value concatenates in one word",
 			"OPTS=x\nOPTS=\"$OPTS --file=$F\"\n",
-			"set OPTS x\nset OPTS $OPTS --file=$F\n",
+			"set OPTS x\nset OPTS \"$OPTS --file=$F\"\n",
 		},
 		{
 			"non-self reference untouched",

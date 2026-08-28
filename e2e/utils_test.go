@@ -26,6 +26,7 @@ func downloadScript(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
+	req.Header.Set("User-Agent", "curl/8.0.0")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

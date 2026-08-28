@@ -100,8 +100,8 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 | `arr=(a b c)` | `set arr a b c` | Native Fish list |
 | `arr[2]=val` | `set arr[3] val` | Array index shifted +1 (Fish is 1-based) |
 | `arr+=(val)` | `set --append arr val` | Appends element to list |
-| `X="$X more words"`, `X="$X $(cmd)"` | `set X $X more words`, `set X $X $(cmd)` | Self-referential string accumulation and command substitution transformed into native Fish list append |
-| `FLAGS="--retry 3 -C -"` | `set FLAGS --retry 3 -C -` | Multi-token CLI flag assignment transformed into native Fish list |
+| `X="$X more words"`, `X="$X $(cmd)"` | `set X "$X more words"`, `set X "$X $(cmd)"` | Scalar string concatenation is preserved faithfully; list append (`set --append`) is strictly reserved for known list variables |
+| `FLAGS="--retry 3 -C -"` | `set FLAGS "--retry 3 -C -"` | String literals are preserved faithfully as scalars; word splitting is deferred to unquoted call sites |
 | `set -- a b`, `set - a b`, `set a b` | `set argv a b` | Positional parameter assignment |
 | `set --` | `set argv` | Clears positional parameters |
 | `shift`, `shift N` | `set --erase argv[1]`, `set --erase argv[1..N]` | Shifts positional arguments |
@@ -184,9 +184,9 @@ When scripts use POSIX constructs that Fish does not provide natively, `bait` in
    - Injected when scripts call `getopts :optstring var [args...]`.
    - Pure Fish function managing `$OPTIND` and `$OPTARG`, supporting short flags, argument binding, and quiet (`:`) mode.
 2. **`__bait_words` field splitting**:
-   - Injected when unquoted variables or command substitutions require field splitting matching POSIX `$IFS` in structural loop contexts (`for x in $var` $\to$ `for x in (__bait_words $var)` and `for x in $(cmd)` $\to$ `for x in (__bait_words $(cmd))`).
+   - Injected when unquoted variables or command substitutions require field splitting matching POSIX `$IFS` in structural contexts (`for x in $var`, `for x in $(cmd)`) or at unquoted command argument call sites (`cmd $FLAGS` $\to$ `cmd (__bait_words $FLAGS)`).
    - **List-valued environment variables**: Fish automatically creates lists from all environment variables whose name ends in `PATH` (such as `$PATH`, `$CDPATH`, `$MANPATH`, `$PKG_CONFIG_PATH`, `$LD_LIBRARY_PATH`). These variables are recognized as native lists and passed directly without `__bait_words` wrapping in loops (`for p in $PATH`), while being safely quoted in scalar contexts (`switch "$PATH"`).
    - Splits on whitespace or `$BAIT_IFS` (set from `IFS`).
 3. **`__bait_exec` dynamic commands**:
    - Injected for dynamic command string execution (`$cmd arg` $\to$ `__bait_exec $cmd arg`).
-   - Evaporates empty prefixes (e.g. `sudo=""`) while strictly preserving positional boundaries.
+   - Recursively dispatches dynamically split command words while strictly preserving positional boundaries; optional prefixes (e.g. `sudo=""`) are normalized to native Fish empty lists during translation.
