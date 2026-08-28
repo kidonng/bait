@@ -37,7 +37,13 @@ func translateShebang(src []byte) []byte {
 	}
 	interp := fields[0]
 	if filepath.Base(interp) == "env" && len(fields) > 1 {
-		interp = fields[1]
+		interp = ""
+		for _, f := range fields[1:] {
+			if !strings.HasPrefix(f, "-") {
+				interp = f
+				break
+			}
+		}
 	}
 	if !shellInterpreters[filepath.Base(interp)] {
 		return src

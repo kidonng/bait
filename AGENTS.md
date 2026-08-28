@@ -19,10 +19,11 @@
        - Reassignment to declared locals emits plain `set` (retaining function scope).
        - **Strict Rule**: No function name heuristics (e.g. `main` is treated identically to any other function). Do not simulate caller-callee dynamic scoping.
      - **Parameter Expansions & Builtins**: Map POSIX/Bash expansions (`$?`, `$0`, `$#`, `$@`, `${v:-def}`, `${v/a/b}`) and state commands (`set`, `shift`, `unset`, `read`) to Fish builtins using long options (`set --function`, `set --global`, `set --append`, `string replace -- ...`).
-     - **On-Demand Runtime Helpers**: When scripts require semantics Fish lacks natively, inject minimal, self-contained helpers at file top:
-       - `getopts`: Pure-Fish option parser tracking `$OPTIND` and `$OPTARG`.
-       - `__bait_words`: Unquoted variable expansion and command substitution field splitting matching POSIX `$IFS`.
-       - `__bait_exec`: Dynamic command string execution with flag splitting.
+    - **On-Demand Runtime Helpers & Word Splitting**:
+      - **Assignment-Side Listification**: Rather than intercepting call-sites with magic variable-name heuristics, multi-token CLI flags and string accumulations (`FLAGS="$FLAGS -a -b"`, `ARGS="$ARGS $(cmd)"`) are transformed at the assignment site into native Fish lists (`set FLAGS $FLAGS -a -b`). Downstream commands naturally expand `$FLAGS` into multiple arguments via Fish's native list semantics, strictly adhering to "Passthrough First" and the "No Heuristics" principle.
+      - `getopts`: Pure-Fish option parser tracking `$OPTIND` and `$OPTARG`.
+      - `__bait_words`: Unquoted variable expansion and command substitution field splitting matching POSIX `$IFS` in structural loop contexts (`for in $var` / `for in $(cmd)`).
+      - `__bait_exec`: Dynamic command string execution with flag splitting.
 
 3. **Explicit Warning Contract over Silent Breakage**
    - When encountering constructs with no faithful Fish equivalent (C-style `for ((;;))` loops, `select`, ternary `?:`, namerefs, unsupported builtins like `shopt`), emit the construct verbatim and print a diagnostic warning to stderr with line/column coordinates.
@@ -48,8 +49,8 @@
 
 ## Repository Layout
 
-- `cmd/bait/`: CLI binary entry point (streaming stdin/stdout, file translation, `--quiet` flag).
-- `internal/bait/`: Core translation engine:
+- `cmd/bait/`: CLI binary entry point (`package main`, streaming stdin/stdout, file translation, `--quiet` flag).
+- `internal/bait/`: Core translation engine (`package bait`, import path `github.com/kidonng/bait/internal/bait`):
   - `translate.go`: High-level entry points and AST parsing via `mvdan.cc/sh/v3/syntax`.
   - `emit.go`: AST normalization, structural emission, pure-Fish runtime helpers, and diagnostic warning collection.
   - `shebang.go`: Shebang line inspection and rewriting.

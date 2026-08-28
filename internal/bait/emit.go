@@ -425,6 +425,7 @@ func (e *emitter) shiftArrayIndex(pos syntax.Pos, name string) string {
 			if n >= 0 {
 				return fmt.Sprintf("%s[%d]", arrName, n+1)
 			}
+			return fmt.Sprintf("%s[%d]", arrName, n)
 		}
 		e.warn(pos, "dynamic array index cannot be shifted; emitted verbatim")
 		return fmt.Sprintf("%s[%s]", arrName, sub)
@@ -711,16 +712,6 @@ func (e *emitter) normalize(f *syntax.File) {
 				e.warn(c.Args[0].Pos(), "eval executes fish syntax; incompatible bash syntax will fail at runtime; emitted verbatim")
 			}
 			stripReadRawFlags(c)
-			for i := 1; i < len(c.Args); i++ {
-				if name, ok := isWordSplitParam(c.Args[i]); ok {
-					c.Args[i] = &syntax.Word{
-						Parts: []syntax.WordPart{
-							substPart("__bait_words", "$"+e.varName(name)),
-						},
-					}
-					e.needsBaitWords = true
-				}
-			}
 		}
 		return true
 	})
@@ -779,23 +770,6 @@ func escapeLiteralDollar(s string) string {
 	return b.String()
 }
 
-func isWordSplitParam(w *syntax.Word) (string, bool) {
-	pe, ok := singleBareParam(w)
-	if !ok || pe.Param == nil {
-		return "", false
-	}
-	name := pe.Param.Value
-	lower := strings.ToLower(name)
-	if strings.Contains(lower, "retry") ||
-		strings.Contains(lower, "flags") ||
-		strings.Contains(lower, "opts") ||
-		strings.Contains(lower, "options") ||
-		strings.Contains(lower, "args") ||
-		strings.Contains(lower, "params") {
-		return name, true
-	}
-	return "", false
-}
 
 // binary emits &&/||/pipe chains. Chains made only of simple commands are
 // valid fish verbatim; a structural operand (rare) falls back.
@@ -1526,6 +1500,11 @@ func (e *emitter) assignStmt(s *syntax.Stmt, c *syntax.CallExpr) {
 					e.varName(a.Name.Value), strings.Join(args, " "))
 				continue
 			}
+			if args, ok := e.flagListLiteral(a); ok {
+				e.printf("set %s%s %s", scopePrefix(curScope),
+					e.varName(a.Name.Value), strings.Join(args, " "))
+				continue
+			}
 		}
 		switch {
 		case a.Name == nil:
@@ -1562,27 +1541,52 @@ func (e *emitter) assignStmt(s *syntax.Stmt, c *syntax.CallExpr) {
 	}
 }
 
-// selfRefAccumulation detects `X="$X more words"`: bash accumulates a
-// string that is word-split at unquoted use sites, while fish reaches
-// the same observable behavior by accumulating a list. It returns the
+// selfRefAccumulation detects `X="$X more words"`, `X="$X $(cmd)"`, etc.:
+// bash accumulates a string that is word-split at unquoted use sites, while fish reaches
+// the same observable behavior by accumulating a native list. It returns the
 // arguments for `set X $X <words...>`, splitting literal parts on
-// whitespace and keeping adjacent fragments in one word.
+// whitespace, translating command substitutions into list items, and keeping
+// adjacent fragments in one word.
 func (e *emitter) selfRefAccumulation(a *syntax.Assign) ([]string, bool) {
-	if a.Value == nil || len(a.Value.Parts) != 1 {
+	if a.Value == nil || len(a.Value.Parts) == 0 || a.Name == nil {
 		return nil, false
 	}
-	q, ok := a.Value.Parts[0].(*syntax.DblQuoted)
-	if !ok || len(q.Parts) < 2 {
+	varName := a.Name.Value
+	var parts []syntax.WordPart
+
+	if len(a.Value.Parts) == 1 {
+		if q, ok := a.Value.Parts[0].(*syntax.DblQuoted); ok && len(q.Parts) >= 2 {
+			parts = q.Parts
+		}
+	}
+	if parts == nil && len(a.Value.Parts) >= 2 {
+		if pe, ok := a.Value.Parts[0].(*syntax.ParamExp); ok && pe.Param != nil && pe.Param.Value == varName && bareParam(pe) {
+			parts = a.Value.Parts
+		} else if dq, ok := a.Value.Parts[0].(*syntax.DblQuoted); ok && len(dq.Parts) == 1 {
+			if pe, ok := dq.Parts[0].(*syntax.ParamExp); ok && pe.Param != nil && pe.Param.Value == varName && bareParam(pe) {
+				parts = append([]syntax.WordPart{pe}, a.Value.Parts[1:]...)
+			}
+		}
+	}
+	if parts == nil || len(parts) < 2 {
 		return nil, false
 	}
-	pe, ok := q.Parts[0].(*syntax.ParamExp)
-	if !ok || pe.Param == nil || pe.Param.Value != a.Name.Value || !bareParam(pe) {
+
+	pe, ok := parts[0].(*syntax.ParamExp)
+	if !ok || pe.Param == nil || pe.Param.Value != varName || !bareParam(pe) {
 		return nil, false
 	}
-	firstLit, ok := q.Parts[1].(*syntax.Lit)
-	if !ok || (!strings.HasPrefix(firstLit.Value, " ") && !strings.HasPrefix(firstLit.Value, "\t")) {
+
+	switch p := parts[1].(type) {
+	case *syntax.Lit:
+		if !strings.HasPrefix(p.Value, " ") && !strings.HasPrefix(p.Value, "\t") {
+			return nil, false
+		}
+	case *syntax.CmdSubst, *syntax.ParamExp, *syntax.SglQuoted:
+	default:
 		return nil, false
 	}
+
 	var args []string
 	cur := ""
 	flush := func() {
@@ -1591,7 +1595,8 @@ func (e *emitter) selfRefAccumulation(a *syntax.Assign) ([]string, bool) {
 			cur = ""
 		}
 	}
-	for _, p := range q.Parts[1:] {
+
+	for _, p := range parts[1:] {
 		switch p := p.(type) {
 		case *syntax.Lit:
 			v := p.Value
@@ -1609,12 +1614,97 @@ func (e *emitter) selfRefAccumulation(a *syntax.Assign) ([]string, bool) {
 			}
 		case *syntax.ParamExp:
 			cur += e.render(&syntax.Word{Parts: []syntax.WordPart{p}})
+		case *syntax.CmdSubst:
+			flush()
+			args = append(args, e.renderWordSmart(&syntax.Word{Parts: []syntax.WordPart{p}}))
+		case *syntax.SglQuoted:
+			v := p.Value
+			if strings.ContainsAny(v, " \t") {
+				flush()
+				for _, f := range strings.Fields(v) {
+					args = append(args, fishSingleQuote(f))
+				}
+			} else {
+				cur += fishSingleQuote(v)
+			}
+		case *syntax.DblQuoted:
+			for _, sub := range p.Parts {
+				switch sub := sub.(type) {
+				case *syntax.Lit:
+					v := sub.Value
+					if v != strings.TrimLeft(v, " \t") {
+						flush()
+					}
+					for i, f := range strings.Fields(v) {
+						if i > 0 {
+							flush()
+						}
+						cur += f
+					}
+					if v != strings.TrimRight(v, " \t") {
+						flush()
+					}
+				case *syntax.CmdSubst:
+					flush()
+					args = append(args, e.renderWordSmart(&syntax.Word{Parts: []syntax.WordPart{sub}}))
+				default:
+					cur += e.render(&syntax.Word{Parts: []syntax.WordPart{sub}})
+				}
+			}
 		default:
 			return nil, false
 		}
 	}
 	flush()
-	return append([]string{"$" + a.Name.Value}, args...), true
+	return append([]string{"$" + varName}, args...), true
+}
+
+// flagListLiteral detects literal assignments of multiple CLI flags like
+// `FLAGS="--retry 3 -C -"` or `FLAGS="-a -b"`:
+// bash treats these as strings and relies on call-site word splitting.
+// In Fish, defining them as native lists allows direct invocation without
+// magical call-site heuristics.
+func (e *emitter) flagListLiteral(a *syntax.Assign) ([]string, bool) {
+	if a.Value == nil || len(a.Value.Parts) != 1 || a.Name == nil {
+		return nil, false
+	}
+	var litVal string
+	switch p := a.Value.Parts[0].(type) {
+	case *syntax.Lit:
+		litVal = p.Value
+	case *syntax.SglQuoted:
+		litVal = p.Value
+	case *syntax.DblQuoted:
+		if len(p.Parts) == 1 {
+			if l, ok := p.Parts[0].(*syntax.Lit); ok {
+				litVal = l.Value
+			}
+		}
+	}
+	if litVal == "" {
+		return nil, false
+	}
+	litVal = strings.TrimSpace(litVal)
+	if !strings.HasPrefix(litVal, "-") {
+		return nil, false
+	}
+	fields := strings.Fields(litVal)
+	if len(fields) < 2 {
+		return nil, false
+	}
+	hasFlag := false
+	for _, f := range fields {
+		if strings.HasPrefix(f, "-") {
+			hasFlag = true
+		}
+	}
+	if !hasFlag {
+		return nil, false
+	}
+	if fields[0] == "-" && len(fields) > 1 && !strings.HasPrefix(fields[1], "-") {
+		return nil, false
+	}
+	return fields, true
 }
 
 func scopePrefix(scope string) string {
@@ -1699,6 +1789,13 @@ func (e *emitter) assignValue(a *syntax.Assign) string {
 	if a.Value == nil {
 		return `""`
 	}
+	if len(a.Value.Parts) == 1 {
+		if q, ok := a.Value.Parts[0].(*syntax.DblQuoted); ok && len(q.Parts) == 1 {
+			if pe, ok := q.Parts[0].(*syntax.ParamExp); ok && bareParam(pe) && pe.Param != nil {
+				return "$" + e.varName(pe.Param.Value)
+			}
+		}
+	}
 	if r := e.renderWordSmart(a.Value); r != "" {
 		return r
 	}
@@ -1749,7 +1846,11 @@ func (e *emitter) declClause(s *syntax.Stmt, d *syntax.DeclClause) {
 	case "local":
 		scope = "--function"
 	case "declare", "typeset":
-		if e.inFunction {
+		if e.hasGlobalFlag(d.Args) {
+			if e.inFunction {
+				scope = "--global"
+			}
+		} else if e.inFunction {
 			scope = "--function"
 		}
 	default: // readonly, nameref
@@ -1758,14 +1859,28 @@ func (e *emitter) declClause(s *syntax.Stmt, d *syntax.DeclClause) {
 		return
 	}
 	for _, a := range d.Args {
-		if a.Name != nil {
-			if e.funcLocals == nil {
-				e.funcLocals = make(map[string]bool)
-			}
-			e.funcLocals[a.Name.Value] = true
+		if e.isOptionArg(a) {
+			continue
 		}
-		e.setLine(scope, e.varName(a.Name.Value), e.assignValue(a))
+		if a.Name != nil {
+			if scope == "--function" {
+				if e.funcLocals == nil {
+					e.funcLocals = make(map[string]bool)
+				}
+				e.funcLocals[a.Name.Value] = true
+			}
+			e.setLine(scope, e.varName(a.Name.Value), e.assignValue(a))
+		}
 	}
+}
+
+func (e *emitter) hasGlobalFlag(args []*syntax.Assign) bool {
+	for _, a := range args {
+		if a.Naked && e.argText(a) == "-g" {
+			return true
+		}
+	}
+	return false
 }
 
 // isOptionArg reports whether a naked declaration argument is an option
@@ -2298,7 +2413,7 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 			body += "$"
 		}
 		return []syntax.WordPart{substPart("string", "replace", "--regex", "--",
-			"'"+body+"'", "''", "$"+name+"["+tok+"]")}, true
+			fishSingleQuote(body), "''", "$"+name+"["+tok+"]")}, true
 
 	case pe.Index != nil && pe.Exp != nil:
 		e.warn(pe.Pos(), "%s on an indexed array element is left untranslated",
@@ -2354,8 +2469,8 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 			args = append(args, "--all")
 		}
 		args = append(args, "--",
-			"'"+re+"'",
-			"'"+e.render(pe.Repl.With)+"'",
+			fishSingleQuote(re),
+			fishSingleQuote(e.render(pe.Repl.With)),
 			"$"+name)
 		return []syntax.WordPart{substPart(args...)}, true
 
@@ -2413,7 +2528,7 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 				body += "$"
 			}
 		return []syntax.WordPart{substPart("string", "replace", "--regex", "--",
-			"'"+body+"'", "''", "$"+name)}, true
+			fishSingleQuote(body), "''", "$"+name)}, true
 		case syntax.UpperAll:
 			if exp.Word != nil {
 				e.warn(pe.Pos(), "case modification with pattern is not supported; left untranslated")
@@ -2436,6 +2551,11 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 	return nil, false
 }
 
+// fishSingleQuote escapes single quotes for use in fish single-quoted literals.
+func fishSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `\'`) + "'"
+}
+
 // argWord renders a word for use as a single printf argument: bare when
 // plain, double-quoted around expansions, single-quoted when it embeds
 // double quotes but no expansions.
@@ -2449,15 +2569,48 @@ func (e *emitter) argWord(w *syntax.Word) *syntax.Word {
 	switch {
 	case s == "":
 		return litWord("''")
-	case !strings.ContainsAny(s, " $\t\""):
+	case !strings.ContainsAny(s, " $\t\"'"):
 		return litWord(s)
 	case strings.Contains(s, "$"):
 		if strings.HasPrefix(s, `"`) && strings.HasSuffix(s, `"`) && len(s) >= 2 {
 			return litWord(s)
 		}
-		return litWord(`"` + s + `"`)
+		var b strings.Builder
+		b.WriteByte('"')
+		runes := []rune(s)
+		depth := 0
+		for i := 0; i < len(runes); i++ {
+			if runes[i] == '$' && i+1 < len(runes) && runes[i+1] == '(' {
+				depth++
+				b.WriteString("$(")
+				i++
+				continue
+			}
+			if runes[i] == ')' && depth > 0 {
+				depth--
+				b.WriteRune(')')
+				continue
+			}
+			if runes[i] == '\\' && i+1 < len(runes) {
+				b.WriteRune('\\')
+				b.WriteRune(runes[i+1])
+				i++
+				continue
+			}
+			if runes[i] == '"' {
+				if depth == 0 {
+					b.WriteString(`\"`)
+				} else {
+					b.WriteRune('"')
+				}
+				continue
+			}
+			b.WriteRune(runes[i])
+		}
+		b.WriteByte('"')
+		return litWord(b.String())
 	case strings.Contains(s, `"`):
-		return litWord("'" + s + "'")
+		return litWord(fishSingleQuote(s))
 	default:
 		return dq(litPart(s))
 	}
@@ -2507,11 +2660,74 @@ func globToRegex(pat string, lazy bool) (string, bool) {
 			}
 		case '?':
 			b.WriteString(".")
+		case '[':
+			if closeIdx := findClosingBracket(runes, i); closeIdx != -1 {
+				classContent := convertBracketClass(runes[i+1 : closeIdx])
+				b.WriteString(classContent)
+				i = closeIdx
+			} else {
+				b.WriteString(regexp.QuoteMeta(string(r)))
+			}
 		default:
 			b.WriteString(regexp.QuoteMeta(string(r)))
 		}
 	}
 	return b.String(), true
+}
+
+func findClosingBracket(runes []rune, start int) int {
+	if start+1 >= len(runes) {
+		return -1
+	}
+	j := start + 1
+	if runes[j] == '!' || runes[j] == '^' {
+		j++
+	}
+	if j < len(runes) && runes[j] == ']' {
+		j++
+	}
+	for ; j < len(runes); j++ {
+		if runes[j] == '\\' && j+1 < len(runes) {
+			j++
+			continue
+		}
+		if runes[j] == ']' {
+			return j
+		}
+	}
+	return -1
+}
+
+func convertBracketClass(content []rune) string {
+	var b strings.Builder
+	b.WriteByte('[')
+	if len(content) == 0 {
+		b.WriteByte(']')
+		return b.String()
+	}
+	idx := 0
+	if content[0] == '!' || content[0] == '^' {
+		b.WriteByte('^')
+		idx++
+	}
+	for ; idx < len(content); idx++ {
+		c := content[idx]
+		switch c {
+		case '\\':
+			if idx+1 < len(content) {
+				idx++
+				b.WriteString(regexp.QuoteMeta(string(content[idx])))
+			} else {
+				b.WriteString(`\\`)
+			}
+		case ']':
+			b.WriteString(`\]`)
+		default:
+			b.WriteRune(c)
+		}
+	}
+	b.WriteByte(']')
+	return b.String()
 }
 
 func dq(parts ...syntax.WordPart) *syntax.Word {
@@ -2617,7 +2833,8 @@ const baitGetoptsHelper = `function getopts
     if test -z "$opt"
         set --global OPTIND (math $OPTIND + 1)
         set --global __bait_optpos 2
-        return (getopts $optstring $varname $args)
+        getopts $optstring $varname $args
+        return $status
     end
 
     set --global __bait_optpos (math $__bait_optpos + 1)
@@ -2676,7 +2893,11 @@ func extractHdoc(redirs []*syntax.Redirect) (*syntax.Redirect, []*syntax.Redirec
 	var rest []*syntax.Redirect
 	for _, r := range redirs {
 		if r.Op == syntax.Hdoc || r.Op == syntax.DashHdoc || r.Op == syntax.WordHdoc {
-			hdoc = r
+			if hdoc == nil {
+				hdoc = r
+			} else {
+				rest = append(rest, r)
+			}
 		} else {
 			rest = append(rest, r)
 		}
@@ -2685,6 +2906,12 @@ func extractHdoc(redirs []*syntax.Redirect) (*syntax.Redirect, []*syntax.Redirec
 }
 
 func (e *emitter) emitHdoc(s *syntax.Stmt, hdoc *syntax.Redirect, rest []*syntax.Redirect) {
+	for _, r := range rest {
+		if r.Op == syntax.Hdoc || r.Op == syntax.DashHdoc || r.Op == syntax.WordHdoc {
+			e.warn(s.Position, "multiple here-documents on a single command are not supported; only one is converted to pipeline")
+			break
+		}
+	}
 	origRedirs := s.Redirs
 	s.Redirs = rest
 	cmdText := e.render(s)

@@ -319,6 +319,7 @@ func TestShebang(t *testing.T) {
 	}{
 		{"bin bash", "#!/bin/bash\necho hi\n", "#!/usr/bin/env fish\necho hi\n"},
 		{"env bash", "#!/usr/bin/env bash\necho hi\n", "#!/usr/bin/env fish\necho hi\n"},
+		{"env -S bash", "#!/usr/bin/env -S bash\necho hi\n", "#!/usr/bin/env fish\necho hi\n"},
 		{"bash flags dropped", "#!/bin/bash -eu\necho hi\n", "#!/usr/bin/env fish\necho hi\n"},
 		{"sh replaced", "#!/bin/sh\necho hi\n", "#!/usr/bin/env fish\necho hi\n"},
 		{"dash replaced", "#!/bin/dash\necho hi\n", "#!/usr/bin/env fish\necho hi\n"},
@@ -428,6 +429,11 @@ func TestWarnings(t *testing.T) {
 			"eval in command substitution warning",
 			"x=$(eval \"$cmd\")\n",
 			"eval executes fish syntax",
+		},
+		{
+			"multiple heredocs warning",
+			"cmd <<EOF1 <<EOF2\na\nEOF1\nb\nEOF2\n",
+			"multiple here-documents on a single command are not supported",
 		},
 	}
 
@@ -1041,9 +1047,29 @@ func TestTier2(t *testing.T) {
 			"function f\n    set --function n 2\nend\n",
 		},
 		{
+			"declare in function with -g is global",
+			"f() {\n\tdeclare -g n=2\n}\n",
+			"function f\n    set --global n 2\nend\n",
+		},
+		{
 			"self-referential accumulation becomes list append",
 			"OPTS=\"--silent\"\nOPTS=\"$OPTS --netrc\"\n",
 			"set OPTS \"--silent\"\nset OPTS $OPTS --netrc\n",
+		},
+		{
+			"braced self-referential accumulation becomes list append",
+			"OPTS=\"--silent\"\nOPTS=\"${OPTS} --netrc\"\n",
+			"set OPTS \"--silent\"\nset OPTS $OPTS --netrc\n",
+		},
+		{
+			"command substitution accumulation becomes list append",
+			"ARGS=\"-a\"\nARGS=\"$ARGS $(get_flags)\"\n",
+			"set ARGS \"-a\"\nset ARGS $ARGS $(get_flags)\n",
+		},
+		{
+			"flag list literal becomes list",
+			"FLAGS=\"--retry 3 -C -\"\n",
+			"set FLAGS --retry 3 -C -\n",
 		},
 		{
 			"adjacent value concatenates in one word",
@@ -1342,6 +1368,21 @@ func TestTier2Ops(t *testing.T) {
 			"substring",
 			"echo ${s:2:3}\n",
 			"echo $(string sub --start=3 --length=3 -- $s)\n",
+		},
+		{
+			"replace bracket class",
+			"echo ${s/[0-9]/d}\n",
+			"echo $(string replace --regex -- '[0-9]' 'd' $s)\n",
+		},
+		{
+			"prefix strip negated bracket class",
+			"echo ${p#[!a-z]}\n",
+			"echo $(string replace --regex -- '^[^a-z]' '' $p)\n",
+		},
+		{
+			"replace with single quote",
+			"echo ${s/foo/'bar'}\n",
+			"echo $(string replace --regex -- 'foo' '\\'bar\\'' $s)\n",
 		},
 		{"length", "echo ${#s}\n", "echo $(string length -- \"$s\")\n"},
 		{"uppercase all", "echo ${v^^}\n", "echo $(string upper -- \"$v\")\n"},
@@ -1674,6 +1715,7 @@ func TestUnsetBuiltin(t *testing.T) {
 		{"unset multiple functions", "unset -f f1 f2\n", "functions --erase f1 f2\n"},
 		{"unset array element", "unset 'arr[0]'\n", "set --erase arr[1]\n"},
 		{"unset array element unquoted", "unset arr[2]\n", "set --erase arr[3]\n"},
+		{"unset negative array element", "unset 'arr[-1]'\n", "set --erase arr[-1]\n"},
 		{"unset in chain", "test -n \"$x\" && unset x\n", "test -n \"$x\" && set --erase x\n"},
 		{"unset mixed -f and -v", "unset -f f1 f2 -v v1 v2\n", "functions --erase f1 f2\nset --erase v1 v2\n"},
 		{"unset mixed var and func", "unset v1 -f f1\n", "set --erase v1\nfunctions --erase f1\n"},
@@ -1930,9 +1972,9 @@ func TestRustupSupportFeatures(t *testing.T) {
 			want: "set _file \"$_dir/rustup-init$_ext\"\n",
 		},
 		{
-			name:     "word split applied to options variable",
-			in:       "curl $_retry $url\n",
-			contains: "(__bait_words $_retry)",
+			name: "options variable passes through without helper injection",
+			in:   "curl $_retry $url\n",
+			want: "curl $_retry $url\n",
 		},
 		{
 			name:     "word split applied to for loop command substitution",
