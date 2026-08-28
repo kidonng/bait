@@ -1,11 +1,11 @@
 {
-  description = "bait: a Bash-to-Fish shell translator written in Go";
+  description = "🎣 BAIT: Another Incomplete Transpiler";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
   };
 
-  outputs = { self, nixpkgs }:
+  outputs = { nixpkgs, ... }:
     let
       systems = [
         "x86_64-linux"
