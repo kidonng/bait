@@ -1,10 +1,19 @@
 # 🎣 BAIT: Another Incomplete Transpiler
 
-`bait` is a fast, pragmatic Bash-to-Fish shell script translator.
+`bait` is a somewhat complete Bash-to-Fish shell script translator.
 
 This project is similar to the existing [babelfish](https://github.com/bouk/babelfish) project, which is also based on [mvdan/sh](https://github.com/mvdan/sh). However, bait translates bash scripts much better, in terms of supported features and output quality.
 
 Bait passes through constructs as much as possible when modern fish shell features can be leveraged. Common bash snippets could come out barely changed after translation.
+
+## Status
+
+> [!WARNING]
+> Running complex scripts translated by bait could result in undefined behavior.
+
+By definition™️, bait is never complete. Some bash features do not translate easily into fish.
+
+However, it can already translate [nvm](https://github.com/nvm-sh/nvm) and many prominent installers, allowing them to run natively in fish.
 
 ## Quickstart
 
@@ -33,12 +42,6 @@ nix run .#test
 # Run tests for a specific package
 nix run .#test -- ./internal/bait
 ```
-
-## Status
-
-By definition™️, bait is never complete. Some bash features do not translate easily into fish.
-
-However, it can already translate the most popular installer scripts and enable them to run natively in fish. _It is not recommended to actually do so._
 
 ## Documentation
 
