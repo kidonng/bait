@@ -95,7 +95,7 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 | `local x=val`, bare `local x` | `set --function x val`, `set --function x ""` | Scoped to the current function |
 | `declare x=val`, `typeset x=val` | `set x val` (top-level) / `set --function x val` (in func) | Scoped declaration |
 | `declare -g x=val`, `typeset -g x=val` | `set x val` (top-level) / `set --global x val` (in func) | Explicit global declaration |
-| Reassignment to local `x=new` | `set x new` | Updates existing function-local without `--global` |
+| Reassignment to local `x=new` | `set x new` | Updates existing function-local without `--global` within the same function lexical scope; does not simulate caller-callee dynamic scoping |
 | `export X=val` | `export X=val` | Preserves `export` command syntax while normalizing assignments and expansions via Fish's `export` wrapper function; unsupported flags (e.g. `export -f`) warn and fall back to verbatim passthrough |
 | `arr=(a b c)` | `set arr a b c` | Native Fish list |
 | `arr[2]=val` | `set arr[3] val` | Array index shifted +1 (Fish is 1-based) |
@@ -108,7 +108,7 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 | `unset x`, `unset -v x y` | `set --erase x`, `set --erase x y` | Erases variable |
 | `unset -f func` | `functions --erase func` | Erases function definition |
 | `unset 'arr[0]'` | `set --erase arr[1]` | Erases specific array element |
-| `read -r line`, `read _`, `read status` | `read line`, `read _unused`, `read _status` | Drops `-r` (default in Fish); automatically mangles variable names conflicting with Fish verified read-only variables (`_` $\to$ `_unused`, `status` $\to$ `_status`, `version` $\to$ `_version`, `history` $\to$ `_history`, `hostname` $\to$ `_hostname`), while Fish-internal variables and mutable variables (e.g. `HOME`, `USER`) remain untouched |
+| `read -r line`, `read _`, `read status`, `read pipestatus` | `read line`, `read _unused`, `read _status`, `read _pipestatus` | Drops `-r` (default in Fish); automatically mangles variable names conflicting with Fish verified read-only variables (`_` $\to$ `_unused`, `status` $\to$ `_status`, `version` $\to$ `_version`, `history` $\to$ `_history`, `hostname` $\to$ `_hostname`, `pipestatus` $\to$ `_pipestatus`), while Fish-internal variables and mutable variables (e.g. `HOME`, `USER`) remain untouched |
 | `set` (bare), `set -` | *(dropped with warning)* | Prints shell state / trace flags in Bash; dropped in Fish |
 | `set -e`, `set -u`, `set +x`, `set -o ...` | *(dropped with warning)* | Fish has no shell option flags |
 | `eval "..."` | `eval "..."` | Passthrough (emits warning: Fish `eval` executes Fish syntax; incompatible Bash syntax will fail at runtime) |
@@ -148,7 +148,7 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 | Bash | Fish |
 |---|---|
 | `${var}` | `$var` (braces stripped) |
-| `${#var}` / `${#arr[@]}` | `$(string length -- "$var")` / `$(count $arr)` | String length / array count (undefined variable evaluates to 0) |
+| `${#var}` / `${#arr[@]}` / `${#arr[*]}` | `$(string length -- "$var")` / `$(count $arr)` | String length / array count (undefined variable evaluates to 0) |
 | `${v:-default}` | `$(test -n "$v" && printf '%s\n' "$v" \|\| printf '%s\n' default)` |
 | `${v-default}` | `$(set --query v && printf '%s\n' "$v" \|\| printf '%s\n' default)` |
 | `${v:+alternate}` | `$(test -n "$v" && printf '%s\n' alternate \|\| true)` |
@@ -156,8 +156,8 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 | `${f%.txt}`, `${f%%.*}` | `$(string replace --regex -- '\.txt$' '' $f)`, `$(string replace --regex -- '\..*$' '' $f)` |
 | `${p#prefix}`, `${p##*/}` | `$(string replace --regex -- '^prefix' '' $p)`, `$(string replace --regex -- '^.*/' '' $p)` |
 | `${s/pat/repl}`, `${s//pat/repl}` | `$(string replace --regex -- 'pat' 'repl' $s)`, `$(string replace --regex --all -- 'pat' 'repl' $s)` |
-| `${s:offset:length}`, `${s:offset}` | `$(string sub --start=(offset+1) --length=length -- $s)`, `$(string sub --start=(offset+1) -- $s)` |
-| `${arr[@]:1:2}`, `${arr[@]:1}` | `$arr[2..3]`, `$arr[2..-1]` (1-based slices) |
+| `${s:offset:length}`, `${s:offset}` | `$(string sub --start=(offset+1) --length=length -- "$s")`, `$(string sub --start=(offset+1) -- "$s")` | Substring extraction (double-quoted to prevent empty variables from consuming stdin) |
+| `${arr[@]:1:2}` / `${arr[*]:1:2}`, `${arr[@]:1}` / `${arr[*]:1}` | `$arr[2..3]`, `$arr[2..-1]` (1-based slices) |
 | `${v^^}` / `${v,,}` | `$(string upper -- "$v")` / `$(string lower -- "$v")` | Uppercase / lowercase string conversion |
 
 #### Literal `$` Escaping

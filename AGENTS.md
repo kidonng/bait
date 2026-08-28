@@ -13,7 +13,7 @@
 2. **Minimal & Principled Transformation**
    - Translate only constructs structurally or lexically incompatible with Fish:
      - **Control Flow**: Transform Bash compound statements into Fish block syntax (`if/else if/else/end`, `while/end`, `for/end`, `switch/case/end`, `function ... end`).
-     - **Uniform Lexical Scoping**: Map variable scopes predictably (unadorned function assignments to global scope, explicit declarations to function scope). Never use function-name heuristics (e.g. `main` is treated identically to any other function) and never simulate dynamic caller-callee scoping.
+     - **Uniform Lexical Scoping**: Map variable scopes predictably via lexical analysis (unadorned assignments to undeclared variables in functions target global scope, explicit declarations target function scope, and local reassignments within the same function lexical scope target local scope). Never use function-name heuristics (e.g. `main` is treated identically to any other function) and never simulate dynamic caller-callee scoping.
      - **Explicit Long-Option Builtins**: Prefer readable, explicit Fish builtin flags (such as `--function`, `--global`, `--append`) over ambiguous or implicit state flags.
      - **Symmetric Variable Collision Avoidance**: Systematically mangle variable names that collide with Fish read-only variables across all binding, declaration, and expansion sites. Never use one-sided or ad-hoc renames.
      - **Native List Semantics over Call-Site Heuristics**: Adhere to Fish's native list semantics (e.g. list-valued environment variables and assignment-side listification for argument/flag accumulation) instead of guessing call-site word splitting via variable name heuristics.

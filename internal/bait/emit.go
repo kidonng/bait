@@ -355,9 +355,14 @@ func (e *emitter) shiftCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 	}
 	arg := e.render(c.Args[1])
 	if n, err := strconv.Atoi(arg); err == nil {
-		if n <= 1 {
+		switch {
+		case n <= 0:
+			if tail != "" {
+				e.printf("true%s", tail)
+			}
+		case n == 1:
 			e.printf("set --erase argv[1]%s", tail)
-		} else {
+		default:
 			e.printf("set --erase argv[1..%d]%s", n, tail)
 		}
 		return
@@ -575,6 +580,9 @@ func (e *emitter) renderWordFish(w *syntax.Word) (string, bool) {
 					if !ok {
 						return "", false
 					}
+					if strings.HasPrefix(s, "(") && strings.HasSuffix(s, ")") {
+						s = "$" + s
+					}
 					b.WriteString(s)
 				case *syntax.ParamExp:
 					b.WriteString(e.render(ip))
@@ -686,11 +694,12 @@ func (e *emitter) procSubstText(ps *syntax.ProcSubst) (string, bool) {
 // Fish-internal variables (e.g. fish_pid, fish_killring) and mutable variables
 // (e.g. HOME, USER, IFS, argv) are excluded.
 var fishReservedVars = map[string]string{
-	"_":        "_unused",
-	"status":   "_status",
-	"version":  "_version",
-	"history":  "_history",
-	"hostname": "_hostname",
+	"_":          "_unused",
+	"status":     "_status",
+	"version":    "_version",
+	"history":    "_history",
+	"hostname":   "_hostname",
+	"pipestatus": "_pipestatus",
 }
 
 // mangleVarName returns the safe mangled variable name if name collides with
@@ -1216,6 +1225,8 @@ func (e *emitter) forClause(s *syntax.Stmt, f *syntax.ForClause) {
 	if !iter.InPos.IsValid() {
 		// bash iterates the positional parameters when "in" is omitted.
 		items = []string{"$argv"}
+	} else if len(items) == 0 {
+		items = []string{"(true)"}
 	}
 	tail := e.tails(s)
 	e.wrapperComments(s)
@@ -1918,7 +1929,7 @@ func (e *emitter) soleArrayAll(w *syntax.Word) (string, bool) {
 		return "", false
 	}
 	tok, ok := e.arrayIndex(pe.Index)
-	if !ok || tok != "@" {
+	if !ok || (tok != "@" && tok != "*") {
 		return "", false
 	}
 	return e.varName(pe.Param.Value), true
@@ -2242,12 +2253,18 @@ func substPart(args ...string) syntax.WordPart {
 	return &syntax.CmdSubst{Stmts: []*syntax.Stmt{{Cmd: call}}}
 }
 func stringUnarySubst(subcmd, name string) syntax.WordPart {
+	var ref *syntax.Word
+	if isDigits(name) {
+		ref = dq(argvParam(), litPart("["+name+"]"))
+	} else {
+		ref = dq(namedParam(name))
+	}
 	call := &syntax.CallExpr{
 		Args: []*syntax.Word{
 			litWord("string"),
 			litWord(subcmd),
 			litWord("--"),
-			dq(namedParam(name)),
+			ref,
 		},
 	}
 	return &syntax.CmdSubst{Stmts: []*syntax.Stmt{{Cmd: call}}}
@@ -2506,22 +2523,33 @@ func setCall(name string, value syntax.WordPart) syntax.Command {
 }
 
 func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, bool) {
+	if pe.Param == nil {
+		return nil, false
+	}
 	name := e.varName(pe.Param.Value)
-	ref := dq(namedParam(name)) // "$name"
+	var ref *syntax.Word
+	varPlain := "$" + name
+	if isDigits(name) {
+		ref = dq(argvParam(), litPart("["+name+"]"))
+		varPlain = "$argv[" + name + "]"
+	} else {
+		ref = dq(namedParam(name))
+	}
+	varQuoted := "\"" + varPlain + "\""
 	printVal := func(val *syntax.Word) *syntax.Stmt {
 		return callStmt(litWord("printf"), litWord(`%s\n`), val)
 	}
 
 	switch {
 	case pe.Length && pe.Index != nil:
-		if tok, ok := e.arrayIndex(pe.Index); !ok || tok != "@" {
+		if tok, ok := e.arrayIndex(pe.Index); !ok || (tok != "@" && tok != "*") {
 			return nil, false
 		}
 		return []syntax.WordPart{substPart("count", "$"+name)}, true
 
 	case pe.Index != nil && pe.Slice != nil:
 		tok, ok := e.arrayIndex(pe.Index)
-		if !ok || tok != "@" {
+		if !ok || (tok != "@" && tok != "*") {
 			return nil, false
 		}
 		start, ok := intLiteral(pe.Slice.Offset)
@@ -2545,7 +2573,7 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 		(pe.Exp.Op == syntax.RemSmallSuffix || pe.Exp.Op == syntax.RemLargeSuffix ||
 			pe.Exp.Op == syntax.RemSmallPrefix || pe.Exp.Op == syntax.RemLargePrefix):
 		tok, ok := e.arrayIndex(pe.Index)
-		if !ok || tok == "@" {
+		if !ok || tok == "@" || tok == "*" {
 			return nil, false
 		}
 		lazy := pe.Exp.Op == syntax.RemSmallSuffix || pe.Exp.Op == syntax.RemSmallPrefix
@@ -2580,7 +2608,7 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 		case !ok:
 			e.warn(pe.Pos(), "dynamic array index cannot be shifted; left untranslated")
 			return []syntax.WordPart{pe}, true
-		case tok == "@":
+		case tok == "@" || tok == "*":
 			return []syntax.WordPart{namedParam(name)}, true
 		default:
 			return []syntax.WordPart{namedParam(name), litPart("[" + tok + "]")}, true
@@ -2604,7 +2632,7 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 			}
 			args = append(args, "--length="+strconv.Itoa(n))
 		}
-		args = append(args, "--", "$"+name)
+		args = append(args, "--", varQuoted)
 		return []syntax.WordPart{substPart(args...)}, true
 
 	case pe.Repl != nil:
@@ -2619,7 +2647,7 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 		args = append(args, "--",
 			fishSingleQuote(re),
 			fishSingleQuote(e.render(pe.Repl.With)),
-			"$"+name)
+			varPlain)
 		return []syntax.WordPart{substPart(args...)}, true
 
 	case pe.Exp != nil:
@@ -2640,9 +2668,15 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 			return []syntax.WordPart{&syntax.CmdSubst{Stmts: []*syntax.Stmt{chain}}}, true
 
 		case syntax.DefaultUnset:
+			var cond *syntax.Stmt
+			if isDigits(name) {
+				cond = callStmt(litWord("test"), litWord("(count $argv)"), litWord("-ge"), litWord(name))
+			} else {
+				cond = callStmt(litWord("set"), litWord("--query"), litWord(name))
+			}
 			chain := binCmd(syntax.OrStmt,
 				binCmd(syntax.AndStmt,
-					callStmt(litWord("set"), litWord("--query"), litWord(name)),
+					cond,
 					printVal(ref)),
 				printVal(e.argWord(exp.Word)))
 			return []syntax.WordPart{&syntax.CmdSubst{Stmts: []*syntax.Stmt{chain}}}, true
@@ -2651,6 +2685,8 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 			var cond *syntax.Stmt
 			if exp.Op == syntax.AlternateUnsetOrNull {
 				cond = callStmt(litWord("test"), litWord("-n"), ref)
+			} else if isDigits(name) {
+				cond = callStmt(litWord("test"), litWord("(count $argv)"), litWord("-ge"), litWord(name))
 			} else {
 				cond = callStmt(litWord("set"), litWord("--query"), litWord(name))
 			}
@@ -2663,6 +2699,9 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 			syntax.RemSmallSuffix, syntax.RemLargeSuffix:
 			if exp.Word == nil {
 				// `${x%}` / `${x#}` strip an empty pattern: identity.
+				if isDigits(name) {
+					return []syntax.WordPart{argvParam(), litPart("[" + name + "]")}, true
+				}
 				return []syntax.WordPart{namedParam(name)}, true
 			}
 			lazy := exp.Op == syntax.RemSmallPrefix || exp.Op == syntax.RemSmallSuffix
@@ -2675,8 +2714,8 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 			} else {
 				body += "$"
 			}
-		return []syntax.WordPart{substPart("string", "replace", "--regex", "--",
-			fishSingleQuote(body), "''", "$"+name)}, true
+			return []syntax.WordPart{substPart("string", "replace", "--regex", "--",
+				fishSingleQuote(body), "''", varPlain)}, true
 		case syntax.UpperAll:
 			if exp.Word != nil {
 				e.warn(pe.Pos(), "case modification with pattern is not supported; left untranslated")
@@ -2923,12 +2962,18 @@ const baitWordsHelper = `function __bait_words --no-scope-shadowing
     end
     if set --query BAIT_IFS; and test -z "$BAIT_IFS"
         for a in $argv
-            echo $a
+            printf '%s\n' $a
         end
         return 0
     end
     if set --query BAIT_IFS; and test -n "$BAIT_IFS"
-        string split --no-empty -- "$BAIT_IFS" $argv
+        set -l cur $argv
+        for d in (string split "" -- "$BAIT_IFS")
+            test -n "$d"; and set cur (string split -- "$d" $cur)
+        end
+        for w in $cur
+            test -n "$w"; and printf '%s\n' $w
+        end
         return 0
     end
     string match --regex --all '\S+' -- $argv
@@ -2949,92 +2994,96 @@ const baitExecHelper = `function __bait_exec
 end
 
 `
-const baitGetoptsHelper = `function getopts
-    set --local optstring $argv[1]
-    set --local varname $argv[2]
-    set --local args
+const baitGetoptsHelper = `function getopts --no-scope-shadowing
+    set --local __bait_optstring $argv[1]
+    set --local __bait_varname $argv[2]
+    set --local __bait_args
     if test (count $argv) -gt 2
-        set args $argv[3..-1]
+        set __bait_args $argv[3..-1]
     else
-        set args
+        set __bait_args
     end
 
     if not set --query OPTIND; or test "$OPTIND" -lt 1
         set --global OPTIND 1
     end
+    if not set --query OPTARG
+        set --global OPTARG ""
+    end
     if not set --query __bait_optpos; or test "$__bait_optpos" -lt 2
         set --global __bait_optpos 2
     end
 
-    if test "$OPTIND" -gt (count $args)
+    if test "$OPTIND" -gt (count $__bait_args)
         return 1
     end
-    set --local current $args[$OPTIND]
-    if test (string length -- "$current") -lt 2; or test (string sub --start=1 --length=1 -- "$current") != "-"
+    set --local __bait_current $__bait_args[$OPTIND]
+    if test (string length -- "$__bait_current") -lt 2; or test (string sub --start=1 --length=1 -- "$__bait_current") != "-"
         return 1
     end
-    if test "$current" = "--"
+    if test "$__bait_current" = "--"
         set --global OPTIND (math $OPTIND + 1)
         return 1
     end
 
-    set --local opt (string sub --start=$__bait_optpos --length=1 -- "$current")
-    if test -z "$opt"
+    set --local __bait_opt (string sub --start=$__bait_optpos --length=1 -- "$__bait_current")
+    if test -z "$__bait_opt"
         set --global OPTIND (math $OPTIND + 1)
         set --global __bait_optpos 2
-        getopts $optstring $varname $args
+        getopts $__bait_optstring $__bait_varname $__bait_args
         return $status
     end
 
     set --global __bait_optpos (math $__bait_optpos + 1)
-    if test "$__bait_optpos" -gt (string length -- "$current")
+    if test "$__bait_optpos" -gt (string length -- "$__bait_current")
         set --global OPTIND (math $OPTIND + 1)
         set --global __bait_optpos 2
     end
 
-    set --local colon_mode 0
-    set --local clean_opts $optstring
-    if string match --quiet ":*" -- "$optstring"
-        set colon_mode 1
-        set clean_opts (string sub --start=2 -- "$optstring")
+    set --local __bait_colon_mode 0
+    set --local __bait_clean_opts $__bait_optstring
+    if string match --quiet ":*" -- "$__bait_optstring"
+        set __bait_colon_mode 1
+        set __bait_clean_opts (string sub --start=2 -- "$__bait_optstring")
     end
 
-    set --local match (string match --regex --index -- "\\Q$opt\\E:?" "$clean_opts")
-    if test -z "$match"
-        set --global OPTARG "$opt"
-        set --global $varname "?"
-        if test $colon_mode -eq 0
-            echo "getopts: illegal option -- $opt" >&2
+    set --local __bait_match (string match --regex --index -- "\\Q$__bait_opt\\E:?" "$__bait_clean_opts")
+    if test -z "$__bait_match"
+        set OPTARG "$__bait_opt"
+        set $__bait_varname "?"
+        if test $__bait_colon_mode -eq 0
+            echo "getopts: illegal option -- $__bait_opt" >&2
         end
         return 0
     end
 
-    set --local idx_parts (string split " " -- $match[1])
-    set --local opt_spec (string sub --start=$idx_parts[1] --length=$idx_parts[2] -- "$clean_opts")
-    if string match --quiet "*:" -- "$opt_spec"
-        if test "$__bait_optpos" -gt 2; and test "$__bait_optpos" -le (string length -- "$current")
-            set --global OPTARG (string sub --start=$__bait_optpos -- "$current")
+    set --local __bait_idx_parts (string split " " -- $__bait_match[1])
+    set --local __bait_opt_spec (string sub --start=$__bait_idx_parts[1] --length=$__bait_idx_parts[2] -- "$__bait_clean_opts")
+    if string match --quiet "*:" -- "$__bait_opt_spec"
+        if test "$__bait_optpos" -gt 2; and test "$__bait_optpos" -le (string length -- "$__bait_current")
+            set OPTARG (string sub --start=$__bait_optpos -- "$__bait_current")
             set --global OPTIND (math $OPTIND + 1)
             set --global __bait_optpos 2
-        else if test "$OPTIND" -le (count $args)
-            set --global OPTARG $args[$OPTIND]
+        else if test "$OPTIND" -le (count $__bait_args)
+            set OPTARG $__bait_args[$OPTIND]
             set --global OPTIND (math $OPTIND + 1)
             set --global __bait_optpos 2
         else
-            set --global OPTARG "$opt"
-            if test $colon_mode -eq 1
-                set --global $varname ":"
+            set OPTARG "$__bait_opt"
+            if test $__bait_colon_mode -eq 1
+                set $__bait_varname ":"
             else
-                set --global $varname "?"
-                echo "getopts: option requires an argument -- $opt" >&2
+                set $__bait_varname "?"
+                echo "getopts: option requires an argument -- $__bait_opt" >&2
             end
             return 0
         end
     end
 
-    set --global $varname "$opt"
+    set $__bait_varname "$__bait_opt"
     return 0
 end
+
 `
 
 func extractHdoc(redirs []*syntax.Redirect) (*syntax.Redirect, []*syntax.Redirect) {

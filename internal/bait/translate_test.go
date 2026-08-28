@@ -897,6 +897,67 @@ func TestBashFishEquivalence(t *testing.T) {
 				"echo \"empty_upper: [${empty^^}]\"\n" +
 				"echo \"empty_lower: [${empty,,}]\"\n",
 		},
+		{
+			name: "complex positional parameter expansion",
+			src: "test_params() {\n" +
+				"    echo \"def:${1:-fallback}\"\n" +
+				"    echo \"len:${#1}\"\n" +
+				"    echo \"sub:${1:0:4}\"\n" +
+				"    echo \"rep:${1/foo/bar}\"\n" +
+				"}\n" +
+				"test_params \"foobaz\"\n" +
+				"test_params\n",
+		},
+		{
+			name: "process substitution in double quotes",
+			src: "file=\"<(printf 'psub_content\\n')\"\n" +
+				"cat $file\n",
+		},
+		{
+			name: "custom ifs multi delimiter with minus n",
+			src: "IFS=\" :,\"\n" +
+				"str=\"foo:bar -n,baz\"\n" +
+				"for x in $str; do\n" +
+				"    echo \"item:$x\"\n" +
+				"done\n",
+		},
+		{
+			name: "getopts in function with local opt",
+			src: "parse_opts() {\n" +
+				"    local opt\n" +
+				"    while getopts \"ab:\" opt; do\n" +
+				"        echo \"local_opt:$opt\"\n" +
+				"    done\n" +
+				"}\n" +
+				"parse_opts -a -b hello\n",
+		},
+		{
+			name: "shift 0 does not remove arguments",
+			src: "test_shift() {\n" +
+				"    shift 0\n" +
+				"    echo \"first:$1\"\n" +
+				"}\n" +
+				"test_shift keep_me\n",
+		},
+		{
+			name: "empty for in loop does not execute body",
+			src: "for x in; do\n" +
+				"    echo \"should not run $x\"\n" +
+				"done\n" +
+				"echo \"finished empty loop\"\n",
+		},
+		{
+			name: "user variable pipestatus collision",
+			src: "pipestatus=42\n" +
+				"echo \"pipestatus:$pipestatus\"\n" +
+				"true | false\n" +
+				"echo \"system_pipestatus:${PIPESTATUS[1]}\"\n",
+		},
+		{
+			name: "substring on empty variable does not hang",
+			src: "s=\"\"\n" +
+				"echo \"empty_sub:[${s:0:2}]\"\n",
+		},
 	}
 
 	for _, tc := range tests {
@@ -1562,7 +1623,7 @@ func TestTier2Ops(t *testing.T) {
 		{
 			"substring",
 			"echo ${s:2:3}\n",
-			"echo $(string sub --start=3 --length=3 -- $s)\n",
+			"echo $(string sub --start=3 --length=3 -- \"$s\")\n",
 		},
 		{
 			"replace bracket class",
@@ -1623,8 +1684,15 @@ func TestTier2Arrays(t *testing.T) {
 		{"open slice to end", "echo ${arr[@]:2}\n", "echo $arr[3..-1]\n"},
 		{"negative index unchanged", "echo ${arr[-1]}\n", "echo $arr[-1]\n"},
 		{"append element", "arr+=(tail)\n", "set --append arr tail\n"},
+		{"whole list star", "echo ${arr[*]}\n", "echo $arr\n"},
+		{
+			"quoted whole list star drops quotes",
+			"run \"${arr[*]}\"\n",
+			"run $arr\n",
+		},
+		{"list count star", "echo ${#arr[*]}\n", "echo $(count $arr)\n"},
+		{"list slice star", "echo ${arr[*]:1:2}\n", "echo $arr[2..3]\n"},
 	}
-
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got, warnings, err := Translate([]byte(tc.in))
@@ -1684,6 +1752,7 @@ func TestShiftBuiltin(t *testing.T) {
 		{"shift 1", "shift 1\n", "set --erase argv[1]\n"},
 		{"shift 2", "shift 2\n", "set --erase argv[1..2]\n"},
 		{"shift dynamic", "shift $n\n", "set --erase argv[1..$n]\n"},
+		{"shift 0 is no-op", "shift 0\n", ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
