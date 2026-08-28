@@ -92,6 +92,7 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 | `$0`, `$BASH_SOURCE[0]`, `$BASH_ARGV0` | `$(status filename)` | Current script path |
 | `$1`…`$N` | `$argv[1]`…`$argv[N]` | Positional arguments |
 | `"$@"`, `${arr[@]}` | `$argv`, `$arr` | Unquoted list (see [Documented Differences](#documented-differences)) |
+| `"$*"` | `"$argv"` | Space-joined single string |
 | `$*`, `${arr[*]}` | `$argv`, `$arr` | Unquoted list |
 | `$UID`, `$EUID` | `$(id -u)` | User ID |
 | `$GROUPS` | `$(id -g)` | Primary group ID |
@@ -100,7 +101,7 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 | `$OSTYPE` | `$(uname -s \| string lower)` | Operating system (lowercase) |
 | `$PIPESTATUS` | `$pipestatus` | Array of pipeline exit codes |
 | `$DIRSTACK` | `$dirstack` | Directory stack array |
-| `$RANDOM`, `$SRANDOM` | `$(random 0 32767)`, `$(random)` | Random numbers |
+| `$RANDOM`, `$SRANDOM` | `$(random)`, `$(random 0 4294967295)` | Random numbers (0–32767 and 32-bit unsigned 0–4294967295) |
 | `$EPOCHSECONDS` | `$(date +%s)` | Unix epoch timestamp |
 | `$BASH`, `$BASH_COMMAND`, `$FUNCNAME` | `$(status fish-path)`, `$(status current-command)`, `$(status current-function)` | Execution introspection |
 | `$IFS` | `$BAIT_IFS` | Internal IFS state for `__bait_words` field splitting |
@@ -112,7 +113,7 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 | Bash | Fish |
 |---|---|
 | `${var}` | `$var` (braces stripped) |
-| `${#var}` / `${#arr[@]}` | `$(string length -- $var)` / `$(count $arr)` |
+| `${#var}` / `${#arr[@]}` | `$(string length -- "$var")` / `$(count $arr)` | String length / array count (undefined variable evaluates to 0) |
 | `${v:-default}` | `$(test -n "$v" && printf '%s\n' "$v" \|\| printf '%s\n' default)` |
 | `${v-default}` | `$(set --query v && printf '%s\n' "$v" \|\| printf '%s\n' default)` |
 | `${v:+alternate}` | `$(test -n "$v" && printf '%s\n' alternate \|\| true)` |
@@ -122,6 +123,7 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 | `${s/pat/repl}`, `${s//pat/repl}` | `$(string replace --regex -- 'pat' 'repl' $s)`, `$(string replace --regex --all -- 'pat' 'repl' $s)` |
 | `${s:offset:length}`, `${s:offset}` | `$(string sub --start=(offset+1) --length=length -- $s)`, `$(string sub --start=(offset+1) -- $s)` |
 | `${arr[@]:1:2}`, `${arr[@]:1}` | `$arr[2..3]`, `$arr[2..-1]` (1-based slices) |
+| `${v^^}` / `${v,,}` | `$(string upper -- "$v")` / `$(string lower -- "$v")` | Uppercase / lowercase string conversion |
 
 ### Literal `$` Escaping
 
@@ -167,7 +169,7 @@ While `bait` strives for 100% behavioral equivalence, Fish semantics differ from
    - Subshells `( … )` become `begin … end` (both at statement level and nested inside command substitutions or pipelines). Fish has no subshell; variable and `cd` state persists after the block. Every occurrence is reported as a warning.
 2. **List Expansions & Quoting**:
    - In Bash, `"$@"` expands to separate quoted words, while `"$*"` expands to a single joined string.
-   - In Fish, quoting a list `"$argv"` joins all elements into a single space-separated string. Therefore, `"$@"` and `"${arr[@]}"` translate to unquoted `$argv` and `$arr` to preserve argument splitting.
+   - In Fish, quoting a list `"$argv"` joins all elements into a single space-separated string. Therefore, `"$@"` and `"${arr[@]}"` translate to unquoted `$argv` and `$arr` to preserve argument splitting, while `"$*"` translates to `"$argv"` to preserve single joined string semantics.
 3. **Command Substitution Splitting**:
    - Fish splits command substitutions `$(cmd)` on newlines only, not on spaces.
 4. **Globbing Behavior**:
@@ -186,7 +188,7 @@ The following constructs have no faithful Fish equivalent and are emitted verbat
 - Case fallthrough (`;&` and `;;&`)
 - Variable attributes (`readonly`, namerefs `declare -n`)
 - Unsupported parameter assignment/assertions (`${v:=def}`, `${v?=error}`)
-- Case modification operators (`${v^^}`, `${v,,}`)
+- Pattern-based case modification (`${v^^pattern}`, `${v,,pattern}`) and single-character case modification (`${v^}`, `${v,}`)
 - Bash-only builtins without Fish equivalents (`shopt`, `let`, `hash`, `unalias`, `caller`, `compgen`, `compopt`, `enable`, `fc`)
 - `set` shell option flags (`set -e`, `set -u`, `set -o ...`) and bare `set` / `set -` (dropped with warning)
 - Dynamic array indexing (`arr[$i]`) and non-integer substring/slice offsets

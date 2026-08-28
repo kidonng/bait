@@ -1827,7 +1827,7 @@ func (e *emitter) rewriteParams(f *syntax.File) {
 				}
 			}
 		case *syntax.Word:
-			if soleSpecialParam(node, "@", "*") {
+			if isBareSpecialParam(node, "@", "*") || isQuotedSpecialParam(node, "@") {
 				node.Parts = []syntax.WordPart{argvParam()}
 				return true
 			}
@@ -1917,9 +1917,9 @@ func (e *emitter) paramReplacements(pe *syntax.ParamExp) []syntax.WordPart {
 	case "OSTYPE":
 		return []syntax.WordPart{pipeSubstPart([]string{"uname", "-s"}, []string{"string", "lower"})}
 	case "RANDOM":
-		return []syntax.WordPart{substPart("random", "0", "32767")}
-	case "SRANDOM":
 		return []syntax.WordPart{substPart("random")}
+	case "SRANDOM":
+		return []syntax.WordPart{substPart("random", "0", "4294967295")}
 	case "EPOCHSECONDS":
 		return []syntax.WordPart{substPart("date", "+%s")}
 	case "-":
@@ -1980,6 +1980,18 @@ func substPart(args ...string) syntax.WordPart {
 	}
 	return &syntax.CmdSubst{Stmts: []*syntax.Stmt{{Cmd: call}}}
 }
+func stringUnarySubst(subcmd, name string) syntax.WordPart {
+	call := &syntax.CallExpr{
+		Args: []*syntax.Word{
+			litWord("string"),
+			litWord(subcmd),
+			litWord("--"),
+			dq(namedParam(name)),
+		},
+	}
+	return &syntax.CmdSubst{Stmts: []*syntax.Stmt{{Cmd: call}}}
+}
+
 
 // pipeSubstPart builds a $(cmd1 args... | cmd2 args...) command substitution word part.
 func pipeSubstPart(xArgs, yArgs []string) syntax.WordPart {
@@ -2016,21 +2028,24 @@ func statusDashPart() syntax.WordPart {
 	return &syntax.CmdSubst{Stmts: []*syntax.Stmt{{Cmd: bin2}}}
 }
 
-func soleSpecialParam(w *syntax.Word, names ...string) bool {
+func isBareSpecialParam(w *syntax.Word, names ...string) bool {
 	if len(w.Parts) != 1 {
 		return false
 	}
-	switch p := w.Parts[0].(type) {
-	case *syntax.ParamExp:
-		return matchesAnySpecial(p, names)
-	case *syntax.DblQuoted:
-		if len(p.Parts) != 1 {
-			return false
-		}
-		pe, ok := p.Parts[0].(*syntax.ParamExp)
-		return ok && matchesAnySpecial(pe, names)
+	pe, ok := w.Parts[0].(*syntax.ParamExp)
+	return ok && matchesAnySpecial(pe, names)
+}
+
+func isQuotedSpecialParam(w *syntax.Word, names ...string) bool {
+	if len(w.Parts) != 1 {
+		return false
 	}
-	return false
+	q, ok := w.Parts[0].(*syntax.DblQuoted)
+	if !ok || len(q.Parts) != 1 {
+		return false
+	}
+	pe, ok := q.Parts[0].(*syntax.ParamExp)
+	return ok && matchesAnySpecial(pe, names)
 }
 
 func matchesAnySpecial(pe *syntax.ParamExp, names []string) bool {
@@ -2309,7 +2324,7 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 		}
 
 	case pe.Length:
-		return []syntax.WordPart{substPart("string", "length", "--", "$"+name)}, true
+		return []syntax.WordPart{stringUnarySubst("length", name)}, true
 
 	case pe.Slice != nil:
 		start, ok := intLiteral(pe.Slice.Offset)
@@ -2399,6 +2414,20 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 			}
 		return []syntax.WordPart{substPart("string", "replace", "--regex", "--",
 			"'"+body+"'", "''", "$"+name)}, true
+		case syntax.UpperAll:
+			if exp.Word != nil {
+				e.warn(pe.Pos(), "case modification with pattern is not supported; left untranslated")
+				return nil, false
+			}
+			return []syntax.WordPart{stringUnarySubst("upper", name)}, true
+
+		case syntax.LowerAll:
+			if exp.Word != nil {
+				e.warn(pe.Pos(), "case modification with pattern is not supported; left untranslated")
+				return nil, false
+			}
+			return []syntax.WordPart{stringUnarySubst("lower", name)}, true
+
 		default:
 			e.warn(pe.Pos(), "parameter expansion %q has no fish equivalent; left untranslated",
 				exp.Op.String())

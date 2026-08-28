@@ -856,6 +856,41 @@ func TestBashFishEquivalence(t *testing.T) {
 				"export UNSET_VAR=\"${UNSET_VAR:-fallback}\"\n" +
 				"echo \"UNSET:$UNSET_VAR\"\n",
 		},
+		{
+			name: "undefined variable length is zero",
+			src: "unset undef_var\n" +
+				"echo \"len_undef: ${#undef_var}\"\n" +
+				"empty_var=\"\"\n" +
+				"echo \"len_empty: ${#empty_var}\"\n" +
+				"non_empty_var=\"hello world\"\n" +
+				"echo \"len_val: ${#non_empty_var}\"\n",
+		},
+		{
+			name: "quoted star vs quoted at",
+			src: "check_params() {\n" +
+				"    echo \"count: $#\"\n" +
+				"    echo \"first: $1\"\n" +
+				"}\n" +
+				"run_tests() {\n" +
+				"    echo \"--- quoted at ---\"\n" +
+				"    check_params \"$@\"\n" +
+				"    echo \"--- quoted star ---\"\n" +
+				"    check_params \"$*\"\n" +
+				"}\n" +
+				"run_tests \"first arg\" \"second arg\" \"third arg\"\n",
+		},
+		{
+			name: "case modification uppercase and lowercase",
+			src: "v=\"Hello, World! 123\"\n" +
+				"echo \"upper: ${v^^}\"\n" +
+				"echo \"lower: ${v,,}\"\n" +
+				"unset undef\n" +
+				"echo \"undef_upper: [${undef^^}]\"\n" +
+				"echo \"undef_lower: [${undef,,}]\"\n" +
+				"empty=\"\"\n" +
+				"echo \"empty_upper: [${empty^^}]\"\n" +
+				"echo \"empty_lower: [${empty,,}]\"\n",
+		},
 	}
 
 	for _, tc := range tests {
@@ -1053,6 +1088,8 @@ func TestTier2Warnings(t *testing.T) {
 		{"assert assignment", "cmd ${x:=d}\n", "no fish equivalent"},
 		{"dynamic array index in unset", "unset 'arr[$i]'\n", "dynamic array index"},
 		{"dynamic array index in test -v", "[[ -v arr[$i] ]]\n", "dynamic array index"},
+		{"case modification with pattern", "echo ${v^^[a-z]}\n", "case modification with pattern"},
+		{"single character case modification", "echo ${v^}\n", "no fish equivalent"},
 	}
 
 	for _, tc := range tests {
@@ -1103,12 +1140,27 @@ func TestTier2Params(t *testing.T) {
 			"run \"$@\"\n",
 			"run $argv\n",
 		},
+		{
+			"quoted star keeps quotes",
+			"run \"$*\"\n",
+			"run \"$argv\"\n",
+		},
+		{
+			"quoted star braced keeps quotes",
+			"run \"${*}\"\n",
+			"run \"$argv\"\n",
+		},
+		{
+			"quoted at braced drops quotes",
+			"run \"${@}\"\n",
+			"run $argv\n",
+		},
 		{"unquoted star becomes argv", "run $*\n", "run $argv\n"},
 		{"UID and EUID maps to id -u", "echo $UID $EUID ${UID}\n", "echo $(id -u) $(id -u) $(id -u)\n"},
 		{"GROUPS maps to id -g", "echo $GROUPS ${GROUPS[0]}\n", "echo $(id -g) $(id -g)\n"},
 		{"HOSTNAME maps to hostname", "echo \"host: $HOSTNAME ${HOSTNAME}\"\n", "echo \"host: $hostname $hostname\"\n"},
 		{"HOSTTYPE and MACHTYPE maps to uname -m", "echo $HOSTTYPE $MACHTYPE\n", "echo $(uname -m) $(uname -m)\n"},
-		{"RANDOM maps to random", "echo $RANDOM ${RANDOM}\n", "echo $(random 0 32767) $(random 0 32767)\n"},
+		{"RANDOM maps to random", "echo $RANDOM ${RANDOM}\n", "echo $(random) $(random)\n"},
 		{"BASH_SOURCE maps to status filename", "echo \"${BASH_SOURCE[0]}\" $BASH_SOURCE\n", "echo \"$(status filename)\" $(status filename)\n"},
 		{"FUNCNAME maps to status current-function", "echo \"$FUNCNAME\" \"${FUNCNAME[0]}\"\n", "echo \"$(status current-function)\" \"$(status current-function)\"\n"},
 		{"BASHPID maps to fish_pid", "echo $BASHPID\n", "echo $fish_pid\n"},
@@ -1140,7 +1192,7 @@ func TestTier2Params(t *testing.T) {
 		{
 			"EPOCHSECONDS and SRANDOM maps to date and random",
 			"echo $EPOCHSECONDS $SRANDOM\n",
-			"echo $(date +%s) $(random)\n",
+			"echo $(date +%s) $(random 0 4294967295)\n",
 		},
 	}
 
@@ -1291,7 +1343,9 @@ func TestTier2Ops(t *testing.T) {
 			"echo ${s:2:3}\n",
 			"echo $(string sub --start=3 --length=3 -- $s)\n",
 		},
-		{"length", "echo ${#s}\n", "echo $(string length -- $s)\n"},
+		{"length", "echo ${#s}\n", "echo $(string length -- \"$s\")\n"},
+		{"uppercase all", "echo ${v^^}\n", "echo $(string upper -- \"$v\")\n"},
+		{"lowercase all", "echo ${v,,}\n", "echo $(string lower -- \"$v\")\n"},
 	}
 
 	for _, tc := range tests {
