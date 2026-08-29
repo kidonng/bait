@@ -11,44 +11,14 @@ import (
 	"time"
 )
 
-//go:embed testdata/source/native.fish
-var sourceNativeScript []byte
+//go:embed testdata/source/file_source.fish
+var sourceFileScript []byte
 
-//go:embed testdata/source/bash_translation.fish
-var sourceBashTranslationScript []byte
+//go:embed testdata/source/pipeline.fish
+var sourcePipelineScript []byte
 
-//go:embed testdata/source/bash_return_code.fish
-var sourceBashReturnCodeScript []byte
-
-//go:embed testdata/source/pipeline_fish.fish
-var sourcePipelineFishScript []byte
-
-//go:embed testdata/source/pipeline_bash.fish
-var sourcePipelineBashScript []byte
-
-//go:embed testdata/source/pipeline_args.fish
-var sourcePipelineArgsScript []byte
-
-//go:embed testdata/source/double_dash.fish
-var sourceDoubleDashScript []byte
-
-//go:embed testdata/source/help.fish
-var sourceHelpScript []byte
-
-//go:embed testdata/source/nonexistent.fish
-var sourceNonexistentScript []byte
-
-//go:embed testdata/source/missing_bait.fish
-var sourceMissingBaitScript []byte
-
-//go:embed testdata/source/autoload_function_path.fish
-var sourceAutoloadFunctionPathScript []byte
-
-//go:embed testdata/source/dot.fish
-var sourceDotScript []byte
-
-//go:embed testdata/source/autoload_dot.fish
-var sourceAutoloadDotScript []byte
+//go:embed testdata/source/autoload.fish
+var sourceAutoloadScript []byte
 
 //go:embed testdata/source/no_fish_in_path.fish
 var sourceNoFishInPathScript []byte
@@ -96,57 +66,33 @@ func TestSourceFish(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancel)
 
-	t.Run("NativeFishScript", func(t *testing.T) {
-		_, stdout, stderr, err := runIsolatedFish(t, ctx, sourceNativeScript, envWithBait...)
+	t.Run("FileSource", func(t *testing.T) {
+		_, stdout, stderr, err := runIsolatedFish(t, ctx, sourceFileScript, envWithBait...)
 		if err != nil {
-			t.Fatalf("native fish script execution failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
+			t.Fatalf("file source execution failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
 		}
 	})
 
-	t.Run("BashScriptTranslation", func(t *testing.T) {
-		_, stdout, stderr, err := runIsolatedFish(t, ctx, sourceBashTranslationScript, envWithBait...)
+	t.Run("Pipeline", func(t *testing.T) {
+		_, stdout, stderr, err := runIsolatedFish(t, ctx, sourcePipelineScript, envWithBait...)
 		if err != nil {
-			t.Fatalf("bash script translation failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
+			t.Fatalf("pipeline execution failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
 		}
 	})
 
-	t.Run("BashScriptReturnCode", func(t *testing.T) {
-		_, stdout, stderr, err := runIsolatedFish(t, ctx, sourceBashReturnCodeScript, envWithBait...)
+	t.Run("Autoload", func(t *testing.T) {
+		_, stdout, stderr, err := runIsolatedFish(t, ctx, sourceAutoloadScript, envWithBait...)
 		if err != nil {
-			t.Fatalf("bash return code propagation failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
-		}
-	})
-
-	t.Run("PipelineFishScript", func(t *testing.T) {
-		_, stdout, stderr, err := runIsolatedFish(t, ctx, sourcePipelineFishScript, envWithBait...)
-		if err != nil {
-			t.Fatalf("pipeline fish script failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
-		}
-	})
-
-	t.Run("PipelineBashScript", func(t *testing.T) {
-		_, stdout, stderr, err := runIsolatedFish(t, ctx, sourcePipelineBashScript, envWithBait...)
-		if err != nil {
-			t.Fatalf("pipeline bash script failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
-		}
-	})
-
-	t.Run("PipelineWithArguments", func(t *testing.T) {
-		_, stdout, stderr, err := runIsolatedFish(t, ctx, sourcePipelineArgsScript, envWithBait...)
-		if err != nil {
-			t.Fatalf("pipeline with args failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
-		}
-	})
-
-	t.Run("DoubleDashFileArgument", func(t *testing.T) {
-		_, stdout, stderr, err := runIsolatedFish(t, ctx, sourceDoubleDashScript, envWithBait...)
-		if err != nil {
-			t.Fatalf("double dash file argument failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
+			t.Fatalf("autoload via fish_function_path failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
 		}
 	})
 
 	t.Run("HelpOption", func(t *testing.T) {
-		_, stdout, stderr, err := runIsolatedFish(t, ctx, sourceHelpScript, envWithBait...)
+		script := []byte(`
+source $SOURCE_FISH
+source -h
+`)
+		_, stdout, stderr, err := runIsolatedFish(t, ctx, script, envWithBait...)
 		if err != nil {
 			t.Fatalf("source -h failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
 		}
@@ -156,7 +102,11 @@ func TestSourceFish(t *testing.T) {
 	})
 
 	t.Run("NonExistentFile", func(t *testing.T) {
-		_, _, stderr, err := runIsolatedFish(t, ctx, sourceNonexistentScript, envWithBait...)
+		script := []byte(`
+source $SOURCE_FISH
+source /tmp/nonexistent_file_for_bait_test_12345
+`)
+		_, _, stderr, err := runIsolatedFish(t, ctx, script, envWithBait...)
 		if err == nil {
 			t.Fatalf("expected error sourcing non-existent file, got success")
 		}
@@ -166,7 +116,6 @@ func TestSourceFish(t *testing.T) {
 	})
 
 	t.Run("MissingBaitBinary", func(t *testing.T) {
-		// Provide a clean PATH with only system tools, excluding baitDir
 		var filteredPath []string
 		for _, p := range strings.Split(origPath, ":") {
 			if p != baitDir {
@@ -179,33 +128,23 @@ func TestSourceFish(t *testing.T) {
 			"FUNCTIONS_DIR=" + functionsDir,
 		}
 
-		_, stdout, stderr, err := runIsolatedFish(t, ctx, sourceMissingBaitScript, cleanEnv...)
+		script := []byte(`
+source $SOURCE_FISH
+
+set script_path (mktemp)
+echo 'VAR="should fail without bait"' >$script_path
+
+source $script_path
+set res $status
+rm -f $script_path
+exit $res
+`)
+		_, stdout, stderr, err := runIsolatedFish(t, ctx, script, cleanEnv...)
 		if err == nil {
 			t.Fatalf("expected error when bait is missing, got success")
 		}
 		if !strings.Contains(stderr, "'bait' is required to translate bash scripts") {
 			t.Fatalf("expected missing bait warning in stderr, got: %s\nstdout: %s", stderr, stdout)
-		}
-	})
-
-	t.Run("AutoloadViaFishFunctionPath", func(t *testing.T) {
-		_, stdout, stderr, err := runIsolatedFish(t, ctx, sourceAutoloadFunctionPathScript, envWithBait...)
-		if err != nil {
-			t.Fatalf("autoload via fish_function_path failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
-		}
-	})
-
-	t.Run("DotForwardingToSource", func(t *testing.T) {
-		_, stdout, stderr, err := runIsolatedFish(t, ctx, sourceDotScript, envWithBait...)
-		if err != nil {
-			t.Fatalf("dot forwarding to source failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
-		}
-	})
-
-	t.Run("AutoloadViaFishFunctionPathDot", func(t *testing.T) {
-		_, stdout, stderr, err := runIsolatedFish(t, ctx, sourceAutoloadDotScript, envWithBait...)
-		if err != nil {
-			t.Fatalf("autoload dot via fish_function_path failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
 		}
 	})
 

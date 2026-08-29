@@ -8,8 +8,10 @@ import (
 	"time"
 )
 
-//go:embed testdata/nvm/setup.fish
-var nvmSetupScript []byte
+const nvmSetupScript = `
+set --global --export NVM_DIR (pwd)/.nvm
+mkdir -p "$NVM_DIR"
+`
 
 //go:embed testdata/nvm/verify.fish
 var nvmVerifyScript []byte
@@ -30,8 +32,7 @@ func TestNVM(t *testing.T) {
 		t.Fatalf("translate failed: %v", err)
 	}
 
-	combinedScript := append([]byte{}, nvmSetupScript...)
-	combinedScript = append(combinedScript, fishScript...)
+	combinedScript := append([]byte(nvmSetupScript), fishScript...)
 	combinedScript = append(combinedScript, '\n')
 	combinedScript = append(combinedScript, nvmVerifyScript...)
 	_, stdout, stderr, err := runIsolatedFish(t, ctx, combinedScript)
