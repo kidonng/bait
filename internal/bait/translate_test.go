@@ -1094,7 +1094,10 @@ func TestBashFishEquivalence(t *testing.T) {
 			src: "if hash ls 2>/dev/null; then echo \"ls found\"; fi\n" +
 				"if hash nonexistent_binary_xyz_123 2>/dev/null; then echo \"found\"; else echo \"not found\"; fi\n" +
 				"hash ls 2>/dev/null && echo \"ls ok\"\n" +
-				"hash nonexistent_binary_xyz_123 2>/dev/null || echo \"fallback ok\"\n",
+				"hash nonexistent_binary_xyz_123 2>/dev/null || echo \"fallback ok\"\n" +
+				"hash -r 2>/dev/null && echo \"hash -r ok\"\n" +
+				"\\hash -r 2>/dev/null && echo \"backslash hash -r ok\"\n" +
+				"hash ls nonexistent_binary_xyz_123 2>/dev/null || echo \"mixed hash failed ok\"\n",
 		},
 		{
 			name: "unalias builtin command and pattern",

@@ -116,7 +116,7 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 | `set` (bare), `set -` | *(dropped with warning)* | Prints shell state / trace flags in Bash; dropped in Fish |
 | `set -e`, `set -u`, `set +x`, `set -o ...` | *(dropped with warning)* | Fish has no shell option flags |
 | `eval "..."` | `eval "..."` | Passthrough (emits warning: Fish `eval` executes Fish syntax; incompatible Bash syntax will fail at runtime) |
-| `hash cmd`, `hash cmd1 cmd2` | `hash cmd`, `hash cmd1 cmd2` | Supported via an on-demand pure-Fish runtime helper (`function hash; type --query $argv; end`) injected at script head |
+| `hash cmd`, `hash cmd1 cmd2`, `hash -r` | `hash cmd`, `hash cmd1 cmd2`, `hash -r` | Supported via an on-demand pure-Fish runtime helper (`function hash; ...; end`) handling flags like `-r` and command existence checks via `type --query` |
 | `unalias foo`, `unalias "$1"`, `unalias -a` | `unalias foo`, `unalias "$argv[1]"`, `unalias -a` | Supported via an on-demand pure-Fish runtime helper (`function unalias; ...; end`) erasing alias functions via `functions --erase` |
 
 ### Parameter Expansions & Special Variables

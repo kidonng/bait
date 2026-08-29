@@ -41,6 +41,9 @@ func TestNVM(t *testing.T) {
 	if strings.Contains(stderr, "Unknown command") {
 		t.Fatalf("nvm execution encountered unknown command:\n%s", stderr)
 	}
+	if strings.Contains(stderr, "unknown option") {
+		t.Fatalf("nvm execution encountered unknown option:\n%s", stderr)
+	}
 
 	t.Logf("nvm.sh successfully verified in sandbox:\n%s", strings.TrimSpace(stdout))
 }
