@@ -1,26 +1,31 @@
-# 🎣 BAIT: Another Incomplete Transpiler
+# 🎣 Bait: Almost Idiomatic Transpiler
 
-`bait` is a somewhat complete Bash-to-Fish shell script translator.
+Bait is a [Bash](https://www.gnu.org/software/bash/) to [fish](https://fishshell.com/) transpiler.
 
-This project is similar to the existing [babelfish](https://github.com/bouk/babelfish) project, which is also based on [mvdan/sh](https://github.com/mvdan/sh). However, bait translates bash scripts much better, in terms of supported features and output quality.
+This project is based on [mvdan/sh](https://github.com/mvdan/sh), similar to the existing [babelfish](https://github.com/bouk/babelfish) project. However, bait translates bash much better, both in quality and supported features.
 
-Bait passes through constructs as much as possible when modern fish shell features can be leveraged. Common bash snippets could come out barely changed after translation.
+Bait leverages modern fish features to produce clean, idiomatic output. Most common Bash snippets translate with only minimal changes.
 
-## Status
-
-> [!WARNING]
-> Running complex scripts translated by bait could result in undefined behavior.
-
-By definition™️, bait is never complete. Some bash features do not translate easily into fish.
-
-However, it can already translate [nvm](https://github.com/nvm-sh/nvm) and many prominent installers, allowing them to run natively in fish.
+Bait is experimental, but it can already translate [nvm](https://github.com/nvm-sh/nvm) and many prominent installers, allowing them to run natively in fish.
 
 ## Install
 
-- [Download latest GitHub release](https://github.com/kidonng/bait/releases/latest)
-- Run directly with [Nix](https://nixos.org/): `nix run github:kidonng/bait`
+- [GitHub](https://github.com/kidonng/bait/releases/latest)
+
+    ```sh
+    mkdir -p ~/.local/bin && curl --location "https://github.com/kidonng/bait/releases/latest/download/bait_$(uname -s)_$(uname -m).tar.gz" | tar -xz -C ~/.local/bin bait
+    ```
+
+- [Nix](https://nixos.org/)
+
+    ```sh
+    nix profile install github:kidonng/bait
+    ```
 
 ## Usage
+
+> [!WARNING]
+> Bait translation may produce unexpected result. Check output before serious usage.
 
 ```sh
 # Translate from stdin
@@ -29,7 +34,7 @@ echo 'VAR=hello; echo "$VAR"' | bait
 # Translate to stdout
 bait install.sh > install.fish
 
-# Suppress translation warnings on stderr
+# Suppress warnings on stderr
 bait --quiet install.sh > install.fish
 
 # Source your favorite script
@@ -37,13 +42,29 @@ bait < script.sh | source
 curl script.sh | bait | source
 ```
 
-Bind a shortcut to paste bash snippet as fish:
+Bind a shortcut to paste bash snippet into fish:
 
 ```sh
 bind ctrl-b 'commandline --insert (fish_clipboard_paste | bait)
 ```
 
-## Documentation
+### Plugin
 
-- **[Compatibility Guide](./COMPATIBILITY.md)**: Full reference for supported syntax, control flow, scoping rules, parameter expansions, integer arithmetic, runtime differences, and unsupported constructs.
-- **[Architecture & Developer Guidance](./AGENTS.md)**: Core design principles, uniform scoping philosophy, repository layout, and contributor workflows.
+Bait offers a fish plugin that enables bash scripts to be `source`d directly.
+
+Install via a plugin manager like [plug.fish](https://github.com/kidonng/plug.fish) or [fisher](https://github.com/jorgebucaran/fisher):
+
+```sh
+fisher install kidonng/bait
+```
+
+Or [load manually](functions/source.fish):
+
+```sh
+curl https://raw.githubusercontent.com/kidonng/bait/refs/heads/main/functions/source.fish --output-dir ~/.config/fish/functions
+```
+
+## Docs
+
+- [Compatibility Guide](COMPATIBILITY.md): reference for (un)supported features
+- [Developer Guide](AGENTS.md): architectural principles & developer workflows

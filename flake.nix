@@ -1,5 +1,5 @@
 {
-  description = "🎣 BAIT: Another Incomplete Transpiler";
+  description = "🎣 Bait: Almost Idiomatic Transpiler";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";

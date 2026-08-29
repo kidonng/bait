@@ -1,4 +1,4 @@
-# bait - Agent Guidance & Architecture
+# Developer Guide
 
 ## Overview
 
