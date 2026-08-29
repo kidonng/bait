@@ -34,7 +34,7 @@ echo 'VAR=hello; echo "$VAR"' | bait
 # Translate to stdout
 bait install.sh > install.fish
 
-# Suppress warnings on stderr
+# Suppress warnings on stderr (or BAIT_QUIET=1 env)
 bait --quiet install.sh > install.fish
 
 # Source your favorite script
