@@ -338,6 +338,8 @@ func (e *emitter) file(f *syntax.File) {
 		if c, ok := n.(*syntax.CallExpr); ok && len(c.Assigns) == 0 && len(c.Args) > 0 {
 			if isLitWord(c.Args[0], "hash") {
 				e.needHelper(helperHash)
+			} else if isLitWord(c.Args[0], "unalias") {
+				e.needHelper(helperUnalias)
 			}
 		}
 		return true
@@ -521,6 +523,8 @@ func (e *emitter) simple(s *syntax.Stmt) {
 				e.needHelper(helperGetopts)
 			} else if isLitWord(c.Args[0], "hash") {
 				e.needHelper(helperHash)
+			} else if isLitWord(c.Args[0], "unalias") {
+				e.needHelper(helperUnalias)
 			}
 		}
 		e.warnBashOnlyBuiltin(s, c)
@@ -583,7 +587,6 @@ func hasLeadingRedir(s *syntax.Stmt) bool {
 var bashOnlyBuiltins = map[string]string{
 	"let":     "use 'math' instead",
 	"shopt":   "fish has no shell options",
-	"unalias": "fish aliases are functions; use 'functions --erase' instead",
 	"caller":  "use 'status print-stack-trace' instead",
 	"compgen": "use 'complete' instead",
 	"compopt": "use 'complete' instead",
@@ -1281,6 +1284,8 @@ func (e *emitter) normalize(f *syntax.File) {
 					}
 				} else if isLitWord(x.Args[0], "hash") {
 					e.needHelper(helperHash)
+				} else if isLitWord(x.Args[0], "unalias") {
+					e.needHelper(helperUnalias)
 				}
 			}
 			if len(x.Args) > 0 && isLitWord(x.Args[0], "eval") && x.Args[0].Pos().Col() > 0 {

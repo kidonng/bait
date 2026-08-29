@@ -1096,6 +1096,17 @@ func TestBashFishEquivalence(t *testing.T) {
 				"hash ls 2>/dev/null && echo \"ls ok\"\n" +
 				"hash nonexistent_binary_xyz_123 2>/dev/null || echo \"fallback ok\"\n",
 		},
+		{
+			name: "unalias builtin command and pattern",
+			src: "check_unalias() {\n" +
+				"    unalias \"${1-}\" 2>/dev/null || true\n" +
+				"    echo \"cleared\"\n" +
+				"}\n" +
+				"check_unalias \"ls\"\n" +
+				"check_unalias \"\"\n" +
+				"unalias -a 2>/dev/null || true\n" +
+				"echo \"unalias done\"\n",
+		},
 	}
 
 	for _, tc := range tests {
@@ -2501,6 +2512,20 @@ func TestSubEmitterLocalsIsolation(t *testing.T) {
 	}
 	if !sub.funcLocals["parent_var"] {
 		t.Errorf("sub-emitter did not inherit parent funcLocals")
+	}
+}
+
+func TestUnaliasHelperEmitted(t *testing.T) {
+	in := `unalias foo 2>/dev/null || true`
+	out, warnings, err := Translate([]byte(in))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", warnings)
+	}
+	if !strings.Contains(string(out), "function unalias") {
+		t.Errorf("expected unalias helper to be emitted, got: %s", string(out))
 	}
 }
 

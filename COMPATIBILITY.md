@@ -39,7 +39,7 @@ The following constructs have no faithful Fish equivalent and are emitted verbat
 - **Variable Attributes**: `readonly`, namerefs (`declare -n`)
 - **Parameter Assertions**: `${v:=def}`, `${v?=error}`
 - **Case Modification**: Only pattern-based (`${v^^pattern}`, `${v,,pattern}`) or single-character (`${v^}`, `${v,}`) transformations are unsupported; full conversions (`${v^^}`, `${v,,}`) are supported via `string upper` / `string lower`
-- **Unsupported Builtins**: Bash-only builtins without Fish equivalents (`shopt`, `let`, `unalias`, `caller`, `compgen`, `compopt`, `enable`, `fc`)
+- **Unsupported Builtins**: Bash-only builtins without Fish equivalents (`shopt`, `let`, `caller`, `compgen`, `compopt`, `enable`, `fc`)
 - **Shell Options**: `set` option flags (`set -e`, `set -u`, `set -o ...`) and bare `set` / `set -` (dropped with warning)
 - **High File Descriptor Redirections**: Redirections to file descriptors above 2 (`3>`, `4>&1`, etc.) on blocks, functions, or builtins are unsupported in Fish (supported only for external commands). For paired high-FD patterns across subshells/command substitutions (such as `{ ... "$(cmd 3>&1 1>&4)"; } 4>&1`), `bait` eliminates the redundant outer block redirection and redirects internal high-FD streams to stderr (`1>&2`) to avoid `EBADF`.
 - **Background Function Execution**: Functions cannot be started in the background in Fish (`func &`)
@@ -117,6 +117,7 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 | `set -e`, `set -u`, `set +x`, `set -o ...` | *(dropped with warning)* | Fish has no shell option flags |
 | `eval "..."` | `eval "..."` | Passthrough (emits warning: Fish `eval` executes Fish syntax; incompatible Bash syntax will fail at runtime) |
 | `hash cmd`, `hash cmd1 cmd2` | `hash cmd`, `hash cmd1 cmd2` | Supported via an on-demand pure-Fish runtime helper (`function hash; type -q $argv; end`) injected at script head |
+| `unalias foo`, `unalias "$1"`, `unalias -a` | `unalias foo`, `unalias "$argv[1]"`, `unalias -a` | Supported via an on-demand pure-Fish runtime helper (`function unalias; ...; end`) erasing alias functions via `functions --erase` |
 
 ### Parameter Expansions & Special Variables
 

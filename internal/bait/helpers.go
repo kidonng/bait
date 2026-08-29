@@ -16,6 +16,9 @@ var baitGetoptsHelper string
 //go:embed helpers/hash.fish
 var baitHashHelper string
 
+//go:embed helpers/unalias.fish
+var baitUnaliasHelper string
+
 type helperKind int
 
 const (
@@ -23,6 +26,7 @@ const (
 	helperExec
 	helperGetopts
 	helperHash
+	helperUnalias
 	numHelpers
 )
 
@@ -36,6 +40,7 @@ var allHelpers = []helperInfo{
 	{kind: helperExec, code: baitExecHelper},
 	{kind: helperGetopts, code: baitGetoptsHelper},
 	{kind: helperHash, code: baitHashHelper},
+	{kind: helperUnalias, code: baitUnaliasHelper},
 }
 
 func (e *emitter) needHelper(h helperKind) {
