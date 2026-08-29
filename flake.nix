@@ -25,14 +25,20 @@
             go
           ];
           text = ''
-            if [ "$#" -eq 0 ]; then
-              echo "==> Running internal unit and equivalence tests..."
-              go test -v ./internal/bait ./cmd/bait
-              echo "==> Running e2e sandbox tests..."
-              go test -v ./e2e
-            else
-              go test -v "$@"
-            fi
+            exec fish ${./scripts/test.fish} "$@"
+          '';
+        };
+
+      fmtRunner = pkgs:
+        pkgs.writeShellApplication {
+          name = "bait-fmt";
+          runtimeInputs = with pkgs; [
+            fd
+            fish
+            go
+          ];
+          text = ''
+            exec fish ${./scripts/fmt.fish} "$@"
           '';
         };
     in
@@ -46,8 +52,33 @@
           vendorHash = "sha256-tCFu9E2pFBWBQFiRVvI16FNI3dE1bUKJlsEbvDAo7lo=";
         };
         test = testRunner pkgs;
+        fmt = fmtRunner pkgs;
         default = bait;
       });
+
+      checks = forAllSystems (pkgs: {
+        test = pkgs.buildGoModule {
+          pname = "bait-test";
+          version = "0.1.0";
+          src = ./.;
+          subPackages = [ "cmd/bait" ];
+          vendorHash = "sha256-tCFu9E2pFBWBQFiRVvI16FNI3dE1bUKJlsEbvDAo7lo=";
+          nativeCheckInputs = with pkgs; [
+            bash
+            fish
+            which
+          ];
+          checkPhase = ''
+            export HOME=$(mktemp -d)
+            fish ./scripts/test.fish ./internal/bait ./cmd/bait
+          '';
+          installPhase = ''
+            touch $out
+          '';
+        };
+      });
+
+      formatter = forAllSystems (pkgs: fmtRunner pkgs);
 
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
@@ -58,6 +89,7 @@
             go
             goreleaser
             (testRunner pkgs)
+            (fmtRunner pkgs)
           ];
         };
       });
