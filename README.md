@@ -61,7 +61,7 @@ fisher install kidonng/bait
 Or [load manually](functions/source.fish):
 
 ```sh
-curl https://raw.githubusercontent.com/kidonng/bait/refs/heads/main/functions/source.fish --output-dir ~/.config/fish/functions
+curl --remote-name https://raw.githubusercontent.com/kidonng/bait/refs/heads/main/functions/source.fish --output-dir ~/.config/fish/functions
 ```
 
 ## Docs
