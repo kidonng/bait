@@ -15,32 +15,28 @@ By definition™️, bait is never complete. Some bash features do not translate
 
 However, it can already translate [nvm](https://github.com/nvm-sh/nvm) and many prominent installers, allowing them to run natively in fish.
 
-## Quickstart
+## Install
 
-Run `bait` directly using [Nix](https://nixos.org/):
+- [Download latest GitHub release](https://github.com/kidonng/bait/releases/latest)
+- Run directly with [Nix](https://nixos.org/): `nix run github:kidonng/bait`
 
-```bash
+## Usage
+
+```sh
 # Translate from stdin
-echo 'VAR=hello; echo "$VAR"' | nix run github:kidonng/bait
+echo 'VAR=hello; echo "$VAR"' | bait
 
 # Translate a script to stdout
-nix run github:kidonng/bait -- install.sh > install.fish
+bait -- install.sh > install.fish
 
 # Suppress translation warnings on stderr
-nix run github:kidonng/bait -- --quiet install.sh > install.fish
+bait -- --quiet install.sh > install.fish
 ```
 
-Inside the cloned repository:
+Bind a shortcut to paste bash snippet as fish:
 
-```bash
-# Run local build
-nix run . -- script.sh
-
-# Run the full test suite (unit tests, differential equivalence, and e2e installer sandboxes)
-nix run .#test
-
-# Run tests for a specific package
-nix run .#test -- ./internal/bait
+```fish
+bind ctrl-b 'commandline --insert (fish_clipboard_paste | bait)
 ```
 
 ## Documentation
