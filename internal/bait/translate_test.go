@@ -1654,6 +1654,11 @@ func TestTier2Params(t *testing.T) {
 			"echo $(status current-command)\n",
 		},
 		{
+			"BASH_VERSION maps to echo 5.2.0",
+			"echo $BASH_VERSION \"${BASH_VERSION}\"\n",
+			"echo $(echo 5.2.0) \"$(echo 5.2.0)\"\n",
+		},
+		{
 			"DIRSTACK maps to dirstack",
 			"echo $DIRSTACK ${DIRSTACK[0]} ${DIRSTACK[@]} ${#DIRSTACK[@]}\n",
 			"echo $dirstack $dirstack[1] $dirstack $(count $dirstack)\n",

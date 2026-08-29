@@ -1022,6 +1022,7 @@ var bashContextVars = map[string][]string{
 	"BASH_SOURCE":  {"status", "filename"},
 	"BASH_ARGV0":   {"status", "filename"},
 	"BASH":         {"status", "fish-path"},
+	"BASH_VERSION": {"echo", "5.2.0"},
 	"BASH_COMMAND": {"status", "current-command"},
 	"FUNCNAME":     {"status", "current-function"},
 	"UID":          {"id", "-u"},
