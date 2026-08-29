@@ -3140,3 +3140,133 @@ func TestCaseWithBracketPatterns(t *testing.T) {
 		})
 	}
 }
+func TestCommentPreservation(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "single assignment comments",
+			in: "# before assign\n" +
+				"foo=bar # inline assign\n",
+			want: "# before assign\n" +
+				"set foo bar # inline assign\n",
+		},
+		{
+			name: "multi assignment comments",
+			in: "# before multi assign\n" +
+				"a=1 b=2 # trailing assign\n",
+			want: "# before multi assign\n" +
+				"set a 1\n" +
+				"set b 2 # trailing assign\n",
+		},
+		{
+			name: "export and local comments",
+			in: "# before export\n" +
+				"export FOO=1 # trailing export\n" +
+				"# before local\n" +
+				"local BAR=2 # trailing local\n",
+			want: "# before export\n" +
+				"export FOO=1 # trailing export\n" +
+				"# before local\n" +
+				"set --function BAR 2 # trailing local\n",
+		},
+		{
+			name: "function declaration comments",
+			in: "# before func\n" +
+				"myfunc() {\n" +
+				"    # inside func\n" +
+				"    echo 1 # inline echo\n" +
+				"} # trailing func\n",
+			want: "# before func\n" +
+				"function myfunc\n" +
+				"    # inside func\n" +
+				"    echo 1 # inline echo\n" +
+				"end # trailing func\n",
+		},
+		{
+			name: "if statement comments",
+			in: "# before if\n" +
+				"if true; then\n" +
+				"    # inside then\n" +
+				"    echo a\n" +
+				"fi # trailing fi\n",
+			want: "# before if\n" +
+				"if true\n" +
+				"    # inside then\n" +
+				"    echo a\n" +
+				"end # trailing fi\n",
+		},
+		{
+			name: "while loop comments",
+			in: "# before while\n" +
+				"while false; do\n" +
+				"    # inside while\n" +
+				"    echo b\n" +
+				"done # trailing while\n",
+			want: "# before while\n" +
+				"while false\n" +
+				"    # inside while\n" +
+				"    echo b\n" +
+				"end # trailing while\n",
+		},
+		{
+			name: "for loop header and trailing comments",
+			in: "# before for\n" +
+				"for x in 1 2; do # header for\n" +
+				"    echo $x\n" +
+				"done # trailing for\n",
+			want: "# before for\n" +
+				"for x in 1 2 # header for\n" +
+				"    echo $x\n" +
+				"end # trailing for\n",
+		},
+		{
+			name: "case statement comments",
+			in: "# before case\n" +
+				"case $x in\n" +
+				"    a)\n" +
+				"        echo match-a\n" +
+				"        ;;\n" +
+				"esac # trailing case\n",
+			want: "# before case\n" +
+				"switch $x\n" +
+				"case a\n" +
+				"    echo match-a\n" +
+				"end # trailing case\n",
+		},
+		{
+			name: "shift and unset comments",
+			in: "# before shift\n" +
+				"shift 2 # trailing shift\n" +
+				"# before unset\n" +
+				"unset myvar # trailing unset\n",
+			want: "# before shift\n" +
+				"set --erase argv[1..2] # trailing shift\n" +
+				"# before unset\n" +
+				"set --erase myvar # trailing unset\n",
+		},
+		{
+			name: "heredoc pipeline comments",
+			in: "# before hdoc\n" +
+				"cat <<EOF # trailing hdoc\n" +
+				"hello\n" +
+				"EOF\n",
+			want: "# before hdoc\n" +
+				"printf '%s\\n' \"hello\" | cat # trailing hdoc\n",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _, err := Translate([]byte(tc.in))
+			if err != nil {
+				t.Fatalf("Translate(%q) error: %v", tc.in, err)
+			}
+			if string(got) != tc.want {
+				t.Errorf("mismatch\n in:   %q\n got:  %q\n want: %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}

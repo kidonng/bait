@@ -270,6 +270,88 @@ var fishBuiltins = map[string]bool{
 func isFishBuiltin(name string) bool {
 	return fishBuiltins[name]
 }
+
+type stmtComments struct {
+	leading        []syntax.Comment
+	headerTrailing *syntax.Comment
+	trailing       []syntax.Comment
+}
+
+func classifyComments(s *syntax.Stmt) stmtComments {
+	var sc stmtComments
+	if s == nil || len(s.Comments) == 0 {
+		return sc
+	}
+	startLine := s.Pos().Line()
+	endLine := s.End().Line()
+	for _, c := range s.Comments {
+		cLine := c.Pos().Line()
+		switch {
+		case cLine < startLine:
+			sc.leading = append(sc.leading, c)
+		case startLine < endLine && cLine == startLine:
+			if sc.headerTrailing == nil {
+				cCopy := c
+				sc.headerTrailing = &cCopy
+			} else {
+				sc.trailing = append(sc.trailing, c)
+			}
+		default:
+			sc.trailing = append(sc.trailing, c)
+		}
+	}
+	return sc
+}
+
+func (e *emitter) leadingComments(comments []syntax.Comment) {
+	for _, c := range comments {
+		e.comment(c)
+	}
+}
+
+func trailingCommentSuffix(c syntax.Comment) string {
+	text := c.Text
+	if !strings.HasPrefix(text, "#") {
+		text = "#" + text
+	}
+	return " " + text
+}
+
+func (e *emitter) printLineWithTrailing(line string, trailing []syntax.Comment) {
+	if len(trailing) == 0 {
+		e.printf("%s", line)
+		return
+	}
+	e.printf("%s%s", line, trailingCommentSuffix(trailing[0]))
+	for _, c := range trailing[1:] {
+		e.comment(c)
+	}
+}
+
+func (e *emitter) printLinesWithTrailing(lines []string, trailing []syntax.Comment) {
+	if len(lines) == 0 {
+		for _, c := range trailing {
+			e.comment(c)
+		}
+		return
+	}
+	for i := range len(lines) - 1 {
+		e.printf("%s", lines[i])
+	}
+	e.printLineWithTrailing(lines[len(lines)-1], trailing)
+}
+
+func (e *emitter) printEnd(tail string, trailing []syntax.Comment) {
+	if len(trailing) == 0 {
+		e.printf("end%s", tail)
+		return
+	}
+	e.printf("end%s%s", tail, trailingCommentSuffix(trailing[0]))
+	for _, c := range trailing[1:] {
+		e.comment(c)
+	}
+}
+
 func (e *emitter) comment(c syntax.Comment) {
 	text := c.Text
 	if !strings.HasPrefix(text, "#") {
@@ -279,9 +361,7 @@ func (e *emitter) comment(c syntax.Comment) {
 }
 
 func (e *emitter) wrapperComments(s *syntax.Stmt) {
-	for _, c := range s.Comments {
-		e.comment(c)
-	}
+	e.leadingComments(classifyComments(s).leading)
 }
 
 // body emits a nested statement list, flushing comments that dangle
@@ -509,12 +589,14 @@ func (e *emitter) renderTestDashV(operand *syntax.Word, negated bool) string {
 func (e *emitter) simple(s *syntax.Stmt) {
 	if c, ok := s.Cmd.(*syntax.CallExpr); ok {
 		if operand, negated, ok := matchTestDashV(c); ok {
+			sc := classifyComments(s)
+			e.leadingComments(sc.leading)
 			line := e.renderTestDashV(operand, negated)
 			if s.Negated {
 				line = "! " + line
 			}
 			line += e.tails(s)
-			e.lines(line)
+			e.printLineWithTrailing(line, sc.trailing)
 			return
 		}
 		if len(c.Assigns) == 0 && len(c.Args) > 0 && isLitWord(c.Args[0], "shift") {
@@ -553,12 +635,14 @@ func (e *emitter) simple(s *syntax.Stmt) {
 				e.needHelper(helperExec)
 				e.needHelper(helperWords)
 				if hasLeadingRedir(s) || (e.inSubshell && hasHighFDTargetRedir(s.Redirs)) {
+					sc := classifyComments(s)
+					e.leadingComments(sc.leading)
 					line := e.render(s.Cmd)
 					if s.Negated {
 						line = "! " + line
 					}
 					line += e.tails(s)
-					e.lines("__bait_exec " + line)
+					e.printLineWithTrailing("__bait_exec "+line, sc.trailing)
 					return
 				}
 				e.lines("__bait_exec " + e.render(s))
@@ -566,12 +650,14 @@ func (e *emitter) simple(s *syntax.Stmt) {
 			}
 		}
 		if hasLeadingRedir(s) || (e.inSubshell && hasHighFDTargetRedir(s.Redirs)) {
+			sc := classifyComments(s)
+			e.leadingComments(sc.leading)
 			line := e.render(s.Cmd)
 			if s.Negated {
 				line = "! " + line
 			}
 			line += e.tails(s)
-			e.lines(line)
+			e.printLineWithTrailing(line, sc.trailing)
 			return
 		}
 	}
@@ -631,26 +717,30 @@ func (e *emitter) isSetBuiltin(c *syntax.CallExpr) bool {
 }
 
 func (e *emitter) shiftCmd(s *syntax.Stmt, c *syntax.CallExpr) {
+	sc := classifyComments(s)
+	e.leadingComments(sc.leading)
 	tail := e.tails(s)
 	if len(c.Args) <= 1 {
-		e.printf("set --erase argv[1]%s", tail)
+		e.printLineWithTrailing("set --erase argv[1]"+tail, sc.trailing)
 		return
 	}
 	arg := e.render(c.Args[1])
 	if n, err := strconv.Atoi(arg); err == nil {
 		switch {
 		case n <= 0:
-			e.printf("true%s", tail)
+			e.printLineWithTrailing("true"+tail, sc.trailing)
 		case n == 1:
-			e.printf("set --erase argv[1]%s", tail)
+			e.printLineWithTrailing("set --erase argv[1]"+tail, sc.trailing)
 		default:
-			e.printf("set --erase argv[1..%d]%s", n, tail)
+			e.printLineWithTrailing(fmt.Sprintf("set --erase argv[1..%d]%s", n, tail), sc.trailing)
 		}
 		return
 	}
-	e.printf("set --erase argv[1..%s]%s", arg, tail)
+	e.printLineWithTrailing(fmt.Sprintf("set --erase argv[1..%s]%s", arg, tail), sc.trailing)
 }
 func (e *emitter) unsetCmd(s *syntax.Stmt, c *syntax.CallExpr) {
+	sc := classifyComments(s)
+	e.leadingComments(sc.leading)
 	tail := e.tails(s)
 	isFunc := false
 	stopFlags := false
@@ -688,16 +778,18 @@ func (e *emitter) unsetCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 		}
 	}
 
+	var lines []string
 	for _, chunk := range chunks {
 		if len(chunk.names) == 0 {
 			continue
 		}
 		if chunk.isFunc {
-			e.printf("functions --erase %s%s", strings.Join(chunk.names, " "), tail)
+			lines = append(lines, fmt.Sprintf("functions --erase %s%s", strings.Join(chunk.names, " "), tail))
 		} else {
-			e.printf("set --erase %s%s", strings.Join(chunk.names, " "), tail)
+			lines = append(lines, fmt.Sprintf("set --erase %s%s", strings.Join(chunk.names, " "), tail))
 		}
 	}
+	e.printLinesWithTrailing(lines, sc.trailing)
 }
 
 func unquoteArg(arg string) string {
@@ -757,6 +849,8 @@ func (e *emitter) setCmd(s *syntax.Stmt, c *syntax.CallExpr) bool {
 // emitSimpleFish renders a simple command whose arguments or env-prefix
 // assignments contain structural command substitutions.
 func (e *emitter) emitSimpleFish(s *syntax.Stmt, c *syntax.CallExpr) {
+	sc := classifyComments(s)
+	e.leadingComments(sc.leading)
 	var parts []string
 	if s.Negated {
 		parts = append(parts, "!")
@@ -768,7 +862,7 @@ func (e *emitter) emitSimpleFish(s *syntax.Stmt, c *syntax.CallExpr) {
 		parts = append(parts, e.renderWordSmart(w))
 	}
 	line := strings.Join(parts, " ") + e.tails(s)
-	e.lines(line)
+	e.printLineWithTrailing(line, sc.trailing)
 }
 
 // inlineStmtText renders one statement through the translator into a
@@ -1400,12 +1494,15 @@ func (e *emitter) binary(s *syntax.Stmt) {
 		return
 	}
 	if hasStructural(bcmd.X) || hasStructural(bcmd.Y) {
-		e.printf("%s %s %s%s", e.chainSideText(bcmd.X), binOpText(bcmd.Op),
+		sc := classifyComments(s)
+		e.leadingComments(sc.leading)
+		line := fmt.Sprintf("%s %s %s%s", e.chainSideText(bcmd.X), binOpText(bcmd.Op),
 			e.chainSideText(bcmd.Y), e.tails(s))
+		e.printLineWithTrailing(line, sc.trailing)
 		return
 	}
 	if chainNeedsRewrite(bcmd) {
-		e.emitChain(bcmd)
+		e.emitChain(s, bcmd)
 		return
 	}
 	e.simple(s)
@@ -1447,7 +1544,9 @@ func chainNeedsRewrite(b *syntax.BinaryCmd) bool {
 
 // emitChain renders an &&/||/| chain leaf by leaf so that assignment
 // leaves can become set commands; plain command leaves stay verbatim.
-func (e *emitter) emitChain(b *syntax.BinaryCmd) {
+func (e *emitter) emitChain(s *syntax.Stmt, b *syntax.BinaryCmd) {
+	sc := classifyComments(s)
+	e.leadingComments(sc.leading)
 	var leaves []*syntax.Stmt
 	var ops []syntax.BinCmdOperator
 	var walk func(*syntax.BinaryCmd)
@@ -1472,7 +1571,7 @@ func (e *emitter) emitChain(b *syntax.BinaryCmd) {
 		}
 		parts = append(parts, e.chainLeaf(leaf))
 	}
-	e.lines(strings.Join(parts, " "))
+	e.printLineWithTrailing(strings.Join(parts, " "), sc.trailing)
 }
 
 func binOpText(op syntax.BinCmdOperator) string {
@@ -1585,8 +1684,9 @@ func hasStructural(s *syntax.Stmt) bool {
 }
 
 func (e *emitter) ifClause(s *syntax.Stmt, f *syntax.IfClause) {
+	sc := classifyComments(s)
+	e.leadingComments(sc.leading)
 	tail := e.tails(s)
-	e.wrapperComments(s)
 	e.printf("if %s", e.condText(f.Cond))
 
 	pending := f.Last
@@ -1608,19 +1708,20 @@ func (e *emitter) ifClause(s *syntax.Stmt, f *syntax.IfClause) {
 	for _, c := range pending {
 		e.comment(c)
 	}
-	e.printf("end%s", tail)
+	e.printEnd(tail, sc.trailing)
 }
 
 func (e *emitter) whileClause(s *syntax.Stmt, w *syntax.WhileClause) {
+	sc := classifyComments(s)
+	e.leadingComments(sc.leading)
 	tail := e.tails(s)
-	e.wrapperComments(s)
 	cond := e.condText(w.Cond)
 	if w.Until {
 		cond = "not " + cond
 	}
 	e.printf("while %s", cond)
 	e.body(w.Do, w.DoLast)
-	e.printf("end%s", tail)
+	e.printEnd(tail, sc.trailing)
 }
 
 func (e *emitter) forClause(s *syntax.Stmt, f *syntax.ForClause) {
@@ -1662,15 +1763,21 @@ func (e *emitter) forClause(s *syntax.Stmt, f *syntax.ForClause) {
 		items = []string{"(true)"}
 	}
 	tail := e.tails(s)
-	e.wrapperComments(s)
-	e.printf("for %s in %s", e.varName(iter.Name.Value), strings.Join(items, " "))
+	sc := classifyComments(s)
+	e.leadingComments(sc.leading)
+	headerSuffix := ""
+	if sc.headerTrailing != nil {
+		headerSuffix = trailingCommentSuffix(*sc.headerTrailing)
+	}
+	e.printf("for %s in %s%s", e.varName(iter.Name.Value), strings.Join(items, " "), headerSuffix)
 	e.body(f.Do, f.DoLast)
-	e.printf("end%s", tail)
+	e.printEnd(tail, sc.trailing)
 }
 
 func (e *emitter) caseClause(s *syntax.Stmt, cl *syntax.CaseClause) {
 	tail := e.tails(s)
-	e.wrapperComments(s)
+	sc := classifyComments(s)
+	e.leadingComments(sc.leading)
 	if pred, ifItem, elseItem, ok := evalInteractiveCase(cl); ok {
 		if elseItem == nil {
 			e.printf("if %s", pred)
@@ -1678,7 +1785,7 @@ func (e *emitter) caseClause(s *syntax.Stmt, cl *syntax.CaseClause) {
 			for _, c := range cl.Last {
 				e.comment(c)
 			}
-			e.printf("end%s", tail)
+			e.printEnd(tail, sc.trailing)
 			return
 		}
 		if len(ifItem.Stmts) == 0 && len(ifItem.Last) == 0 {
@@ -1687,7 +1794,7 @@ func (e *emitter) caseClause(s *syntax.Stmt, cl *syntax.CaseClause) {
 			for _, c := range cl.Last {
 				e.comment(c)
 			}
-			e.printf("end%s", tail)
+			e.printEnd(tail, sc.trailing)
 			return
 		}
 		e.printf("if %s", pred)
@@ -1699,11 +1806,11 @@ func (e *emitter) caseClause(s *syntax.Stmt, cl *syntax.CaseClause) {
 		for _, c := range cl.Last {
 			e.comment(c)
 		}
-		e.printf("end%s", tail)
+		e.printEnd(tail, sc.trailing)
 		return
 	}
 	if caseHasBracketClass(cl) {
-		e.caseClauseAsIf(s, cl, tail)
+		e.caseClauseAsIf(s, cl, tail, sc.trailing)
 		return
 	}
 	wTxt := e.render(cl.Word)
@@ -1729,10 +1836,10 @@ func (e *emitter) caseClause(s *syntax.Stmt, cl *syntax.CaseClause) {
 	for _, c := range cl.Last {
 		e.comment(c)
 	}
-	e.printf("end%s", tail)
+	e.printEnd(tail, sc.trailing)
 }
 
-func (e *emitter) caseClauseAsIf(s *syntax.Stmt, cl *syntax.CaseClause, tail string) {
+func (e *emitter) caseClauseAsIf(s *syntax.Stmt, cl *syntax.CaseClause, tail string, trailing []syntax.Comment) {
 	hasCmdSubst := false
 	syntax.Walk(cl.Word, func(n syntax.Node) bool {
 		if _, ok := n.(*syntax.CmdSubst); ok {
@@ -1774,7 +1881,7 @@ func (e *emitter) caseClauseAsIf(s *syntax.Stmt, cl *syntax.CaseClause, tail str
 	for _, c := range cl.Last {
 		e.comment(c)
 	}
-	e.printf("end%s", tail)
+	e.printEnd(tail, trailing)
 }
 
 func isCatchAll(w *syntax.Word) bool {
@@ -2089,14 +2196,17 @@ func (e *emitter) renderCasePattern(p *syntax.Word) string {
 }
 
 func (e *emitter) testClause(s *syntax.Stmt, tc *syntax.TestClause) {
+	sc := classifyComments(s)
+	e.leadingComments(sc.leading)
 	tail := e.tails(s)
-	e.wrapperComments(s)
 	res := e.renderTestExpr(tc.X)
+	var line string
 	if s.Negated {
-		e.printf("! %s%s", res, tail)
+		line = fmt.Sprintf("! %s%s", res, tail)
 	} else {
-		e.printf("%s%s", res, tail)
+		line = fmt.Sprintf("%s%s", res, tail)
 	}
+	e.printLineWithTrailing(line, sc.trailing)
 }
 
 func (e *emitter) renderTestExpr(expr syntax.TestExpr) string {
@@ -2258,6 +2368,8 @@ func casePatternString(p *syntax.Word) (string, bool) {
 }
 
 func (e *emitter) funcDecl(s *syntax.Stmt, fd *syntax.FuncDecl) {
+	sc := classifyComments(s)
+	e.leadingComments(sc.leading)
 	tail := e.tails(s)
 	if fd.Body != nil && len(fd.Body.Redirs) > 0 {
 		tail += e.tails(fd.Body)
@@ -2272,7 +2384,7 @@ func (e *emitter) funcDecl(s *syntax.Stmt, fd *syntax.FuncDecl) {
 			e.body(blk.Stmts, blk.Last)
 			e.inFunction = saved
 			e.funcLocals = savedLocals
-			e.printf("end%s", tail)
+			e.printEnd(tail, sc.trailing)
 			e.stmt(bcmd.Y)
 			return
 		}
@@ -2284,19 +2396,20 @@ func (e *emitter) funcDecl(s *syntax.Stmt, fd *syntax.FuncDecl) {
 	}
 	e.inFunction = saved
 	e.funcLocals = savedLocals
-	e.printf("end%s", tail)
+	e.printEnd(tail, sc.trailing)
 }
 
 func (e *emitter) group(s *syntax.Stmt, stmts []*syntax.Stmt, last []syntax.Comment) {
+	sc := classifyComments(s)
+	e.leadingComments(sc.leading)
 	tail := e.tails(s)
-	e.wrapperComments(s)
 	if s.Negated {
 		e.printf("! begin")
 	} else {
 		e.printf("begin")
 	}
 	e.body(stmts, last)
-	e.printf("end%s", tail)
+	e.printEnd(tail, sc.trailing)
 }
 
 func describe(cmd syntax.Command) string {
@@ -2334,6 +2447,7 @@ func (e *emitter) assignStmt(s *syntax.Stmt, c *syntax.CallExpr) {
 	if e.inFunction {
 		scope = "--global"
 	}
+	var lines []string
 	for _, a := range c.Assigns {
 		curScope := scope
 		if a.Name != nil {
@@ -2343,9 +2457,9 @@ func (e *emitter) assignStmt(s *syntax.Stmt, c *syntax.CallExpr) {
 		}
 		if a.Name != nil && e.commandPrefixVars[a.Name.Value] && isEmptyValue(a.Value) {
 			if curScope != "" {
-				e.printf("set %s %s", curScope, e.varName(a.Name.Value))
+				lines = append(lines, fmt.Sprintf("set %s %s", curScope, e.varName(a.Name.Value)))
 			} else {
-				e.printf("set %s", e.varName(a.Name.Value))
+				lines = append(lines, fmt.Sprintf("set %s", e.varName(a.Name.Value)))
 			}
 			continue
 		}
@@ -2361,8 +2475,8 @@ func (e *emitter) assignStmt(s *syntax.Stmt, c *syntax.CallExpr) {
 				e.lines(e.render(s))
 				return
 			}
-			e.printf("set %s--append %s%s", scopePrefix(curScope), e.varName(a.Name.Value),
-				e.arrayElemArgs(a.Array))
+			lines = append(lines, fmt.Sprintf("set %s--append %s%s", scopePrefix(curScope), e.varName(a.Name.Value),
+				e.arrayElemArgs(a.Array)))
 
 		case a.Index != nil:
 			tok, ok := e.arrayIndex(a.Index)
@@ -2371,17 +2485,20 @@ func (e *emitter) assignStmt(s *syntax.Stmt, c *syntax.CallExpr) {
 				e.lines(e.render(s))
 				return
 			}
-			e.printf("set %s%s[%s] %s", scopePrefix(curScope), e.varName(a.Name.Value), tok,
-				e.assignValue(a))
+			lines = append(lines, fmt.Sprintf("set %s%s[%s] %s", scopePrefix(curScope), e.varName(a.Name.Value), tok,
+				e.assignValue(a)))
 
 		case a.Array != nil:
-			e.printf("set %s%s%s", scopePrefix(curScope), e.varName(a.Name.Value),
-				e.arrayElemArgs(a.Array))
+			lines = append(lines, fmt.Sprintf("set %s%s%s", scopePrefix(curScope), e.varName(a.Name.Value),
+				e.arrayElemArgs(a.Array)))
 
 		default:
-			e.setLine(curScope, e.varName(a.Name.Value), e.assignValue(a))
+			lines = append(lines, setLineText(curScope, e.varName(a.Name.Value), e.assignValue(a)))
 		}
 	}
+	sc := classifyComments(s)
+	e.leadingComments(sc.leading)
+	e.printLinesWithTrailing(lines, sc.trailing)
 }
 
 func isEmptyValue(w *syntax.Word) bool {
@@ -2543,10 +2660,12 @@ func (e *emitter) declClause(s *syntax.Stmt, d *syntax.DeclClause) {
 				args = append(args, fmt.Sprintf("%s=%s", e.varName(a.Name.Value), val))
 			}
 		}
+		sc := classifyComments(s)
+		e.leadingComments(sc.leading)
 		if len(args) == 0 {
-			e.printf("export")
+			e.printLineWithTrailing("export", sc.trailing)
 		} else {
-			e.printf("export %s", strings.Join(args, " "))
+			e.printLineWithTrailing(fmt.Sprintf("export %s", strings.Join(args, " ")), sc.trailing)
 		}
 		return
 	}
@@ -2572,6 +2691,7 @@ func (e *emitter) declClause(s *syntax.Stmt, d *syntax.DeclClause) {
 		e.printf("%s", e.render(s))
 		return
 	}
+	var lines []string
 	for _, a := range d.Args {
 		if e.isOptionArg(a) {
 			continue
@@ -2585,15 +2705,18 @@ func (e *emitter) declClause(s *syntax.Stmt, d *syntax.DeclClause) {
 			}
 			if e.commandPrefixVars[a.Name.Value] && isEmptyValue(a.Value) {
 				if scope != "" {
-					e.printf("set %s %s", scope, e.varName(a.Name.Value))
+					lines = append(lines, fmt.Sprintf("set %s %s", scope, e.varName(a.Name.Value)))
 				} else {
-					e.printf("set %s", e.varName(a.Name.Value))
+					lines = append(lines, fmt.Sprintf("set %s", e.varName(a.Name.Value)))
 				}
 				continue
 			}
-			e.setLine(scope, e.varName(a.Name.Value), e.assignValue(a))
+			lines = append(lines, setLineText(scope, e.varName(a.Name.Value), e.assignValue(a)))
 		}
 	}
+	sc := classifyComments(s)
+	e.leadingComments(sc.leading)
+	e.printLinesWithTrailing(lines, sc.trailing)
 }
 
 func (e *emitter) hasGlobalFlag(args []*syntax.Assign) bool {
@@ -2640,6 +2763,13 @@ func (e *emitter) argText(a *syntax.Assign) string {
 		return a.Name.Value
 	}
 	return e.render(a.Value)
+}
+
+func setLineText(scope, name, value string) string {
+	if scope != "" {
+		return fmt.Sprintf("set %s %s %s", scope, name, value)
+	}
+	return fmt.Sprintf("set %s %s", name, value)
 }
 
 // setLine emits one set command; generated fish always uses long options.
@@ -3725,6 +3855,10 @@ func (e *emitter) emitHdoc(s *syntax.Stmt, hdoc *syntax.Redirect, rest []*syntax
 			break
 		}
 	}
+	sc := classifyComments(s)
+	e.leadingComments(sc.leading)
+	origComments := s.Comments
+	s.Comments = nil
 	origRedirs := s.Redirs
 	s.Redirs = rest
 	var cmdText string
@@ -3734,7 +3868,7 @@ func (e *emitter) emitHdoc(s *syntax.Stmt, hdoc *syntax.Redirect, rest []*syntax
 		cmdText = e.render(s)
 	}
 	s.Redirs = origRedirs
-
+	s.Comments = origComments
 	var prefix string
 	if hdoc.Op == syntax.WordHdoc {
 		wordText := e.render(hdoc.Word)
@@ -3754,14 +3888,19 @@ func (e *emitter) emitHdoc(s *syntax.Stmt, hdoc *syntax.Redirect, rest []*syntax
 		}
 	}
 
+	trailing := sc.trailing
+	if sc.headerTrailing != nil {
+		trailing = append([]syntax.Comment{*sc.headerTrailing}, trailing...)
+	}
 	if strings.Contains(cmdText, "\n") {
 		lines := strings.Split(cmdText, "\n")
 		e.printf("%s | %s", prefix, lines[0])
-		for _, l := range lines[1:] {
+		for _, l := range lines[1 : len(lines)-1] {
 			e.printf("%s", l)
 		}
+		e.printLineWithTrailing(lines[len(lines)-1], trailing)
 	} else {
-		e.printf("%s | %s", prefix, cmdText)
+		e.printLineWithTrailing(fmt.Sprintf("%s | %s", prefix, cmdText), trailing)
 	}
 }
 
