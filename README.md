@@ -1,5 +1,9 @@
 # 🎣 Bait: Almost Idiomatic Transpiler
 
+<table>
+<tr>
+<td width="50%" valign="top">
+
 Bait is a [Bash](https://www.gnu.org/software/bash/) to [fish](https://fishshell.com/) transpiler.
 
 This project is based on [mvdan/sh](https://github.com/mvdan/sh), similar to the existing [babelfish](https://github.com/bouk/babelfish) project. However, bait translates bash much better, both in quality and supported features.
@@ -7,6 +11,15 @@ This project is based on [mvdan/sh](https://github.com/mvdan/sh), similar to the
 Bait leverages modern fish features to produce clean, idiomatic output. Most common Bash snippets translate with only minimal changes.
 
 Bait is experimental, but it can already translate [nvm](https://github.com/nvm-sh/nvm) and many prominent installers, allowing them to run natively in fish.
+
+</td>
+<td width="50%" valign="top">
+
+https://github.com/user-attachments/assets/d23f56dc-42a6-425b-9de0-432306c8ec47
+
+</td>
+</tr>
+</table>
 
 ## Install
 
