@@ -1110,6 +1110,14 @@ func TestBashFishEquivalence(t *testing.T) {
 				"unalias -a 2>/dev/null || true\n" +
 				"echo \"unalias done\"\n",
 		},
+		{
+			name: "source and dot builtin commands",
+			files: map[string]string{
+				"sub.sh": "echo sourced_ok\n",
+			},
+			src: "source ./sub.sh\n" +
+				". ./sub.sh\n",
+		},
 	}
 
 	for _, tc := range tests {
@@ -2404,7 +2412,7 @@ func TestProcSubst(t *testing.T) {
 		{
 			"source from process substitution",
 			"source <(curl -fsSL https://example.com/install.sh)\n",
-			"source (curl -fsSL https://example.com/install.sh | psub)\n",
+			baitSourceHelper + "\nsource (curl -fsSL https://example.com/install.sh | psub)\n",
 		},
 		{
 			"process substitution with variable expansion",
@@ -2534,6 +2542,85 @@ func TestUnaliasHelperEmitted(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "function unalias") {
 		t.Errorf("expected unalias helper to be emitted, got: %s", string(out))
+	}
+}
+
+func TestSourceHelperEmitted(t *testing.T) {
+	in := `source ./sub.sh`
+	out, warnings, err := Translate([]byte(in))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", warnings)
+	}
+	outStr := string(out)
+	if !strings.Contains(outStr, "function source") {
+		t.Errorf("expected source helper to be emitted, got: %s", outStr)
+	}
+	if strings.Contains(outStr, "function .") {
+		t.Errorf("did not expect dot helper to be emitted when only source is used, got: %s", outStr)
+	}
+}
+
+func TestDotHelperEmitted(t *testing.T) {
+	in := `. ./sub.sh`
+	out, warnings, err := Translate([]byte(in))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", warnings)
+	}
+	outStr := string(out)
+	if !strings.Contains(outStr, "function source") {
+		t.Errorf("expected source helper to be emitted for dot command, got: %s", outStr)
+	}
+	if !strings.Contains(outStr, "function .") {
+		t.Errorf("expected dot helper to be emitted, got: %s", outStr)
+	}
+	srcIdx := strings.Index(outStr, "function source")
+	dotIdx := strings.Index(outStr, "function .")
+	if srcIdx > dotIdx {
+		t.Errorf("expected function source to be defined before function ., got srcIdx=%d, dotIdx=%d", srcIdx, dotIdx)
+	}
+}
+
+func TestHelperAPI(t *testing.T) {
+	tests := []struct {
+		name     string
+		contains string
+	}{
+		{"source", "function source"},
+		{".", "function ."},
+		{"getopts", "function getopts"},
+		{"hash", "function hash"},
+		{"unalias", "function unalias"},
+		{"__bait_words", "function __bait_words"},
+		{"__bait_exec", "function __bait_exec"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			content, err := Helper(tc.name)
+			if err != nil {
+				t.Fatalf("Helper(%q) returned unexpected error: %v", tc.name, err)
+			}
+			if !strings.Contains(content, tc.contains) {
+				t.Errorf("Helper(%q) does not contain %q; got: %s", tc.name, tc.contains, content)
+			}
+		})
+	}
+
+	for _, invalid := range []string{"source.fish", "..fish", "getopts.fish", "words", "exec", "nonexistent"} {
+		if _, err := Helper(invalid); err == nil {
+			t.Errorf("expected error for Helper(%q), got nil", invalid)
+		}
+	}
+
+	helpers := Helpers()
+	if len(helpers) == 0 {
+		t.Errorf("expected non-empty Helpers list")
 	}
 }
 

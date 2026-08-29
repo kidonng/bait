@@ -118,6 +118,7 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 | `eval "..."` | `eval "..."` | Passthrough (emits warning: Fish `eval` executes Fish syntax; incompatible Bash syntax will fail at runtime) |
 | `hash cmd`, `hash cmd1 cmd2`, `hash -r` | `hash cmd`, `hash cmd1 cmd2`, `hash -r` | Supported via an on-demand pure-Fish runtime helper (`function hash; ...; end`) handling flags like `-r` and command existence checks via `type --query` |
 | `unalias foo`, `unalias "$1"`, `unalias -a` | `unalias foo`, `unalias "$argv[1]"`, `unalias -a` | Supported via an on-demand pure-Fish runtime helper (`function unalias; ...; end`) erasing alias functions via `functions --erase` |
+| `source file.sh`, `. file.sh` | `source file.sh`, `. file.sh` | Supported via an on-demand pure-Fish runtime helper (`source` / `.`) transparently translating Bash scripts via `bait` on-the-fly and evaluating them in the caller's scope |
 
 ### Parameter Expansions & Special Variables
 
@@ -203,3 +204,12 @@ When scripts use POSIX constructs that Fish does not provide natively, `bait` in
 3. **`__bait_exec` dynamic commands**:
    - Injected for dynamic command string execution (`$cmd arg` $\to$ `__bait_exec $cmd arg`).
    - Recursively dispatches dynamically split command words while strictly preserving positional boundaries; optional prefixes (e.g. `sudo=""`) are normalized to native Fish empty lists during translation; recognizes and dispatches `command` and `builtin` prefixes natively.
+4. **`hash` command hashing**:
+   - Injected when scripts call `hash`.
+   - Handles `-r` and checks command availability via `type --query`.
+5. **`unalias` alias erasure**:
+   - Injected when scripts call `unalias`.
+   - Erases alias functions via `functions --erase`.
+6. **`source` and `.` transparent script translation**:
+   - Injected when scripts call `source` or `.`.
+   - Transparently validates script syntax with Fish, translates Bash scripts on-the-fly via `bait`, and evaluates them in the caller's scope without scope shadowing. Can also be printed for interactive Fish configurations via `bait helper source` and `bait helper .`.

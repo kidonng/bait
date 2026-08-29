@@ -335,11 +335,15 @@ func (e *emitter) file(f *syntax.File) {
 		if fd, ok := n.(*syntax.FuncDecl); ok && fd.Name != nil {
 			e.knownFuncs[fd.Name.Value] = true
 		}
-		if c, ok := n.(*syntax.CallExpr); ok && len(c.Assigns) == 0 && len(c.Args) > 0 {
+		if c, ok := n.(*syntax.CallExpr); ok && len(c.Args) > 0 {
 			if isLitWord(c.Args[0], "hash") {
 				e.needHelper(helperHash)
 			} else if isLitWord(c.Args[0], "unalias") {
 				e.needHelper(helperUnalias)
+			} else if isLitWord(c.Args[0], "source") {
+				e.needHelper(helperSource)
+			} else if isLitWord(c.Args[0], ".") {
+				e.needHelper(helperDot)
 			}
 		}
 		return true
@@ -518,13 +522,17 @@ func (e *emitter) simple(s *syntax.Stmt) {
 			e.unsetCmd(s, c)
 			return
 		}
-		if len(c.Assigns) == 0 && len(c.Args) > 0 {
+		if len(c.Args) > 0 {
 			if isLitWord(c.Args[0], "getopts") {
 				e.needHelper(helperGetopts)
 			} else if isLitWord(c.Args[0], "hash") {
 				e.needHelper(helperHash)
 			} else if isLitWord(c.Args[0], "unalias") {
 				e.needHelper(helperUnalias)
+			} else if isLitWord(c.Args[0], "source") {
+				e.needHelper(helperSource)
+			} else if isLitWord(c.Args[0], ".") {
+				e.needHelper(helperDot)
 			}
 		}
 		e.warnBashOnlyBuiltin(s, c)
@@ -1278,7 +1286,7 @@ func (e *emitter) normalize(f *syntax.File) {
 		switch x := n.(type) {
 		case *syntax.CallExpr:
 			normalizeCommandName(x)
-			if len(x.Assigns) == 0 && len(x.Args) > 0 {
+			if len(x.Args) > 0 {
 				if isLitWord(x.Args[0], "getopts") {
 					e.needHelper(helperGetopts)
 					if len(x.Args) == 3 {
@@ -1288,6 +1296,10 @@ func (e *emitter) normalize(f *syntax.File) {
 					e.needHelper(helperHash)
 				} else if isLitWord(x.Args[0], "unalias") {
 					e.needHelper(helperUnalias)
+				} else if isLitWord(x.Args[0], "source") {
+					e.needHelper(helperSource)
+				} else if isLitWord(x.Args[0], ".") {
+					e.needHelper(helperDot)
 				}
 			}
 			if len(x.Args) > 0 && isLitWord(x.Args[0], "eval") && x.Args[0].Pos().Col() > 0 {

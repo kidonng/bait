@@ -67,12 +67,12 @@ func buildBaitBinary(t *testing.T) string {
 
 func getSourceFishPath(t *testing.T) string {
 	t.Helper()
-	absPath, err := filepath.Abs("../functions/source.fish")
+	absPath, err := filepath.Abs("../internal/bait/helpers/source.fish")
 	if err != nil {
 		t.Fatalf("failed to get absolute path of source.fish: %v", err)
 	}
 	if _, err := os.Stat(absPath); err != nil {
-		t.Fatalf("functions/source.fish does not exist at %s: %v", absPath, err)
+		t.Fatalf("internal/bait/helpers/source.fish does not exist at %s: %v", absPath, err)
 	}
 	return absPath
 }

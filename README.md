@@ -48,20 +48,11 @@ Bind a shortcut to paste bash snippet into fish:
 bind ctrl-b 'commandline --insert (fish_clipboard_paste | bait)
 ```
 
-### Plugin
-
-Bait offers a fish plugin that enables bash scripts to be `source`d directly.
-
-Install via a plugin manager like [plug.fish](https://github.com/kidonng/plug.fish) or [fisher](https://github.com/jorgebucaran/fisher):
+Load helpers to directly `source` bash scripts:
 
 ```sh
-fisher install kidonng/bait
-```
-
-Or [load manually](functions/source.fish):
-
-```sh
-curl --remote-name https://raw.githubusercontent.com/kidonng/bait/refs/heads/main/functions/source.fish --output-dir ~/.config/fish/functions
+bait helper source > ~/.config/fish/functions/source.fish
+bait helper . > ~/.config/fish/functions/..fish
 ```
 
 ## Docs

@@ -1,14 +1,3 @@
-# source.fish - Enhanced source function with transparent Bash script translation via bait.
-#
-# Load this file in your fish configuration (e.g. in config.fish or conf.d/):
-#   source /path/to/bait/functions/source.fish
-# Or add the functions directory to $fish_function_path:
-#   set --unexport --prepend fish_function_path /path/to/bait/functions
-#
-# Behavior:
-#   - If the script is recognized as valid fish syntax (fish --no-execute), native source is used.
-#   - Otherwise, the script is translated on-the-fly with bait and evaluated in the caller's scope.
-
 function source --no-scope-shadowing --description "Evaluate contents of file, translating with bait if necessary"
     # Pass through help flags to builtin source
     if test (count $argv) -ge 1
@@ -93,8 +82,4 @@ function source --no-scope-shadowing --description "Evaluate contents of file, t
             return $__bait_ps[2]
         end
     end
-end
-
-function . --no-scope-shadowing --wraps source --description "Evaluate contents of file, forwarding to source"
-    source $argv
 end

@@ -219,3 +219,97 @@ func TestQuietEnv(t *testing.T) {
 		}
 	})
 }
+
+func TestHelperCommand(t *testing.T) {
+	tests := []struct {
+		name     string
+		args     []string
+		contains string
+	}{
+		{"source", []string{"helper", "source"}, "function source"},
+		{"dot", []string{"helper", "."}, "function ."},
+		{"getopts", []string{"helper", "getopts"}, "function getopts"},
+		{"hash", []string{"helper", "hash"}, "function hash"},
+		{"unalias", []string{"helper", "unalias"}, "function unalias"},
+		{"words", []string{"helper", "__bait_words"}, "function __bait_words"},
+		{"exec", []string{"helper", "__bait_exec"}, "function __bait_exec"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			exitCode := run(tc.args, strings.NewReader(""), &stdout, &stderr)
+			if exitCode != 0 {
+				t.Fatalf("expected exit code 0, got %d (stderr: %s)", exitCode, stderr.String())
+			}
+			if !strings.Contains(stdout.String(), tc.contains) {
+				t.Errorf("expected stdout to contain %q, got: %s", tc.contains, stdout.String())
+			}
+		})
+	}
+}
+
+func TestHelperMissingName(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{"helper"}, strings.NewReader(""), &stdout, &stderr)
+	if exitCode != 2 {
+		t.Fatalf("expected exit code 2, got %d", exitCode)
+	}
+	if !strings.Contains(stderr.String(), "error: missing helper name") {
+		t.Errorf("expected stderr to contain 'error: missing helper name', got: %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "Usage:") {
+		t.Errorf("expected stderr to contain usage, got: %q", stderr.String())
+	}
+}
+
+func TestHelperTooManyArguments(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{"helper", "source", "extra"}, strings.NewReader(""), &stdout, &stderr)
+	if exitCode != 2 {
+		t.Fatalf("expected exit code 2, got %d", exitCode)
+	}
+	if !strings.Contains(stderr.String(), "error: too many arguments for helper command") {
+		t.Errorf("expected stderr to contain 'error: too many arguments for helper command', got: %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "Usage:") {
+		t.Errorf("expected stderr to contain usage, got: %q", stderr.String())
+	}
+}
+
+func TestHelperUnknown(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{"helper", "nonexistent_helper"}, strings.NewReader(""), &stdout, &stderr)
+	if exitCode != 1 {
+		t.Fatalf("expected exit code 1, got %d", exitCode)
+	}
+	if !strings.Contains(stderr.String(), `error: unknown helper "nonexistent_helper"`) {
+		t.Errorf("expected stderr to contain unknown helper error, got: %q", stderr.String())
+	}
+}
+
+func TestHelperHelp(t *testing.T) {
+	for _, flag := range []string{"--help", "-h"} {
+		t.Run(flag, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			exitCode := run([]string{"helper", flag}, strings.NewReader(""), &stdout, &stderr)
+			if exitCode != 0 {
+				t.Fatalf("expected exit code 0, got %d", exitCode)
+			}
+			if !strings.Contains(stdout.String(), "Usage:") {
+				t.Errorf("expected stdout to contain 'Usage:', got %q", stdout.String())
+			}
+			if !strings.Contains(stdout.String(), "helper <name>") {
+				t.Errorf("expected stdout to contain 'helper <name>', got %q", stdout.String())
+			}
+			if !strings.Contains(stdout.String(), "Available helpers:") {
+				t.Errorf("expected stdout to contain 'Available helpers:', got %q", stdout.String())
+			}
+			for _, h := range []string{"source", ".", "getopts", "hash", "unalias", "__bait_words", "__bait_exec"} {
+				if !strings.Contains(stdout.String(), h) {
+					t.Errorf("expected stdout to contain helper %q, got %q", h, stdout.String())
+				}
+			}
+		})
+	}
+}

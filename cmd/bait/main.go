@@ -29,9 +29,13 @@ const usageText = `bait translates bash scripts into fish scripts.
 
 Usage:
   bait [options] [file]
+  bait helper <name>
 
 With no file argument, bait reads from stdin and writes the fish
 translation to stdout.
+
+Commands:
+  helper <name>  print the content of a runtime helper
 
 Options:
   -q, --quiet    suppress translation warnings on stderr
@@ -40,6 +44,24 @@ Options:
 
 Environment variables:
   BAIT_QUIET     suppress translation warnings on stderr
+`
+
+const helperUsageText = `Usage:
+  bait helper <name>
+
+Print the content of a runtime helper.
+
+Available helpers:
+  source
+  .
+  getopts
+  hash
+  unalias
+  __bait_words
+  __bait_exec
+
+Options:
+  -h, --help  show this help message
 `
 
 func getVersion() string {
@@ -70,7 +92,60 @@ func envQuiet() bool {
 	return false
 }
 
+func runHelper(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("bait helper", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+
+	var help bool
+	fs.BoolVar(&help, "help", false, "show this help message")
+	fs.BoolVar(&help, "h", false, "show this help message")
+	fs.Usage = func() {
+		fmt.Fprint(stderr, helperUsageText)
+	}
+
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) || help {
+			fmt.Fprint(stdout, helperUsageText)
+			return 0
+		}
+		return 2
+	}
+
+	if help {
+		fmt.Fprint(stdout, helperUsageText)
+		return 0
+	}
+
+	if fs.NArg() == 0 {
+		fmt.Fprintln(stderr, "error: missing helper name")
+		fs.Usage()
+		return 2
+	}
+
+	if fs.NArg() > 1 {
+		fmt.Fprintln(stderr, "error: too many arguments for helper command")
+		fs.Usage()
+		return 2
+	}
+
+	name := fs.Arg(0)
+	code, err := bait.Helper(name)
+	if err != nil {
+		fmt.Fprintf(stderr, "error: unknown helper %q\n", name)
+		return 1
+	}
+
+	fmt.Fprint(stdout, code)
+	if !strings.HasSuffix(code, "\n") {
+		fmt.Fprintln(stdout)
+	}
+	return 0
+}
+
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "helper" {
+		return runHelper(args[1:], stdout, stderr)
+	}
 	fs := flag.NewFlagSet("bait", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
