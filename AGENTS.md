@@ -7,7 +7,7 @@
 ## Architectural Principles
 
 1. **Leverage Modern Fish Native Compatibility (Passthrough First)**
-   - Modern Fish (v3.7+ and v4.x) natively supports or provides wrappers for many POSIX/Bash constructs (pipes, redirections, combiners, command substitutions, brace expansions, per-command environment variables, backgrounding, and builtins).
+   - Modern Fish (v3.4.0+) natively supports or provides wrappers for many POSIX/Bash constructs (pipes, redirections, combiners, command substitutions, brace expansions, per-command environment variables, backgrounding, and builtins).
    - **Rule**: Never rewrite what Fish already natively accepts. Unchanged constructs pass through byte-for-byte (modulo printer whitespace normalization).
 
 2. **Minimal & Principled Transformation**
@@ -18,16 +18,16 @@
      - **Symmetric Variable Collision Avoidance**: Systematically mangle variable names that collide with Fish read-only variables across all binding, declaration, and expansion sites. Never use one-sided or ad-hoc renames.
      - **Dataflow-Driven Word Splitting over Call-Site Name Heuristics**: Inject call-site word splitting on-demand via assignment dataflow analysis instead of guessing call-site splitting via variable name heuristics, while adhering to Fish's native list semantics (such as list-valued environment variables).
      - **Decoupled Context Introspection**: Unify execution context introspection (script paths, function frames, execution IDs) behind a dedicated translation layer decoupled from generic array index arithmetic.
-     - **Zero-Footprint Runtime Helpers**: Inject pure-Fish helper functions strictly on-demand when modern Fish lacks native semantics; clean scripts must carry zero runtime overhead.
+     - **On-Demand Runtime Helpers**: Inject helper functions strictly on-demand when modern Fish lacks native semantics; clean scripts must carry zero runtime overhead.
 
 3. **Explicit Warning Contract over Silent Breakage**
-   - When encountering constructs with no faithful Fish equivalent (e.g. C-style loops, namerefs, unsupported builtins), emit the construct verbatim and print a diagnostic warning to stderr with source coordinates.
+   - When encountering unsupported constructs or those with no faithful Fish equivalent (e.g. namerefs, unsupported builtins, untranslated C-style loops), emit the construct verbatim and print a diagnostic warning to stderr with source coordinates.
    - Never silently truncate or generate invalid scripts.
 
 4. **Hermetic Development & Differential Testing**
    - All tools and shell versions are hermetically pinned via `flake.nix`.
    - **Differential Equivalence (`internal/bait`)**: Validate translations by executing original scripts under GNU Bash and translated outputs under Fish concurrently, asserting identical stdout, stderr, and exit status.
-   - **Sandbox E2E Suite (`e2e`)**: Continuously verify against complex real-world installer scripts in isolated environments.
+   - **Sandbox E2E Suite (`e2e`)**: Continuously verify against complex real-world scripts in isolated environments.
 
 ## Maintenance Rules
 
@@ -46,6 +46,6 @@
 
 - `cmd/bait/`: CLI binary entry point (streaming stdin/stdout, file translation, `--quiet` flag).
 - `internal/bait/`: Core translation engine (AST parsing, normalization, pure-Fish emission, diagnostics).
-- `e2e/`: End-to-end sandbox integration tests verifying translated real-world installers against live Fish runtimes.
+- `e2e/`: End-to-end sandbox integration tests verifying translated real-world scripts against live Fish runtimes.
 - `COMPATIBILITY.md`: Exhaustive user-facing compatibility inventory, syntax mappings, and runtime differences.
 - `flake.nix` & `flake.lock`: Hermetic Nix environment, packages, and test runners.
