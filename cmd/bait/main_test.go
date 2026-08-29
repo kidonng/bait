@@ -35,6 +35,9 @@ func TestHelp(t *testing.T) {
 			if !strings.Contains(stdout.String(), "BAIT_NO_HELPERS") {
 				t.Errorf("expected stdout to contain 'BAIT_NO_HELPERS', got %q", stdout.String())
 			}
+			if !strings.Contains(stdout.String(), "NO_COLOR") {
+				t.Errorf("expected stdout to contain 'NO_COLOR', got %q", stdout.String())
+			}
 			if stderr.Len() != 0 {
 				t.Errorf("expected empty stderr, got %q", stderr.String())
 			}
@@ -403,4 +406,132 @@ func TestHelperHelp(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestWarningColor(t *testing.T) {
+	scriptWithWarning := "set -e\necho ok\n"
+
+	setupEnv := func(t *testing.T) {
+		t.Helper()
+		t.Setenv("TERM", "xterm-256color")
+		t.Setenv("NO_COLOR", "")
+		t.Setenv("CLICOLOR", "")
+		t.Setenv("CLICOLOR_FORCE", "")
+	}
+
+	t.Run("colored when forced", func(t *testing.T) {
+		setupEnv(t)
+		t.Setenv("CLICOLOR_FORCE", "1")
+		var stdout, stderr bytes.Buffer
+		exitCode := run([]string{}, strings.NewReader(scriptWithWarning), &stdout, &stderr)
+		if exitCode != 0 {
+			t.Fatalf("expected exit code 0, got %d", exitCode)
+		}
+		got := stderr.String()
+		if !strings.Contains(got, "\033[33m") || !strings.Contains(got, "\033[0m") {
+			t.Errorf("expected ANSI color codes in stderr, got %q", got)
+		}
+	})
+
+	t.Run("uncolored by default on non-terminal buffer", func(t *testing.T) {
+		setupEnv(t)
+		var stdout, stderr bytes.Buffer
+		exitCode := run([]string{}, strings.NewReader(scriptWithWarning), &stdout, &stderr)
+		if exitCode != 0 {
+			t.Fatalf("expected exit code 0, got %d", exitCode)
+		}
+		got := stderr.String()
+		if strings.Contains(got, "\033[") {
+			t.Errorf("expected no ANSI escape sequences on non-terminal buffer, got %q", got)
+		}
+	})
+
+	t.Run("uncolored when written to file", func(t *testing.T) {
+		setupEnv(t)
+		tmpFile, err := os.CreateTemp(t.TempDir(), "warnings-*.log")
+		if err != nil {
+			t.Fatalf("failed to create temp file: %v", err)
+		}
+		defer tmpFile.Close()
+
+		var stdout bytes.Buffer
+		exitCode := run([]string{}, strings.NewReader(scriptWithWarning), &stdout, tmpFile)
+		if exitCode != 0 {
+			t.Fatalf("expected exit code 0, got %d", exitCode)
+		}
+		content, err := os.ReadFile(tmpFile.Name())
+		if err != nil {
+			t.Fatalf("failed to read temp file: %v", err)
+		}
+		got := string(content)
+		if strings.Contains(got, "\033[") {
+			t.Errorf("expected no ANSI escape sequences in file, got %q", got)
+		}
+		if len(got) == 0 {
+			t.Errorf("expected warnings written to file")
+		}
+	})
+
+	t.Run("TERM=dumb disables color", func(t *testing.T) {
+		setupEnv(t)
+		t.Setenv("CLICOLOR_FORCE", "1")
+		t.Setenv("TERM", "dumb")
+		var stdout, stderr bytes.Buffer
+		exitCode := run([]string{}, strings.NewReader(scriptWithWarning), &stdout, &stderr)
+		if exitCode != 0 {
+			t.Fatalf("expected exit code 0, got %d", exitCode)
+		}
+		got := stderr.String()
+		if strings.Contains(got, "\033[") {
+			t.Errorf("expected no ANSI color codes with TERM=dumb, got %q", got)
+		}
+	})
+
+	t.Run("CLICOLOR=0 disables color", func(t *testing.T) {
+		setupEnv(t)
+		t.Setenv("CLICOLOR_FORCE", "1")
+		t.Setenv("CLICOLOR", "0")
+		var stdout, stderr bytes.Buffer
+		exitCode := run([]string{}, strings.NewReader(scriptWithWarning), &stdout, &stderr)
+		if exitCode != 0 {
+			t.Fatalf("expected exit code 0, got %d", exitCode)
+		}
+		got := stderr.String()
+		if strings.Contains(got, "\033[") {
+			t.Errorf("expected no ANSI color codes with CLICOLOR=0, got %q", got)
+		}
+	})
+
+	noColorVals := []string{"1", "true", "TRUE", "0", "false", "anything"}
+	for _, val := range noColorVals {
+		t.Run("NO_COLOR="+val+" disables color even when forced", func(t *testing.T) {
+			setupEnv(t)
+			t.Setenv("CLICOLOR_FORCE", "1")
+			t.Setenv("NO_COLOR", val)
+			var stdout, stderr bytes.Buffer
+			exitCode := run([]string{}, strings.NewReader(scriptWithWarning), &stdout, &stderr)
+			if exitCode != 0 {
+				t.Fatalf("expected exit code 0, got %d", exitCode)
+			}
+			got := stderr.String()
+			if strings.Contains(got, "\033[") {
+				t.Errorf("expected no ANSI color codes with NO_COLOR=%s, got %q", val, got)
+			}
+		})
+	}
+
+	t.Run("empty NO_COLOR does not disable color", func(t *testing.T) {
+		setupEnv(t)
+		t.Setenv("CLICOLOR_FORCE", "1")
+		t.Setenv("NO_COLOR", "")
+		var stdout, stderr bytes.Buffer
+		exitCode := run([]string{}, strings.NewReader(scriptWithWarning), &stdout, &stderr)
+		if exitCode != 0 {
+			t.Fatalf("expected exit code 0, got %d", exitCode)
+		}
+		got := stderr.String()
+		if !strings.Contains(got, "\033[33m") || !strings.Contains(got, "\033[0m") {
+			t.Errorf("expected ANSI color codes with empty NO_COLOR, got %q", got)
+		}
+	})
 }

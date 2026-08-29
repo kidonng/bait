@@ -46,6 +46,7 @@ Options:
 Environment variables:
   BAIT_QUIET       suppress translation warnings on stderr
   BAIT_NO_HELPERS  do not inject runtime helper functions
+  NO_COLOR         disable ANSI color in warning output
 `
 
 const helperUsageText = `Usage:
@@ -254,8 +255,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 
 	if !quiet {
+		colorPrefix, colorSuffix := "", ""
+		if isColorEnabled(stderr) {
+			colorPrefix, colorSuffix = colorYellow, colorReset
+		}
 		for _, w := range warnings {
-			fmt.Fprintf(stderr, "%s:%d:%d: %s\n", name, w.Line, w.Col, w.Text)
+			fmt.Fprintf(stderr, "%s%s:%d:%d: %s%s\n", colorPrefix, name, w.Line, w.Col, w.Text, colorSuffix)
 		}
 	}
 
@@ -265,4 +270,33 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
+}
+
+const (
+	colorYellow = "\033[33m"
+	colorReset  = "\033[0m"
+)
+
+func isColorEnabled(w io.Writer) bool {
+	if val, ok := os.LookupEnv("NO_COLOR"); ok && val != "" {
+		return false
+	}
+	if os.Getenv("CLICOLOR") == "0" {
+		return false
+	}
+	if os.Getenv("TERM") == "dumb" {
+		return false
+	}
+	if val, ok := os.LookupEnv("CLICOLOR_FORCE"); ok && val != "0" && val != "" {
+		return true
+	}
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
 }
