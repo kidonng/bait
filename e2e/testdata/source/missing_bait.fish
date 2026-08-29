@@ -1,7 +1,7 @@
 source $SOURCE_FISH
 
 set script_path (mktemp)
-echo 'VAR="should fail without bait"' > $script_path
+echo 'VAR="should fail without bait"' >$script_path
 
 source $script_path
 set res $status

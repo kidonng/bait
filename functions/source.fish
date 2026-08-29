@@ -25,17 +25,17 @@ function source --no-scope-shadowing --description "Evaluate contents of file, t
 
     # Normalize options: if the first argument is "--", consume it
     set --local __bait_args $argv
-    if test (count $__bait_args) -ge 1 -a "$__bait_args[1]" = "--"
+    if test (count $__bait_args) -ge 1 -a "$__bait_args[1]" = --
         if test (count $__bait_args) -ge 2
             set __bait_args $__bait_args[2..]
         else
-            set __bait_args "-"
+            set __bait_args -
         end
     end
 
     # Determine input source: file vs stdin
     set --local __bait_from_stdin 0
-    if test (count $__bait_args) -ge 1 -a "$__bait_args[1]" = "-"
+    if test (count $__bait_args) -ge 1 -a "$__bait_args[1]" = -
         set __bait_from_stdin 1
         set __bait_args $__bait_args[2..]
     else if test (count $__bait_args) -eq 0

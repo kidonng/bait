@@ -22,10 +22,10 @@ function getopts --no-scope-shadowing
         return 1
     end
     set --local __bait_current $__bait_args[$OPTIND]
-    if test (string length -- "$__bait_current") -lt 2; or test (string sub --start=1 --length=1 -- "$__bait_current") != "-"
+    if test (string length -- "$__bait_current") -lt 2; or test (string sub --start=1 --length=1 -- "$__bait_current") != -
         return 1
     end
-    if test "$__bait_current" = "--"
+    if test "$__bait_current" = --
         set --global OPTIND (math $OPTIND + 1)
         return 1
     end

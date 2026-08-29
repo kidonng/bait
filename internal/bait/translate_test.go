@@ -840,7 +840,7 @@ func TestBashFishEquivalence(t *testing.T) {
 		},
 		{
 			name: "test clause dollar dash interactive check in script",
-			src: "[[ $- != *i* ]] && echo non-interactive\n",
+			src:  "[[ $- != *i* ]] && echo non-interactive\n",
 		},
 		{
 			name: "getopts parsing arguments",
@@ -2528,7 +2528,6 @@ func TestUnaliasHelperEmitted(t *testing.T) {
 		t.Errorf("expected unalias helper to be emitted, got: %s", string(out))
 	}
 }
-
 
 func TestBaitExecDoesNotEvalMetacharacters(t *testing.T) {
 	if _, err := exec.LookPath("fish"); err != nil {

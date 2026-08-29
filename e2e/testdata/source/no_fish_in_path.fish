@@ -19,14 +19,14 @@ end
 
 # 1. Native fish script should still succeed via status fish-path
 set script_path (mktemp)
-echo 'set --global NATIVE_OK "yes"' > $script_path
+echo 'set --global NATIVE_OK "yes"' >$script_path
 source $script_path
-test "$NATIVE_OK" = "yes"; or exit 1
+test "$NATIVE_OK" = yes; or exit 1
 rm -f $script_path
 
 # 2. Bash script translation should also work via status fish-path
 set bash_path (mktemp)
-echo 'BASH_OK="yes"' > $bash_path
+echo 'BASH_OK="yes"' >$bash_path
 source $bash_path
-test "$BASH_OK" = "yes"; or exit 2
+test "$BASH_OK" = yes; or exit 2
 rm -f $bash_path

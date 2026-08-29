@@ -8,7 +8,7 @@ echo "nvm version: $ver"
 
 # 2. Verify nvm current
 set cur (nvm current)
-if test $status -ne 0 -o "$cur" != "none" -a "$cur" != "system"
+if test $status -ne 0 -o "$cur" != none -a "$cur" != system
     echo "FAILED: nvm current expected none or system, got: $cur" >&2
     exit 1
 end
@@ -49,7 +49,7 @@ end
 echo "installed node version: $node_ver"
 
 # 6. Verify .nvmrc resolution via paired high-FD redirection
-echo "lts/*" > .nvmrc
+echo "lts/*" >.nvmrc
 nvm use
 if test $status -ne 0
     echo "FAILED: nvm use with .nvmrc failed: status=$status" >&2

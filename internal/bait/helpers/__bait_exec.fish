@@ -4,9 +4,9 @@ function __bait_exec
     end
     set --local words (string match --regex --all '\S+' -- "$argv[1]")
     if test (count $words) -gt 0
-        if test "$words[1]" = "command"
+        if test "$words[1]" = command
             command $words[2..-1] $argv[2..-1]
-        else if test "$words[1]" = "builtin"
+        else if test "$words[1]" = builtin
             builtin $words[2..-1] $argv[2..-1]
         else
             $words $argv[2..-1]

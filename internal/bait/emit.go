@@ -716,6 +716,7 @@ func (e *emitter) shiftArrayIndex(pos syntax.Pos, name string) string {
 	}
 	return e.varName(name)
 }
+
 // `set args...` form assign fish's argv list; option forms and the bare
 // `set` state dump have no fish equivalent and are dropped. Reports
 // whether the statement was fully handled; when false, c.Args has been
@@ -1028,9 +1029,9 @@ var bashContextVars = map[string][]string{
 }
 
 // normalizeReadCmd adapts a bash read command to fish:
-// 1. Removes the -r flag (fish read never processes backslashes, so raw mode is default).
-// 2. Applies variable name mangling for target variable names to prevent colliding with
-//    fish read-only or reserved variables (e.g. "_" -> "_unused", "status" -> "_status").
+//  1. Removes the -r flag (fish read never processes backslashes, so raw mode is default).
+//  2. Applies variable name mangling for target variable names to prevent colliding with
+//     fish read-only or reserved variables (e.g. "_" -> "_unused", "status" -> "_status").
 func normalizeReadCmd(c *syntax.CallExpr) {
 	if len(c.Args) == 0 || !isLitWord(c.Args[0], "read") {
 		return
@@ -1370,7 +1371,6 @@ func escapeLiteralDollar(s string) string {
 	}
 	return b.String()
 }
-
 
 // binary emits &&/||/pipe chains. Chains made only of simple commands are
 // valid fish verbatim; a structural operand (rare) falls back.
@@ -2218,7 +2218,6 @@ func hasUnquotedWildcard(w *syntax.Word) bool {
 	return false
 }
 
-
 func casePatternString(p *syntax.Word) (string, bool) {
 	var sb strings.Builder
 	for _, part := range p.Parts {
@@ -2852,7 +2851,6 @@ func stringUnarySubst(subcmd, name string) syntax.WordPart {
 	return &syntax.CmdSubst{Stmts: []*syntax.Stmt{{Cmd: call}}}
 }
 
-
 // pipeSubstPart builds a $(cmd1 args... | cmd2 args...) command substitution word part.
 func pipeSubstPart(xArgs, yArgs []string) syntax.WordPart {
 	xCall := &syntax.CallExpr{}
@@ -3261,7 +3259,7 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 		// parameter expansions; rewrite them before rendering, since the
 		// outer walk visits this node before its nested words.
 		if exp.Word != nil {
-		exp.Word.Parts = e.spliceParts(exp.Word.Parts, false)
+			exp.Word.Parts = e.spliceParts(exp.Word.Parts, false)
 		}
 		switch exp.Op {
 		case syntax.DefaultUnsetOrNull, syntax.DefaultUnset:
@@ -3686,7 +3684,6 @@ func singleBareCmdSubst(w *syntax.Word) (*syntax.CmdSubst, bool) {
 	}
 	return cs, true
 }
-
 
 func extractHdoc(redirs []*syntax.Redirect) (*syntax.Redirect, []*syntax.Redirect) {
 	var hdoc *syntax.Redirect
