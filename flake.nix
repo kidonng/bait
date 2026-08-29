@@ -16,31 +16,35 @@
         nixpkgs.lib.genAttrs systems
           (system: f nixpkgs.legacyPackages.${system});
 
-      testRunner = pkgs:
+      devTools = pkgs: [
+        pkgs.bash
+        pkgs.fd
+        pkgs.fish
+        pkgs.go
+        pkgs.goreleaser
+      ];
+
+      mkTask = pkgs: name: text:
         pkgs.writeShellApplication {
-          name = "bait-test";
-          runtimeInputs = with pkgs; [
-            bash
-            fish
-            go
-          ];
-          text = ''
-            exec fish ${./scripts/test.fish} "$@"
-          '';
+          inherit name text;
+          runtimeInputs = devTools pkgs;
         };
 
+      testRunner = pkgs:
+        mkTask pkgs "bait-test" ''
+          echo "==> Running internal unit and equivalence tests..."
+          go test -v ./internal/bait ./cmd/bait
+          echo "==> Running e2e sandbox tests..."
+          go test -v ./e2e
+        '';
+
       fmtRunner = pkgs:
-        pkgs.writeShellApplication {
-          name = "bait-fmt";
-          runtimeInputs = with pkgs; [
-            fd
-            fish
-            go
-          ];
-          text = ''
-            exec fish ${./scripts/fmt.fish} "$@"
-          '';
-        };
+        mkTask pkgs "bait-fmt" ''
+          echo "==> Formatting Go files..."
+          go fmt ./...
+          echo "==> Formatting Fish files..."
+          fd --extension fish --exec-batch fish_indent --write
+        '';
     in
     {
       packages = forAllSystems (pkgs: rec {
@@ -56,41 +60,11 @@
         default = bait;
       });
 
-      checks = forAllSystems (pkgs: {
-        test = pkgs.buildGoModule {
-          pname = "bait-test";
-          version = "0.3.0";
-          src = ./.;
-          subPackages = [ "cmd/bait" ];
-          vendorHash = "sha256-tCFu9E2pFBWBQFiRVvI16FNI3dE1bUKJlsEbvDAo7lo=";
-          nativeCheckInputs = with pkgs; [
-            bash
-            fish
-            which
-          ];
-          checkPhase = ''
-            export HOME=$(mktemp -d)
-            fish ./scripts/test.fish ./internal/bait ./cmd/bait
-          '';
-          installPhase = ''
-            touch $out
-          '';
-        };
-      });
-
       formatter = forAllSystems (pkgs: fmtRunner pkgs);
 
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
-          # Target shells and tools used for development and test execution.
-          packages = with pkgs; [
-            bash
-            fish
-            go
-            goreleaser
-            (testRunner pkgs)
-            (fmtRunner pkgs)
-          ];
+          packages = devTools pkgs;
         };
       });
     };

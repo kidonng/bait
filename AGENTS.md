@@ -38,13 +38,9 @@
 ## Developer Workflows
 
 - **Run CLI**: `nix run . -- [options] [script]` or `echo '...' | nix run .`
-- **Run All Tests**: `nix run .#test` or `bait-test` inside `nix develop`
+- **Run All Tests**: `nix run .#test`
 - **Run Checks**: `nix flake check`
-- **Run Specific Tests**:
-  - `nix run .#test -- ./internal/bait` (unit & differential tests)
-  - `nix run .#test -- ./e2e` (sandbox integration tests)
-  - `nix run .#test -- -run TestRustup ./e2e` (single target)
-- **Format Code**: `nix run .#fmt`, `nix fmt`, or `bait-fmt` inside `nix develop`
+- **Format Code**: `nix run .#fmt` or `nix fmt`
 
 ## Repository Layout
 
@@ -53,4 +49,3 @@
 - `e2e/`: End-to-end sandbox integration tests verifying translated real-world installers against live Fish runtimes.
 - `COMPATIBILITY.md`: Exhaustive user-facing compatibility inventory, syntax mappings, and runtime differences.
 - `flake.nix` & `flake.lock`: Hermetic Nix environment, packages, and test runners.
-- `scripts/`: Development workflow and automation scripts (`test.fish`, `fmt.fish`).
