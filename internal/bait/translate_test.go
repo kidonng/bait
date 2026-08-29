@@ -398,16 +398,6 @@ func TestWarnings(t *testing.T) {
 			"let statement",
 		},
 		{
-			"hash passthrough",
-			"hash curl 2>/dev/null\n",
-			"bash builtin",
-		},
-		{
-			"hash in condition",
-			"if hash curl 2>/dev/null; then echo y; fi\n",
-			"bash builtin",
-		},
-		{
 			"subshell inside command substitution",
 			"x=$( (cd /tmp && pwd); )\n",
 			"subshell isolation",
@@ -1098,6 +1088,13 @@ func TestBashFishEquivalence(t *testing.T) {
 				"clean_dir '/foo/bar/'\n" +
 				"clean_dir '/foo/bar'\n" +
 				"clean_dir '/'\n",
+		},
+		{
+			name: "hash builtin command existence check",
+			src: "if hash ls 2>/dev/null; then echo \"ls found\"; fi\n" +
+				"if hash nonexistent_binary_xyz_123 2>/dev/null; then echo \"found\"; else echo \"not found\"; fi\n" +
+				"hash ls 2>/dev/null && echo \"ls ok\"\n" +
+				"hash nonexistent_binary_xyz_123 2>/dev/null || echo \"fallback ok\"\n",
 		},
 	}
 

@@ -73,7 +73,12 @@ func runIsolatedFish(t *testing.T, ctx context.Context, script []byte, extraEnv 
 	}
 	env = append(env, extraEnv...)
 
-	cmd := exec.CommandContext(ctx, "fish", "-c", string(script))
+	scriptPath := filepath.Join(tmpDir, "script.fish")
+	if err := os.WriteFile(scriptPath, script, 0700); err != nil {
+		return tmpDir, "", "", fmt.Errorf("failed to write isolated script: %w", err)
+	}
+
+	cmd := exec.CommandContext(ctx, "fish", scriptPath)
 	cmd.Dir = tmpDir
 	cmd.Env = env
 

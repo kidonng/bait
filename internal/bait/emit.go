@@ -26,9 +26,7 @@ type emitter struct {
 	err               error
 	inFunction        bool
 	inSubshell        bool
-	needsBaitWords    bool
-	needsBaitExec     bool
-	needsBaitGetopts  bool
+	neededHelpers     [numHelpers]bool
 	funcLocals        map[string]bool
 	knownLists        map[string]bool
 	multiWordScalars  map[string]bool
@@ -54,14 +52,10 @@ func (e *emitter) newSubEmitter() *emitter {
 }
 
 func (e *emitter) inheritSub(sub *emitter) {
-	if sub.needsBaitWords {
-		e.needsBaitWords = true
-	}
-	if sub.needsBaitExec {
-		e.needsBaitExec = true
-	}
-	if sub.needsBaitGetopts {
-		e.needsBaitGetopts = true
+	for k, v := range sub.neededHelpers {
+		if v {
+			e.neededHelpers[k] = true
+		}
 	}
 	e.warnings = append(e.warnings, sub.warnings...)
 	if sub.err != nil && e.err == nil {
@@ -341,6 +335,11 @@ func (e *emitter) file(f *syntax.File) {
 		if fd, ok := n.(*syntax.FuncDecl); ok && fd.Name != nil {
 			e.knownFuncs[fd.Name.Value] = true
 		}
+		if c, ok := n.(*syntax.CallExpr); ok && len(c.Assigns) == 0 && len(c.Args) > 0 {
+			if isLitWord(c.Args[0], "hash") {
+				e.needHelper(helperHash)
+			}
+		}
 		return true
 	})
 	var body bytes.Buffer
@@ -363,14 +362,14 @@ func (e *emitter) file(f *syntax.File) {
 		}
 	}
 
-	if e.needsBaitWords {
-		e.buf.WriteString(baitWordsHelper)
-	}
-	if e.needsBaitExec {
-		e.buf.WriteString(baitExecHelper)
-	}
-	if e.needsBaitGetopts {
-		e.buf.WriteString(baitGetoptsHelper)
+	for _, h := range allHelpers {
+		if e.neededHelpers[h.kind] {
+			e.buf.WriteString(h.code)
+			if !strings.HasSuffix(h.code, "\n") {
+				e.buf.WriteByte('\n')
+			}
+			e.buf.WriteByte('\n')
+		}
 	}
 	e.buf.Write(bodyBytes)
 }
@@ -517,8 +516,12 @@ func (e *emitter) simple(s *syntax.Stmt) {
 			e.unsetCmd(s, c)
 			return
 		}
-		if len(c.Assigns) == 0 && len(c.Args) > 0 && isLitWord(c.Args[0], "getopts") {
-			e.needsBaitGetopts = true
+		if len(c.Assigns) == 0 && len(c.Args) > 0 {
+			if isLitWord(c.Args[0], "getopts") {
+				e.needHelper(helperGetopts)
+			} else if isLitWord(c.Args[0], "hash") {
+				e.needHelper(helperHash)
+			}
 		}
 		e.warnBashOnlyBuiltin(s, c)
 		if len(c.Assigns) == 0 && e.isSetBuiltin(c) {
@@ -532,8 +535,8 @@ func (e *emitter) simple(s *syntax.Stmt) {
 		}
 		if len(c.Assigns) == 0 && len(c.Args) > 0 {
 			if _, ok := singleBareParam(c.Args[0]); ok {
-				e.needsBaitExec = true
-				e.needsBaitWords = true
+				e.needHelper(helperExec)
+				e.needHelper(helperWords)
 				if hasLeadingRedir(s) || (e.inSubshell && hasHighFDTargetRedir(s.Redirs)) {
 					line := e.render(s.Cmd)
 					if s.Negated {
@@ -578,7 +581,6 @@ func hasLeadingRedir(s *syntax.Stmt) bool {
 // whose fish counterpart differs fatally). They are emitted verbatim
 // with a warning: silent passthrough would only fail at runtime.
 var bashOnlyBuiltins = map[string]string{
-	"hash":    "use 'command -v' or 'type -q' instead",
 	"let":     "use 'math' instead",
 	"shopt":   "fish has no shell options",
 	"unalias": "fish aliases are functions; use 'functions --erase' instead",
@@ -1271,10 +1273,14 @@ func (e *emitter) normalize(f *syntax.File) {
 		switch x := n.(type) {
 		case *syntax.CallExpr:
 			normalizeCommandName(x)
-			if len(x.Assigns) == 0 && len(x.Args) > 0 && isLitWord(x.Args[0], "getopts") {
-				e.needsBaitGetopts = true
-				if len(x.Args) == 3 {
-					x.Args = append(x.Args, &syntax.Word{Parts: []syntax.WordPart{argvParam()}})
+			if len(x.Assigns) == 0 && len(x.Args) > 0 {
+				if isLitWord(x.Args[0], "getopts") {
+					e.needHelper(helperGetopts)
+					if len(x.Args) == 3 {
+						x.Args = append(x.Args, &syntax.Word{Parts: []syntax.WordPart{argvParam()}})
+					}
+				} else if isLitWord(x.Args[0], "hash") {
+					e.needHelper(helperHash)
 				}
 			}
 			if len(x.Args) > 0 && isLitWord(x.Args[0], "eval") && x.Args[0].Pos().Col() > 0 {
@@ -1287,7 +1293,7 @@ func (e *emitter) normalize(f *syntax.File) {
 					if e.multiWordScalars[name] && !e.knownLists[name] &&
 						name != "@" && name != "*" && name != "argv" &&
 						!isFishListEnvVar(name) {
-						e.needsBaitWords = true
+						e.needHelper(helperWords)
 						x.Args[i] = &syntax.Word{
 							Parts: []syntax.WordPart{
 								substPart("__bait_words", "$"+e.varName(name)),
@@ -1502,8 +1508,8 @@ func (e *emitter) chainLeaf(st *syntax.Stmt) string {
 		}
 		if c != nil && len(c.Assigns) == 0 && len(c.Args) > 0 {
 			if _, ok := singleBareParam(c.Args[0]); ok {
-				e.needsBaitExec = true
-				e.needsBaitWords = true
+				e.needHelper(helperExec)
+				e.needHelper(helperWords)
 				return "__bait_exec " + e.render(st)
 			}
 		}
@@ -1618,12 +1624,12 @@ func (e *emitter) forClause(s *syntax.Stmt, f *syntax.ForClause) {
 			}
 			name = e.varName(name)
 			items[i] = "(__bait_words $" + name + ")"
-			e.needsBaitWords = true
+			e.needHelper(helperWords)
 			continue
 		}
 		if _, ok := singleBareCmdSubst(w); ok {
 			items[i] = "(__bait_words " + e.renderWordSmart(w) + ")"
-			e.needsBaitWords = true
+			e.needHelper(helperWords)
 			continue
 		}
 		items[i] = e.renderWordSmart(w)
@@ -3676,142 +3682,6 @@ func singleBareCmdSubst(w *syntax.Word) (*syntax.CmdSubst, bool) {
 	return cs, true
 }
 
-const baitWordsHelper = `function __bait_words --no-scope-shadowing
-    if test (count $argv) -eq 0
-        return 0
-    end
-    if set --query IFS; and test -z "$IFS"
-        for a in $argv
-            printf '%s\n' $a
-        end
-        return 0
-    end
-    if set --query IFS; and test "$IFS" != (printf '\n \t' | string collect)
-        set -l cur $argv
-        for d in (string split "" -- "$IFS")
-            test -n "$d"; and set cur (string split -- "$d" $cur)
-        end
-        for w in $cur
-            test -n "$w"; and printf '%s\n' $w
-        end
-        return 0
-    end
-    string match --regex --all '\S+' -- $argv
-end
-
-`
-
-const baitExecHelper = `function __bait_exec
-    if test (count $argv) -eq 0
-        return 0
-    end
-    set --local words (string match --regex --all '\S+' -- "$argv[1]")
-    if test (count $words) -gt 0
-        if test "$words[1]" = "command"
-            command $words[2..-1] $argv[2..-1]
-        else if test "$words[1]" = "builtin"
-            builtin $words[2..-1] $argv[2..-1]
-        else
-            $words $argv[2..-1]
-        end
-    else if test (count $argv) -gt 1
-        __bait_exec $argv[2..-1]
-    end
-end
-
-`
-const baitGetoptsHelper = `function getopts --no-scope-shadowing
-    set --local __bait_optstring $argv[1]
-    set --local __bait_varname $argv[2]
-    set --local __bait_args
-    if test (count $argv) -gt 2
-        set __bait_args $argv[3..-1]
-    else
-        set __bait_args
-    end
-
-    if not set --query OPTIND; or test "$OPTIND" -lt 1
-        set --global OPTIND 1
-    end
-    if not set --query OPTARG
-        set --global OPTARG ""
-    end
-    if not set --query __bait_optpos; or test "$__bait_optpos" -lt 2
-        set --global __bait_optpos 2
-    end
-
-    if test "$OPTIND" -gt (count $__bait_args)
-        return 1
-    end
-    set --local __bait_current $__bait_args[$OPTIND]
-    if test (string length -- "$__bait_current") -lt 2; or test (string sub --start=1 --length=1 -- "$__bait_current") != "-"
-        return 1
-    end
-    if test "$__bait_current" = "--"
-        set --global OPTIND (math $OPTIND + 1)
-        return 1
-    end
-
-    set --local __bait_opt (string sub --start=$__bait_optpos --length=1 -- "$__bait_current")
-    if test -z "$__bait_opt"
-        set --global OPTIND (math $OPTIND + 1)
-        set --global __bait_optpos 2
-        getopts $__bait_optstring $__bait_varname $__bait_args
-        return $status
-    end
-
-    set --global __bait_optpos (math $__bait_optpos + 1)
-    if test "$__bait_optpos" -gt (string length -- "$__bait_current")
-        set --global OPTIND (math $OPTIND + 1)
-        set --global __bait_optpos 2
-    end
-
-    set --local __bait_colon_mode 0
-    set --local __bait_clean_opts $__bait_optstring
-    if string match --quiet ":*" -- "$__bait_optstring"
-        set __bait_colon_mode 1
-        set __bait_clean_opts (string sub --start=2 -- "$__bait_optstring")
-    end
-
-    set --local __bait_escaped_opt (string escape --style=regex -- "$__bait_opt")
-    set --local __bait_match (string match --regex --index -- "$__bait_escaped_opt:?" "$__bait_clean_opts")
-    if test -z "$__bait_match"
-        set OPTARG "$__bait_opt"
-        set $__bait_varname "?"
-        if test $__bait_colon_mode -eq 0
-            echo "getopts: illegal option -- $__bait_opt" >&2
-        end
-        return 0
-    end
-
-    set --local __bait_idx_parts (string split " " -- $__bait_match[1])
-    set --local __bait_opt_spec (string sub --start=$__bait_idx_parts[1] --length=$__bait_idx_parts[2] -- "$__bait_clean_opts")
-    if string match --quiet "*:" -- "$__bait_opt_spec"
-        if test "$__bait_optpos" -gt 2; and test "$__bait_optpos" -le (string length -- "$__bait_current")
-            set OPTARG (string sub --start=$__bait_optpos -- "$__bait_current")
-            set --global OPTIND (math $OPTIND + 1)
-            set --global __bait_optpos 2
-        else if test "$OPTIND" -le (count $__bait_args)
-            set OPTARG $__bait_args[$OPTIND]
-            set --global OPTIND (math $OPTIND + 1)
-            set --global __bait_optpos 2
-        else
-            set OPTARG "$__bait_opt"
-            if test $__bait_colon_mode -eq 1
-                set $__bait_varname ":"
-            else
-                set $__bait_varname "?"
-                echo "getopts: option requires an argument -- $__bait_opt" >&2
-            end
-            return 0
-        end
-    end
-
-    set $__bait_varname "$__bait_opt"
-    return 0
-end
-
-`
 
 func extractHdoc(redirs []*syntax.Redirect) (*syntax.Redirect, []*syntax.Redirect) {
 	var hdoc *syntax.Redirect
