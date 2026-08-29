@@ -3,7 +3,7 @@
 # Load this file in your fish configuration (e.g. in config.fish or conf.d/):
 #   source /path/to/bait/functions/source.fish
 # Or add the functions directory to $fish_function_path:
-#   set -up fish_function_path /path/to/bait/functions
+#   set --unexport --prepend fish_function_path /path/to/bait/functions
 #
 # Behavior:
 #   - If the script is recognized as valid fish syntax (fish --no-execute), native source is used.
@@ -20,11 +20,11 @@ function source --no-scope-shadowing --description "Evaluate contents of file, t
     end
 
     # Locate current fish binary without relying on PATH
-    set -l __bait_fish (status fish-path)
+    set --local __bait_fish (status fish-path)
     test -n "$__bait_fish"; or set __bait_fish fish
 
     # Normalize options: if the first argument is "--", consume it
-    set -l __bait_args $argv
+    set --local __bait_args $argv
     if test (count $__bait_args) -ge 1 -a "$__bait_args[1]" = "--"
         if test (count $__bait_args) -ge 2
             set __bait_args $__bait_args[2..]
@@ -34,7 +34,7 @@ function source --no-scope-shadowing --description "Evaluate contents of file, t
     end
 
     # Determine input source: file vs stdin
-    set -l __bait_from_stdin 0
+    set --local __bait_from_stdin 0
     if test (count $__bait_args) -ge 1 -a "$__bait_args[1]" = "-"
         set __bait_from_stdin 1
         set __bait_args $__bait_args[2..]
@@ -48,20 +48,20 @@ function source --no-scope-shadowing --description "Evaluate contents of file, t
     end
 
     if test $__bait_from_stdin -eq 1
-        set -l __bait_input
-        read -z __bait_input
+        set --local __bait_input
+        read --null __bait_input
 
         if printf "%s" "$__bait_input" | $__bait_fish --no-execute 2>/dev/null
             printf "%s" "$__bait_input" | builtin source - $__bait_args
             return $status
         else
-            if not command -q bait
+            if not command --query bait
                 echo "source: 'bait' is required to translate bash scripts, but it was not found in PATH" >&2
                 return 127
             end
 
             printf "%s" "$__bait_input" | bait | builtin source - $__bait_args
-            set -l __bait_ps $pipestatus
+            set --local __bait_ps $pipestatus
             if test $__bait_ps[1] -ne 0
                 return $__bait_ps[1]
             end
@@ -69,7 +69,7 @@ function source --no-scope-shadowing --description "Evaluate contents of file, t
         end
     else
         # Handle file input
-        set -l __bait_file "$__bait_args[1]"
+        set --local __bait_file "$__bait_args[1]"
         if not test -f "$__bait_file"
             # Non-existent file, directory, or special device: delegate to builtin source
             builtin source $argv
@@ -80,13 +80,13 @@ function source --no-scope-shadowing --description "Evaluate contents of file, t
             builtin source $argv
             return $status
         else
-            if not command -q bait
+            if not command --query bait
                 echo "source: 'bait' is required to translate bash scripts, but it was not found in PATH" >&2
                 return 127
             end
 
             bait "$__bait_file" | builtin source - $__bait_args[2..]
-            set -l __bait_ps $pipestatus
+            set --local __bait_ps $pipestatus
             if test $__bait_ps[1] -ne 0
                 return $__bait_ps[1]
             end

@@ -24,7 +24,7 @@ func TestNVM(t *testing.T) {
 	}
 
 	setup := `
-set -gx NVM_DIR (pwd)/.nvm
+set --global --export NVM_DIR (pwd)/.nvm
 mkdir -p "$NVM_DIR"
 `
 	testRunner := `

@@ -77,12 +77,12 @@ The following constructs have no faithful Fish equivalent and are emitted verbat
 
 | Bash | Fish | Purpose |
 |---|---|---|
-| `[ ... ]` | `[ ... ]` / `set -q VAR` | Native passthrough (Fish ships `[` as an alias for `test`); `[ -v VAR ]` and `test -v VAR` are rewritten to `set -q VAR` as Fish `test` lacks `-v` |
+| `[ ... ]` | `[ ... ]` / `set --query VAR` | Native passthrough (Fish ships `[` as an alias for `test`); `[ -v VAR ]` and `test -v VAR` are rewritten to `set --query VAR` as Fish `test` lacks `-v` |
 | `[[ -n "$x" ]]`, `[[ -f file ]]` | `test -n "$x"`, `test -f file` | Unary string and file tests |
 | `[[ "$a" == "$b" ]]`, `[[ $a = b ]]` | `test "$a" = "$b"`, `test $a = b` | String equality |
-| `[[ $a == glob* ]]`, `[[ $a != glob* ]]` | `string match -q -- 'glob*' $a`, `! string match -q -- 'glob*' $a` | Wildcard pattern matching |
-| `[[ $str =~ regex ]]` | `string match -r -q -- 'regex' $str` | Regular expression matching |
-| `[[ -v VAR ]]` | `set -q VAR` | Variable existence check |
+| `[[ $a == glob* ]]`, `[[ $a != glob* ]]` | `string match --quiet -- 'glob*' $a`, `! string match --quiet -- 'glob*' $a` | Wildcard pattern matching |
+| `[[ $str =~ regex ]]` | `string match --regex --quiet -- 'regex' $str` | Regular expression matching |
+| `[[ -v VAR ]]` | `set --query VAR` | Variable existence check |
 | `[[ $- == *i* ]]`, `case $- in *i*)` | `status is-interactive` | Interactive shell check (simple 1- or 2-branch case forms; other patterns warn and fall back) |
 | `[[ cond1 && cond2 ]]` | `cond1 && cond2` | Logical AND |
 | `[[ cond1 \|\| cond2 ]]` | `cond1 \|\| cond2` | Logical OR |
@@ -116,7 +116,7 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 | `set` (bare), `set -` | *(dropped with warning)* | Prints shell state / trace flags in Bash; dropped in Fish |
 | `set -e`, `set -u`, `set +x`, `set -o ...` | *(dropped with warning)* | Fish has no shell option flags |
 | `eval "..."` | `eval "..."` | Passthrough (emits warning: Fish `eval` executes Fish syntax; incompatible Bash syntax will fail at runtime) |
-| `hash cmd`, `hash cmd1 cmd2` | `hash cmd`, `hash cmd1 cmd2` | Supported via an on-demand pure-Fish runtime helper (`function hash; type -q $argv; end`) injected at script head |
+| `hash cmd`, `hash cmd1 cmd2` | `hash cmd`, `hash cmd1 cmd2` | Supported via an on-demand pure-Fish runtime helper (`function hash; type --query $argv; end`) injected at script head |
 | `unalias foo`, `unalias "$1"`, `unalias -a` | `unalias foo`, `unalias "$argv[1]"`, `unalias -a` | Supported via an on-demand pure-Fish runtime helper (`function unalias; ...; end`) erasing alias functions via `functions --erase` |
 
 ### Parameter Expansions & Special Variables

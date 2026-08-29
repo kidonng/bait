@@ -492,7 +492,7 @@ func (e *emitter) renderTestDashV(operand *syntax.Word, negated bool) string {
 	raw := e.render(operand)
 	unquoted := unquoteArg(raw)
 	shifted := e.shiftArrayIndex(operand.Pos(), unquoted)
-	res := "set -q " + shifted
+	res := "set --query " + shifted
 	if negated {
 		res = "! " + res
 	}
@@ -1744,7 +1744,7 @@ func (e *emitter) caseClauseAsIf(s *syntax.Stmt, cl *syntax.CaseClause, tail str
 		var conds []string
 		for _, p := range item.Patterns {
 			re, _ := globToRegex(e.render(p), false)
-			conds = append(conds, fmt.Sprintf("string match -r -q -- %s %s", fishSingleQuote("^"+re+"$"), target))
+			conds = append(conds, fmt.Sprintf("string match --regex --quiet -- %s %s", fishSingleQuote("^"+re+"$"), target))
 		}
 		cond := strings.Join(conds, "; or ")
 		if first {
@@ -2111,9 +2111,9 @@ func (e *emitter) renderUnaryTest(u *syntax.UnaryTest) string {
 			raw := e.render(w)
 			unquoted := unquoteArg(raw)
 			shifted := e.shiftArrayIndex(u.X.Pos(), unquoted)
-			return "set -q " + shifted
+			return "set --query " + shifted
 		}
-		return "set -q " + e.render(u.X)
+		return "set --query " + e.render(u.X)
 	}
 	return fmt.Sprintf("test %s %s", opStr, e.renderTestOperand(u.X))
 }
@@ -2133,14 +2133,14 @@ func (e *emitter) renderBinaryTest(b *syntax.BinaryTest) string {
 		yWord, _ := b.Y.(*syntax.Word)
 		target := e.renderWordSmart(xWord)
 		pat := e.renderPatternLiteral(yWord)
-		return fmt.Sprintf("string match -r -q -- %s %s", pat, target)
+		return fmt.Sprintf("string match --regex --quiet -- %s %s", pat, target)
 	case "==", "=":
 		xWord, _ := b.X.(*syntax.Word)
 		yWord, _ := b.Y.(*syntax.Word)
 		target := e.renderWordSmart(xWord)
 		if hasUnquotedWildcard(yWord) {
 			pat := e.renderPatternLiteral(yWord)
-			return fmt.Sprintf("string match -q -- %s %s", pat, target)
+			return fmt.Sprintf("string match --quiet -- %s %s", pat, target)
 		}
 		yStr := e.renderWordSmart(yWord)
 		return fmt.Sprintf("test %s = %s", target, yStr)
@@ -2150,7 +2150,7 @@ func (e *emitter) renderBinaryTest(b *syntax.BinaryTest) string {
 		target := e.renderWordSmart(xWord)
 		if hasUnquotedWildcard(yWord) {
 			pat := e.renderPatternLiteral(yWord)
-			return fmt.Sprintf("! string match -q -- %s %s", pat, target)
+			return fmt.Sprintf("! string match --quiet -- %s %s", pat, target)
 		}
 		yStr := e.renderWordSmart(yWord)
 		return fmt.Sprintf("test %s != %s", target, yStr)

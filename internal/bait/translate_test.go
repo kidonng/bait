@@ -2262,17 +2262,17 @@ func TestTestClause(t *testing.T) {
 		{
 			"glob match",
 			"[[ $a == b* ]]\n",
-			"string match -q -- 'b*' $a\n",
+			"string match --quiet -- 'b*' $a\n",
 		},
 		{
 			"glob no match",
 			"[[ $a != b* ]]\n",
-			"! string match -q -- 'b*' $a\n",
+			"! string match --quiet -- 'b*' $a\n",
 		},
 		{
 			"regex match",
 			"[[ $str =~ ^[0-9]+$ ]]\n",
-			"string match -r -q -- '^[0-9]+$' $str\n",
+			"string match --regex --quiet -- '^[0-9]+$' $str\n",
 		},
 		{
 			"interactive shell check glob",
@@ -2317,7 +2317,7 @@ func TestTestClause(t *testing.T) {
 		{
 			"variable set test",
 			"[[ -v VAR ]]\n",
-			"set -q VAR\n",
+			"set --query VAR\n",
 		},
 		{
 			"if with double bracket",
@@ -2337,32 +2337,32 @@ func TestTestClause(t *testing.T) {
 		{
 			"single bracket var test -v",
 			"[ -v VAR ]\n",
-			"set -q VAR\n",
+			"set --query VAR\n",
 		},
 		{
 			"single bracket negated var test -v",
 			"[ ! -v VAR ]\n",
-			"! set -q VAR\n",
+			"! set --query VAR\n",
 		},
 		{
 			"builtin test var test -v",
 			"test -v VAR\n",
-			"set -q VAR\n",
+			"set --query VAR\n",
 		},
 		{
 			"builtin test negated var test -v",
 			"test ! -v VAR\n",
-			"! set -q VAR\n",
+			"! set --query VAR\n",
 		},
 		{
 			"if with single bracket var test -v",
 			"if [ -v VAR ]; then echo yes; fi\n",
-			"if set -q VAR\n    echo yes\nend\n",
+			"if set --query VAR\n    echo yes\nend\n",
 		},
 		{
 			"single bracket var test in chain",
 			"[ -v VAR ] && echo yes\n",
-			"set -q VAR && echo yes\n",
+			"set --query VAR && echo yes\n",
 		},
 	}
 	for _, tc := range tests {
@@ -2987,7 +2987,7 @@ func TestCaseWithBracketPatterns(t *testing.T) {
 				"    echo no\n" +
 				"    ;;\n" +
 				"esac\n",
-			want: "if string match -r -q -- '^.*[^[:space:]].*$' \"$line\"\n" +
+			want: "if string match --regex --quiet -- '^.*[^[:space:]].*$' \"$line\"\n" +
 				"    echo yes\n" +
 				"else\n" +
 				"    echo no\n" +
@@ -3000,9 +3000,9 @@ func TestCaseWithBracketPatterns(t *testing.T) {
 				"  [a-z]) echo lower ;;\n" +
 				"  *) echo other ;;\n" +
 				"esac\n",
-			want: "if string match -r -q -- '^[0-9]$' \"$v\"\n" +
+			want: "if string match --regex --quiet -- '^[0-9]$' \"$v\"\n" +
 				"    echo digit\n" +
-				"else if string match -r -q -- '^[a-z]$' \"$v\"\n" +
+				"else if string match --regex --quiet -- '^[a-z]$' \"$v\"\n" +
 				"    echo lower\n" +
 				"else\n" +
 				"    echo other\n" +

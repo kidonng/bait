@@ -9,7 +9,7 @@ function __bait_words --no-scope-shadowing
         return 0
     end
     if set --query IFS; and test "$IFS" != (printf '\n \t' | string collect)
-        set -l cur $argv
+        set --local cur $argv
         for d in (string split "" -- "$IFS")
             test -n "$d"; and set cur (string split -- "$d" $cur)
         end

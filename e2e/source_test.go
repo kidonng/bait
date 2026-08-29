@@ -54,7 +54,7 @@ func TestSourceFish(t *testing.T) {
 source %s
 
 set script_path (mktemp)
-echo 'set -g GREETING "hello from fish"' > $script_path
+echo 'set --global GREETING "hello from fish"' > $script_path
 echo 'function fish_add; math $argv[1] + $argv[2]; end' >> $script_path
 
 source $script_path
@@ -119,7 +119,7 @@ rm -f $script_path
 		fishScript := fmt.Sprintf(`
 source %s
 
-echo 'set -g PIPE_FISH_VAL "ok"' | source
+echo 'set --global PIPE_FISH_VAL "ok"' | source
 test "$PIPE_FISH_VAL" = "ok"; or exit 1
 `, sourceFish)
 
@@ -241,7 +241,7 @@ exit $res
 	t.Run("AutoloadViaFishFunctionPath", func(t *testing.T) {
 		functionsDir := filepath.Dir(sourceFish)
 		fishScript := fmt.Sprintf(`
-set -up fish_function_path %s
+set --unexport --prepend fish_function_path %s
 
 set script_path (mktemp)
 echo 'AUTOLOAD_VAR="autoloaded_ok"' > $script_path
@@ -278,7 +278,7 @@ rm -f $script_path
 	t.Run("AutoloadViaFishFunctionPathDot", func(t *testing.T) {
 		functionsDir := filepath.Dir(sourceFish)
 		fishScript := fmt.Sprintf(`
-set -up fish_function_path %s
+set --unexport --prepend fish_function_path %s
 
 set script_path (mktemp)
 echo 'AUTOLOAD_DOT_VAR="dot_ok"' > $script_path
@@ -299,25 +299,25 @@ rm -f $script_path
 source %s
 
 # Strip all directories containing fish from PATH
-while command -q fish
-    set -l fish_loc (dirname (command -s fish))
-    set -l new_path
+while command --query fish
+    set --local fish_loc (dirname (command --search fish))
+    set --local new_path
     for p in $PATH
         if test "$p" != "$fish_loc"
-            set -a new_path $p
+            set --append new_path $p
         end
     end
-    set -x PATH $new_path
+    set --export PATH $new_path
 end
 
-if command -q fish
+if command --query fish
     echo "fish should not be in PATH for this test" >&2
     exit 99
 end
 
 # 1. Native fish script should still succeed via status fish-path
 set script_path (mktemp)
-echo 'set -g NATIVE_OK "yes"' > $script_path
+echo 'set --global NATIVE_OK "yes"' > $script_path
 source $script_path
 test "$NATIVE_OK" = "yes"; or exit 1
 rm -f $script_path
