@@ -1,0 +1,40 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# vim: set ts=2 sw=2 tw=0 fo=cnqoj
+
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: ./cmd/bait
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    targets:
+      - linux_amd64
+      - linux_arm64
+      - darwin_arm64
+      - android_arm64
+
+archives:
+  - formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else }}{{ .Arch }}{{ end }}
+    files:
+      - README*
+      - LICENSE*
+      - COMPATIBILITY*
+
+changelog:
+  use: github-native
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"

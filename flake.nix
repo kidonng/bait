@@ -56,6 +56,7 @@
             bash
             fish
             go
+            goreleaser
             (testRunner pkgs)
           ];
         };
