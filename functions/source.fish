@@ -19,6 +19,10 @@ function source --no-scope-shadowing --description "Evaluate contents of file, t
         end
     end
 
+    # Locate current fish binary without relying on PATH
+    set -l __bait_fish (status fish-path)
+    test -n "$__bait_fish"; or set __bait_fish fish
+
     # Normalize options: if the first argument is "--", consume it
     set -l __bait_args $argv
     if test (count $__bait_args) -ge 1 -a "$__bait_args[1]" = "--"
@@ -47,7 +51,7 @@ function source --no-scope-shadowing --description "Evaluate contents of file, t
         set -l __bait_input
         read -z __bait_input
 
-        if printf "%s" "$__bait_input" | fish --no-execute 2>/dev/null
+        if printf "%s" "$__bait_input" | $__bait_fish --no-execute 2>/dev/null
             printf "%s" "$__bait_input" | builtin source - $__bait_args
             return $status
         else
@@ -72,7 +76,7 @@ function source --no-scope-shadowing --description "Evaluate contents of file, t
             return $status
         end
 
-        if fish --no-execute "$__bait_file" 2>/dev/null
+        if $__bait_fish --no-execute "$__bait_file" 2>/dev/null
             builtin source $argv
             return $status
         else
