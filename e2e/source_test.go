@@ -2,7 +2,7 @@ package e2e
 
 import (
 	"context"
-	"fmt"
+	_ "embed"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +10,48 @@ import (
 	"testing"
 	"time"
 )
+
+//go:embed testdata/source/native.fish
+var sourceNativeScript []byte
+
+//go:embed testdata/source/bash_translation.fish
+var sourceBashTranslationScript []byte
+
+//go:embed testdata/source/bash_return_code.fish
+var sourceBashReturnCodeScript []byte
+
+//go:embed testdata/source/pipeline_fish.fish
+var sourcePipelineFishScript []byte
+
+//go:embed testdata/source/pipeline_bash.fish
+var sourcePipelineBashScript []byte
+
+//go:embed testdata/source/pipeline_args.fish
+var sourcePipelineArgsScript []byte
+
+//go:embed testdata/source/double_dash.fish
+var sourceDoubleDashScript []byte
+
+//go:embed testdata/source/help.fish
+var sourceHelpScript []byte
+
+//go:embed testdata/source/nonexistent.fish
+var sourceNonexistentScript []byte
+
+//go:embed testdata/source/missing_bait.fish
+var sourceMissingBaitScript []byte
+
+//go:embed testdata/source/autoload_function_path.fish
+var sourceAutoloadFunctionPathScript []byte
+
+//go:embed testdata/source/dot.fish
+var sourceDotScript []byte
+
+//go:embed testdata/source/autoload_dot.fish
+var sourceAutoloadDotScript []byte
+
+//go:embed testdata/source/no_fish_in_path.fish
+var sourceNoFishInPathScript []byte
 
 func buildBaitBinary(t *testing.T) string {
 	t.Helper()
@@ -41,147 +83,70 @@ func TestSourceFish(t *testing.T) {
 	baitBin := buildBaitBinary(t)
 	baitDir := filepath.Dir(baitBin)
 	sourceFish := getSourceFishPath(t)
+	functionsDir := filepath.Dir(sourceFish)
 
-	// Base environment with bait prepended to PATH
+	// Base environment with bait prepended to PATH and paths exposed
 	origPath := os.Getenv("PATH")
-	envWithBait := []string{"PATH=" + baitDir + ":" + origPath}
+	envWithBait := []string{
+		"PATH=" + baitDir + ":" + origPath,
+		"SOURCE_FISH=" + sourceFish,
+		"FUNCTIONS_DIR=" + functionsDir,
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancel)
 
 	t.Run("NativeFishScript", func(t *testing.T) {
-		fishScript := fmt.Sprintf(`
-source %s
-
-set script_path (mktemp)
-echo 'set --global GREETING "hello from fish"' > $script_path
-echo 'function fish_add; math $argv[1] + $argv[2]; end' >> $script_path
-
-source $script_path
-test "$GREETING" = "hello from fish"; or exit 1
-test (fish_add 3 4) -eq 7; or exit 2
-rm -f $script_path
-`, sourceFish)
-
-		_, stdout, stderr, err := runIsolatedFish(t, ctx, []byte(fishScript), envWithBait...)
+		_, stdout, stderr, err := runIsolatedFish(t, ctx, sourceNativeScript, envWithBait...)
 		if err != nil {
 			t.Fatalf("native fish script execution failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
 		}
 	})
 
 	t.Run("BashScriptTranslation", func(t *testing.T) {
-		fishScript := fmt.Sprintf(`
-source %s
-
-set script_path (mktemp)
-echo 'GREETING="hello from bash"' > $script_path
-echo 'ARG_CONCAT="${1}_${2}"' >> $script_path
-echo 'COUNT=$#' >> $script_path
-echo 'my_bash_calc() { local a=$1; local b=$2; echo $((a * b)); }' >> $script_path
-
-source $script_path foo bar
-test "$GREETING" = "hello from bash"; or begin; echo "greeting mismatch: $GREETING"; exit 1; end
-test "$ARG_CONCAT" = "foo_bar"; or begin; echo "arg concat mismatch: $ARG_CONCAT"; exit 2; end
-test "$COUNT" = "2"; or begin; echo "count mismatch: $COUNT"; exit 3; end
-test (my_bash_calc 6 7) -eq 42; or begin; echo "calc mismatch"; exit 4; end
-rm -f $script_path
-`, sourceFish)
-
-		_, stdout, stderr, err := runIsolatedFish(t, ctx, []byte(fishScript), envWithBait...)
+		_, stdout, stderr, err := runIsolatedFish(t, ctx, sourceBashTranslationScript, envWithBait...)
 		if err != nil {
 			t.Fatalf("bash script translation failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
 		}
 	})
 
 	t.Run("BashScriptReturnCode", func(t *testing.T) {
-		fishScript := fmt.Sprintf(`
-source %s
-
-set script_path (mktemp)
-echo 'FOO=bar' > $script_path
-echo 'return 42' >> $script_path
-echo 'FOO=baz' >> $script_path
-
-source $script_path
-set res $status
-test $res -eq 42; or begin; echo "expected status 42, got $res"; exit 1; end
-test "$FOO" = "bar"; or begin; echo "expected FOO=bar, got $FOO"; exit 2; end
-rm -f $script_path
-`, sourceFish)
-
-		_, stdout, stderr, err := runIsolatedFish(t, ctx, []byte(fishScript), envWithBait...)
+		_, stdout, stderr, err := runIsolatedFish(t, ctx, sourceBashReturnCodeScript, envWithBait...)
 		if err != nil {
 			t.Fatalf("bash return code propagation failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
 		}
 	})
 
 	t.Run("PipelineFishScript", func(t *testing.T) {
-		fishScript := fmt.Sprintf(`
-source %s
-
-echo 'set --global PIPE_FISH_VAL "ok"' | source
-test "$PIPE_FISH_VAL" = "ok"; or exit 1
-`, sourceFish)
-
-		_, stdout, stderr, err := runIsolatedFish(t, ctx, []byte(fishScript), envWithBait...)
+		_, stdout, stderr, err := runIsolatedFish(t, ctx, sourcePipelineFishScript, envWithBait...)
 		if err != nil {
 			t.Fatalf("pipeline fish script failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
 		}
 	})
 
 	t.Run("PipelineBashScript", func(t *testing.T) {
-		fishScript := fmt.Sprintf(`
-source %s
-
-echo 'PIPE_BASH_VAL="translated"' | source
-test "$PIPE_BASH_VAL" = "translated"; or exit 1
-`, sourceFish)
-
-		_, stdout, stderr, err := runIsolatedFish(t, ctx, []byte(fishScript), envWithBait...)
+		_, stdout, stderr, err := runIsolatedFish(t, ctx, sourcePipelineBashScript, envWithBait...)
 		if err != nil {
 			t.Fatalf("pipeline bash script failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
 		}
 	})
 
 	t.Run("PipelineWithArguments", func(t *testing.T) {
-		fishScript := fmt.Sprintf(`
-source %s
-
-echo 'ARG_RESULT="${1}-${2}"' | source - first second
-test "$ARG_RESULT" = "first-second"; or exit 1
-`, sourceFish)
-
-		_, stdout, stderr, err := runIsolatedFish(t, ctx, []byte(fishScript), envWithBait...)
+		_, stdout, stderr, err := runIsolatedFish(t, ctx, sourcePipelineArgsScript, envWithBait...)
 		if err != nil {
 			t.Fatalf("pipeline with args failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
 		}
 	})
 
 	t.Run("DoubleDashFileArgument", func(t *testing.T) {
-		fishScript := fmt.Sprintf(`
-source %s
-
-set script_path (mktemp)
-echo 'VAR="from double dash"' > $script_path
-
-source -- $script_path
-test "$VAR" = "from double dash"; or exit 1
-rm -f $script_path
-`, sourceFish)
-
-		_, stdout, stderr, err := runIsolatedFish(t, ctx, []byte(fishScript), envWithBait...)
+		_, stdout, stderr, err := runIsolatedFish(t, ctx, sourceDoubleDashScript, envWithBait...)
 		if err != nil {
 			t.Fatalf("double dash file argument failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
 		}
 	})
 
 	t.Run("HelpOption", func(t *testing.T) {
-		fishScript := fmt.Sprintf(`
-source %s
-source -h
-`, sourceFish)
-
-		_, stdout, stderr, err := runIsolatedFish(t, ctx, []byte(fishScript), envWithBait...)
+		_, stdout, stderr, err := runIsolatedFish(t, ctx, sourceHelpScript, envWithBait...)
 		if err != nil {
 			t.Fatalf("source -h failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
 		}
@@ -191,12 +156,7 @@ source -h
 	})
 
 	t.Run("NonExistentFile", func(t *testing.T) {
-		fishScript := fmt.Sprintf(`
-source %s
-source /tmp/nonexistent_file_for_bait_test_12345
-`, sourceFish)
-
-		_, _, stderr, err := runIsolatedFish(t, ctx, []byte(fishScript), envWithBait...)
+		_, _, stderr, err := runIsolatedFish(t, ctx, sourceNonexistentScript, envWithBait...)
 		if err == nil {
 			t.Fatalf("expected error sourcing non-existent file, got success")
 		}
@@ -206,31 +166,20 @@ source /tmp/nonexistent_file_for_bait_test_12345
 	})
 
 	t.Run("MissingBaitBinary", func(t *testing.T) {
-		// Environment WITHOUT bait in PATH
-		fishScript := fmt.Sprintf(`
-source %s
-
-set script_path (mktemp)
-echo 'VAR="should fail without bait"' > $script_path
-
-source $script_path
-set res $status
-rm -f $script_path
-exit $res
-`, sourceFish)
-
 		// Provide a clean PATH with only system tools, excluding baitDir
-		cleanEnv := []string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin:" + origPath}
-		// Ensure baitDir is filtered out from PATH
 		var filteredPath []string
 		for _, p := range strings.Split(origPath, ":") {
 			if p != baitDir {
 				filteredPath = append(filteredPath, p)
 			}
 		}
-		cleanEnv = []string{"PATH=" + strings.Join(filteredPath, ":")}
+		cleanEnv := []string{
+			"PATH=" + strings.Join(filteredPath, ":"),
+			"SOURCE_FISH=" + sourceFish,
+			"FUNCTIONS_DIR=" + functionsDir,
+		}
 
-		_, stdout, stderr, err := runIsolatedFish(t, ctx, []byte(fishScript), cleanEnv...)
+		_, stdout, stderr, err := runIsolatedFish(t, ctx, sourceMissingBaitScript, cleanEnv...)
 		if err == nil {
 			t.Fatalf("expected error when bait is missing, got success")
 		}
@@ -238,99 +187,30 @@ exit $res
 			t.Fatalf("expected missing bait warning in stderr, got: %s\nstdout: %s", stderr, stdout)
 		}
 	})
+
 	t.Run("AutoloadViaFishFunctionPath", func(t *testing.T) {
-		functionsDir := filepath.Dir(sourceFish)
-		fishScript := fmt.Sprintf(`
-set --unexport --prepend fish_function_path %s
-
-set script_path (mktemp)
-echo 'AUTOLOAD_VAR="autoloaded_ok"' > $script_path
-
-source $script_path
-test "$AUTOLOAD_VAR" = "autoloaded_ok"; or exit 1
-rm -f $script_path
-`, functionsDir)
-
-		_, stdout, stderr, err := runIsolatedFish(t, ctx, []byte(fishScript), envWithBait...)
+		_, stdout, stderr, err := runIsolatedFish(t, ctx, sourceAutoloadFunctionPathScript, envWithBait...)
 		if err != nil {
 			t.Fatalf("autoload via fish_function_path failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
 		}
 	})
 
 	t.Run("DotForwardingToSource", func(t *testing.T) {
-		fishScript := fmt.Sprintf(`
-source %s
-
-set script_path (mktemp)
-echo 'DOT_VAR="${1}_${2}"' > $script_path
-
-. $script_path hello dot
-test "$DOT_VAR" = "hello_dot"; or exit 1
-rm -f $script_path
-`, sourceFish)
-
-		_, stdout, stderr, err := runIsolatedFish(t, ctx, []byte(fishScript), envWithBait...)
+		_, stdout, stderr, err := runIsolatedFish(t, ctx, sourceDotScript, envWithBait...)
 		if err != nil {
 			t.Fatalf("dot forwarding to source failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
 		}
 	})
 
 	t.Run("AutoloadViaFishFunctionPathDot", func(t *testing.T) {
-		functionsDir := filepath.Dir(sourceFish)
-		fishScript := fmt.Sprintf(`
-set --unexport --prepend fish_function_path %s
-
-set script_path (mktemp)
-echo 'AUTOLOAD_DOT_VAR="dot_ok"' > $script_path
-
-. $script_path
-test "$AUTOLOAD_DOT_VAR" = "dot_ok"; or exit 1
-rm -f $script_path
-`, functionsDir)
-
-		_, stdout, stderr, err := runIsolatedFish(t, ctx, []byte(fishScript), envWithBait...)
+		_, stdout, stderr, err := runIsolatedFish(t, ctx, sourceAutoloadDotScript, envWithBait...)
 		if err != nil {
 			t.Fatalf("autoload dot via fish_function_path failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
 		}
 	})
 
 	t.Run("NoFishInPath", func(t *testing.T) {
-		fishScript := fmt.Sprintf(`
-source %s
-
-# Strip all directories containing fish from PATH
-while command --query fish
-    set --local fish_loc (dirname (command --search fish))
-    set --local new_path
-    for p in $PATH
-        if test "$p" != "$fish_loc"
-            set --append new_path $p
-        end
-    end
-    set --export PATH $new_path
-end
-
-if command --query fish
-    echo "fish should not be in PATH for this test" >&2
-    exit 99
-end
-
-# 1. Native fish script should still succeed via status fish-path
-set script_path (mktemp)
-echo 'set --global NATIVE_OK "yes"' > $script_path
-source $script_path
-test "$NATIVE_OK" = "yes"; or exit 1
-rm -f $script_path
-
-# 2. Bash script translation should also work via status fish-path
-set bash_path (mktemp)
-echo 'BASH_OK="yes"' > $bash_path
-source $bash_path
-test "$BASH_OK" = "yes"; or exit 2
-rm -f $bash_path
-`, sourceFish)
-
-		_, stdout, stderr, err := runIsolatedFish(t, ctx, []byte(fishScript), envWithBait...)
+		_, stdout, stderr, err := runIsolatedFish(t, ctx, sourceNoFishInPathScript, envWithBait...)
 		if err != nil {
 			t.Fatalf("source failed without fish in PATH: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
 		}

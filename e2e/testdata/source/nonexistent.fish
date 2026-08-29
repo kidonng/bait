@@ -1,0 +1,2 @@
+source $SOURCE_FISH
+source /tmp/nonexistent_file_for_bait_test_12345
