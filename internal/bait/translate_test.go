@@ -1117,6 +1117,15 @@ func TestBashFishEquivalence(t *testing.T) {
 			src: "source ./sub.sh\n" +
 				". ./sub.sh\n",
 		},
+		{
+			name: "unset dynamic array element and negative index",
+			src: "items=(first second third fourth)\n" +
+				"idx=1\n" +
+				"unset \"items[$idx]\"\n" +
+				"echo \"after_idx1:${items[*]}\"\n" +
+				"unset 'items[-1]'\n" +
+				"echo \"after_neg:${items[*]}\"\n",
+		},
 	}
 
 	for _, tc := range tests {
@@ -1562,7 +1571,6 @@ func TestDeclarationWarnings(t *testing.T) {
 		{"dynamic array index", "arr[$i]=x\n", "dynamic array index"},
 		{"export flag", "export -n EDITOR\n", "not supported by fish's export"},
 		{"assert assignment", "cmd ${x:=d}\n", "no fish equivalent"},
-		{"dynamic array index in unset", "unset 'arr[$i]'\n", "dynamic array index"},
 		{"dynamic array index in test -v", "[[ -v arr[$i] ]]\n", "dynamic array index"},
 		{"case modification with pattern", "echo ${v^^[a-z]}\n", "case modification with pattern"},
 		{"single character case modification", "echo ${v^}\n", "no fish equivalent"},
@@ -2187,24 +2195,24 @@ func TestUnsetBuiltin(t *testing.T) {
 		in   string
 		want string
 	}{
-		{"unset variable", "unset x\n", "set --erase x\n"},
-		{"unset multiple variables", "unset a b c\n", "set --erase a b c\n"},
-		{"unset with -v flag", "unset -v x y\n", "set --erase x y\n"},
-		{"unset function", "unset -f my_func\n", "functions --erase my_func\n"},
-		{"unset multiple functions", "unset -f f1 f2\n", "functions --erase f1 f2\n"},
-		{"unset array element", "unset 'arr[0]'\n", "set --erase arr[1]\n"},
-		{"unset array element unquoted", "unset arr[2]\n", "set --erase arr[3]\n"},
-		{"unset negative array element", "unset 'arr[-1]'\n", "set --erase arr[-1]\n"},
-		{"unset in chain", "test -n \"$x\" && unset x\n", "test -n \"$x\" && set --erase x\n"},
-		{"unset mixed -f and -v", "unset -f f1 f2 -v v1 v2\n", "functions --erase f1 f2\nset --erase v1 v2\n"},
-		{"unset mixed var and func", "unset v1 -f f1\n", "set --erase v1\nfunctions --erase f1\n"},
-		{"unset mixed interleaved", "unset -f f1 -v v1 -f f2\n", "functions --erase f1\nset --erase v1\nfunctions --erase f2\n"},
-		{"unset mixed in chain", "test -n \"$x\" && unset -f f1 -v v1\n", "test -n \"$x\" && begin; functions --erase f1; set --erase v1; end\n"},
-		{"unset PIPESTATUS special var", "unset PIPESTATUS\n", "set --erase pipestatus\n"},
+		{"unset variable", "unset x\n", "unset x\n"},
+		{"unset multiple variables", "unset a b c\n", "unset a b c\n"},
+		{"unset with -v flag", "unset -v x y\n", "unset -v x y\n"},
+		{"unset function", "unset -f my_func\n", "unset -f my_func\n"},
+		{"unset multiple functions", "unset -f f1 f2\n", "unset -f f1 f2\n"},
+		{"unset array element", "unset 'arr[0]'\n", "unset 'arr[0]'\n"},
+		{"unset array element unquoted", "unset arr[2]\n", "unset arr[2]\n"},
+		{"unset negative array element", "unset 'arr[-1]'\n", "unset 'arr[-1]'\n"},
+		{"unset in chain", "test -n \"$x\" && unset x\n", "test -n \"$x\" && unset x\n"},
+		{"unset mixed -f and -v", "unset -f f1 f2 -v v1 v2\n", "unset -f f1 f2 -v v1 v2\n"},
+		{"unset mixed var and func", "unset v1 -f f1\n", "unset v1 -f f1\n"},
+		{"unset mixed interleaved", "unset -f f1 -v v1 -f f2\n", "unset -f f1 -v v1 -f f2\n"},
+		{"unset mixed in chain", "test -n \"$x\" && unset -f f1 -v v1\n", "test -n \"$x\" && unset -f f1 -v v1\n"},
+		{"unset PIPESTATUS special var", "unset PIPESTATUS\n", "unset PIPESTATUS\n"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, warnings, err := Translate([]byte(tc.in))
+			got, warnings, err := TranslateWithOptions([]byte(tc.in), Options{NoHelpers: true})
 			if err != nil {
 				t.Fatalf("Translate(%q) error: %v", tc.in, err)
 			}
@@ -2544,6 +2552,20 @@ func TestUnaliasHelperEmitted(t *testing.T) {
 	}
 }
 
+func TestUnsetHelperEmitted(t *testing.T) {
+	in := `unset foo`
+	out, warnings, err := Translate([]byte(in))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", warnings)
+	}
+	if !strings.Contains(string(out), "function unset") {
+		t.Errorf("expected unset helper to be emitted, got: %s", string(out))
+	}
+}
+
 func TestSourceHelperEmitted(t *testing.T) {
 	in := `source ./sub.sh`
 	out, warnings, err := Translate([]byte(in))
@@ -2600,7 +2622,7 @@ func TestTranslateWithOptionsNoHelpers(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	outStr := string(outNoHelpers)
-	for _, helperFunc := range []string{"function source", "function .", "function hash", "function getopts"} {
+	for _, helperFunc := range []string{"function source", "function .", "function hash", "function getopts", "function unset"} {
 		if strings.Contains(outStr, helperFunc) {
 			t.Errorf("did not expect %q to be emitted with NoHelpers=true, got: %s", helperFunc, outStr)
 		}
@@ -2622,6 +2644,7 @@ func TestHelperAPI(t *testing.T) {
 		{"unalias", "function unalias"},
 		{"__bait_words", "function __bait_words"},
 		{"__bait_exec", "function __bait_exec"},
+		{"unset", "function unset"},
 	}
 
 	for _, tc := range tests {
@@ -3245,7 +3268,7 @@ func TestCommentPreservation(t *testing.T) {
 			want: "# before shift\n" +
 				"set --erase argv[1..2] # trailing shift\n" +
 				"# before unset\n" +
-				"set --erase myvar # trailing unset\n",
+				"unset myvar # trailing unset\n",
 		},
 		{
 			name: "heredoc pipeline comments",
@@ -3260,7 +3283,7 @@ func TestCommentPreservation(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, _, err := Translate([]byte(tc.in))
+			got, _, err := TranslateWithOptions([]byte(tc.in), Options{NoHelpers: true})
 			if err != nil {
 				t.Fatalf("Translate(%q) error: %v", tc.in, err)
 			}

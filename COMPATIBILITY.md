@@ -115,9 +115,7 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 | `set -- a b`, `set - a b`, `set a b` | `set argv a b` | Positional parameter assignment |
 | `set --` | `set argv` | Clears positional parameters |
 | `shift`, `shift N` | `set --erase argv[1]`, `set --erase argv[1..N]` | Shifts positional arguments |
-| `unset x`, `unset -v x y` | `set --erase x`, `set --erase x y` | Erases variable |
-| `unset -f func` | `functions --erase func` | Erases function definition |
-| `unset 'arr[0]'` | `set --erase arr[1]` | Erases specific array element |
+| `unset x`, `unset -v x y`, `unset -f func`, `unset 'arr[0]'` | `unset x`, `unset -v x y`, `unset -f func`, `unset 'arr[0]'` | Supported via an on-demand runtime helper |
 | `read -r line`, `read _`, `read status`, `read pipestatus` | `read line`, `read _unused`, `read _status`, `read _pipestatus` | Drops `-r` (default in Fish); automatically mangles variable names conflicting with Fish read-only variables (e.g. `_` $\to$ `_unused`, `status` $\to$ `_status`) |
 | `set` (bare), `set -` | *(dropped with warning)* | Prints shell state / trace flags in Bash; dropped in Fish |
 | `set -e`, `set -u`, `set +x`, `set -o ...` | *(dropped with warning)* | Fish has no shell option flags |
@@ -218,3 +216,6 @@ When scripts use POSIX constructs that Fish does not provide natively, `bait` in
 6. **`source` and `.` transparent script translation**:
    - Injected when scripts call `source` or `.`.
    - Translates Bash scripts on-the-fly via `bait` (requires `bait` in PATH) and evaluates them in the caller's scope. Can also be printed for interactive Fish configurations via `bait helper source` and `bait helper .`.
+7. **`unset` variable and function erasure**:
+   - Injected when scripts call `unset`.
+   - Erases variables (including array elements with 0-based index translation) and function definitions, supporting `-v`, `-f`, `-n`, and `--`.

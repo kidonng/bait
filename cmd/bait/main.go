@@ -60,6 +60,7 @@ Available helpers:
   getopts
   hash
   unalias
+  unset
   __bait_words
   __bait_exec
 

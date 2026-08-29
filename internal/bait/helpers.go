@@ -20,6 +20,9 @@ var baitHashHelper string
 //go:embed helpers/unalias.fish
 var baitUnaliasHelper string
 
+//go:embed helpers/unset.fish
+var baitUnsetHelper string
+
 //go:embed helpers/source.fish
 var baitSourceHelper string
 
@@ -36,6 +39,7 @@ const (
 	helperUnalias
 	helperSource
 	helperDot
+	helperUnset
 	numHelpers
 )
 
@@ -52,6 +56,7 @@ var allHelpers = []helperInfo{
 	{kind: helperUnalias, code: baitUnaliasHelper},
 	{kind: helperSource, code: baitSourceHelper},
 	{kind: helperDot, code: baitDotHelper},
+	{kind: helperUnset, code: baitUnsetHelper},
 }
 
 func (e *emitter) needHelper(h helperKind) {
@@ -78,6 +83,8 @@ func Helper(name string) (string, error) {
 		return baitHashHelper, nil
 	case "unalias":
 		return baitUnaliasHelper, nil
+	case "unset":
+		return baitUnsetHelper, nil
 	case "__bait_words":
 		return baitWordsHelper, nil
 	case "__bait_exec":
@@ -95,6 +102,7 @@ func Helpers() []string {
 		"getopts",
 		"hash",
 		"unalias",
+		"unset",
 		"__bait_words",
 		"__bait_exec",
 	}

@@ -264,7 +264,7 @@ var fishBuiltins = map[string]bool{
 	"return": true, "set": true, "set_color": true, "shift": true, "source": true,
 	".": true, "status": true, "string": true, "switch": true, "test": true,
 	"[": true, "time": true, "true": true, "type": true, "ulimit": true,
-	"umask": true, "unset": true, "vared": true, "wait": true, "while": true,
+	"umask": true, "vared": true, "wait": true, "while": true,
 }
 
 func isFishBuiltin(name string) bool {
@@ -425,6 +425,8 @@ func (e *emitter) file(f *syntax.File) {
 				e.needHelper(helperSource)
 			} else if isLitWord(c.Args[0], ".") {
 				e.needHelper(helperDot)
+			} else if isLitWord(c.Args[0], "unset") {
+				e.needHelper(helperUnset)
 			}
 		}
 		return true
@@ -603,10 +605,6 @@ func (e *emitter) simple(s *syntax.Stmt) {
 			e.shiftCmd(s, c)
 			return
 		}
-		if len(c.Assigns) == 0 && len(c.Args) > 0 && isLitWord(c.Args[0], "unset") {
-			e.unsetCmd(s, c)
-			return
-		}
 		if len(c.Args) > 0 {
 			if isLitWord(c.Args[0], "getopts") {
 				e.needHelper(helperGetopts)
@@ -618,6 +616,8 @@ func (e *emitter) simple(s *syntax.Stmt) {
 				e.needHelper(helperSource)
 			} else if isLitWord(c.Args[0], ".") {
 				e.needHelper(helperDot)
+			} else if isLitWord(c.Args[0], "unset") {
+				e.needHelper(helperUnset)
 			}
 		}
 		e.warnBashOnlyBuiltin(s, c)
@@ -737,59 +737,6 @@ func (e *emitter) shiftCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 		return
 	}
 	e.printLineWithTrailing(fmt.Sprintf("set --erase argv[1..%s]%s", arg, tail), sc.trailing)
-}
-func (e *emitter) unsetCmd(s *syntax.Stmt, c *syntax.CallExpr) {
-	sc := classifyComments(s)
-	e.leadingComments(sc.leading)
-	tail := e.tails(s)
-	isFunc := false
-	stopFlags := false
-
-	type unsetChunk struct {
-		isFunc bool
-		names  []string
-	}
-	var chunks []unsetChunk
-
-	for _, argWord := range c.Args[1:] {
-		arg := e.render(argWord)
-		unquoted := unquoteArg(arg)
-		if !stopFlags && strings.HasPrefix(arg, "-") && len(arg) > 1 {
-			if arg == "--" {
-				stopFlags = true
-				continue
-			}
-			if strings.Contains(arg, "f") {
-				isFunc = true
-			}
-			if strings.Contains(arg, "v") || strings.Contains(arg, "n") {
-				isFunc = false
-			}
-			continue
-		}
-		name := unquoted
-		if !isFunc {
-			name = e.shiftArrayIndex(s.Position, unquoted)
-		}
-		if len(chunks) > 0 && chunks[len(chunks)-1].isFunc == isFunc {
-			chunks[len(chunks)-1].names = append(chunks[len(chunks)-1].names, name)
-		} else {
-			chunks = append(chunks, unsetChunk{isFunc: isFunc, names: []string{name}})
-		}
-	}
-
-	var lines []string
-	for _, chunk := range chunks {
-		if len(chunk.names) == 0 {
-			continue
-		}
-		if chunk.isFunc {
-			lines = append(lines, fmt.Sprintf("functions --erase %s%s", strings.Join(chunk.names, " "), tail))
-		} else {
-			lines = append(lines, fmt.Sprintf("set --erase %s%s", strings.Join(chunk.names, " "), tail))
-		}
-	}
-	e.printLinesWithTrailing(lines, sc.trailing)
 }
 
 func unquoteArg(arg string) string {
@@ -1397,6 +1344,8 @@ func (e *emitter) normalize(f *syntax.File) {
 					e.needHelper(helperSource)
 				} else if isLitWord(x.Args[0], ".") {
 					e.needHelper(helperDot)
+				} else if isLitWord(x.Args[0], "unset") {
+					e.needHelper(helperUnset)
 				}
 			}
 			if len(x.Args) > 0 && isLitWord(x.Args[0], "eval") && x.Args[0].Pos().Col() > 0 {
@@ -1523,7 +1472,7 @@ func chainNeedsRewrite(b *syntax.BinaryCmd) bool {
 			found = true
 			return false
 		}
-		if len(c.Args) > 0 && (isLitWord(c.Args[0], "shift") || isLitWord(c.Args[0], "unset")) {
+		if len(c.Args) > 0 && isLitWord(c.Args[0], "shift") {
 			found = true
 			return false
 		}
@@ -1613,7 +1562,7 @@ func (e *emitter) chainLeaf(st *syntax.Stmt) string {
 			}
 			return line
 		}
-		if c != nil && len(c.Args) > 0 && (isLitWord(c.Args[0], "shift") || isLitWord(c.Args[0], "unset")) {
+		if c != nil && len(c.Args) > 0 && isLitWord(c.Args[0], "shift") {
 			txt := e.inlineStmtText(st)
 			if strings.Contains(txt, "\n") {
 				var parts []string
