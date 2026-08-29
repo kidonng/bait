@@ -26,16 +26,20 @@ However, it can already translate [nvm](https://github.com/nvm-sh/nvm) and many 
 # Translate from stdin
 echo 'VAR=hello; echo "$VAR"' | bait
 
-# Translate a script to stdout
-bait -- install.sh > install.fish
+# Translate to stdout
+bait install.sh > install.fish
 
 # Suppress translation warnings on stderr
-bait -- --quiet install.sh > install.fish
+bait --quiet install.sh > install.fish
+
+# Source your favorite script
+bait < script.sh | source
+curl script.sh | bait | source
 ```
 
 Bind a shortcut to paste bash snippet as fish:
 
-```fish
+```sh
 bind ctrl-b 'commandline --insert (fish_clipboard_paste | bait)
 ```
 
