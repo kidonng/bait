@@ -10,8 +10,8 @@ import (
 	"testing"
 )
 
-// TestPassthrough pins down tier 0 of the translation policy: constructs
-// that modern fish accepts natively must survive translation unchanged
+// TestPassthrough pins down the translation policy: constructs that
+// modern fish accepts natively must survive translation unchanged
 // (modulo printer whitespace normalization).
 func TestPassthrough(t *testing.T) {
 	tests := []struct {
@@ -93,9 +93,9 @@ func TestPassthrough(t *testing.T) {
 	}
 }
 
-// TestTier1 covers the keyword-level rewrites: fish block structure,
-// loops, case, functions, and grouping.
-func TestTier1(t *testing.T) {
+// TestCompoundStatements covers the keyword-level rewrites: fish block
+// structure, loops, case, functions, and grouping.
+func TestCompoundStatements(t *testing.T) {
 	tests := []struct {
 		name string
 		in   string
@@ -316,7 +316,7 @@ func TestTier1(t *testing.T) {
 				t.Fatalf("Translate(%q) error: %v", tc.in, err)
 			}
 			if string(got) != tc.want {
-				t.Errorf("tier1 mismatch\n in:   %q\n got:  %q\n want: %q",
+				t.Errorf("compound statement mismatch\n in:   %q\n got:  %q\n want: %q",
 					tc.in, got, tc.want)
 			}
 		})
@@ -521,8 +521,7 @@ func TestNonShellScriptFails(t *testing.T) {
 
 // TestBashFishEquivalence executes each fixture under bash and executes
 // its bait translation under fish, requiring identical stdout and exit
-// status. Fixtures must avoid tier-2 constructs (assignments, positional
-// parameters); inputs are injected through the environment instead.
+// status.
 func TestBashFishEquivalence(t *testing.T) {
 	if _, err := exec.LookPath("fish"); err != nil {
 		t.Skip("fish not found in PATH")
@@ -1238,10 +1237,10 @@ func TestReadFlags(t *testing.T) {
 	}
 }
 
-// TestTier2 covers semantic rewrites of assignments and declaration
+// TestAssignments covers semantic rewrites of assignments and declaration
 // clauses. Every successful path here must also be warning-free; the
 // long-option policy applies to all generated set commands.
-func TestTier2(t *testing.T) {
+func TestAssignments(t *testing.T) {
 	tests := []struct {
 		name string
 		in   string
@@ -1334,7 +1333,7 @@ func TestTier2(t *testing.T) {
 				t.Errorf("unexpected warnings: %v", warnings)
 			}
 			if string(got) != tc.want {
-				t.Errorf("tier2 mismatch\n in:   %q\n got:  %q\n want: %q",
+				t.Errorf("assignment mismatch\n in:   %q\n got:  %q\n want: %q",
 					tc.in, got, tc.want)
 			}
 		})
@@ -1551,9 +1550,9 @@ func TestPseudoArrayContextVars(t *testing.T) {
 	}
 }
 
-// TestTier2Warnings covers declaration forms without a faithful fish
+// TestDeclarationWarnings covers declaration forms without a faithful fish
 // mapping; they pass through verbatim and must be reported.
-func TestTier2Warnings(t *testing.T) {
+func TestDeclarationWarnings(t *testing.T) {
 	tests := []struct {
 		name     string
 		in       string
@@ -1592,8 +1591,8 @@ func TestTier2Warnings(t *testing.T) {
 	}
 }
 
-// TestTier2Params covers fish-side rewrites of parameter expansions.
-func TestTier2Params(t *testing.T) {
+// TestParameterExpansions covers fish-side rewrites of parameter expansions.
+func TestParameterExpansions(t *testing.T) {
 	tests := []struct {
 		name string
 		in   string
@@ -1698,9 +1697,9 @@ func TestTier2Params(t *testing.T) {
 	}
 }
 
-// TestTier2Arith covers bash integer arithmetic mapped onto fish math
+// TestArithmetic covers bash integer arithmetic mapped onto fish math
 // and test.
-func TestTier2Arith(t *testing.T) {
+func TestArithmetic(t *testing.T) {
 	tests := []struct {
 		name string
 		in   string
@@ -1770,9 +1769,9 @@ func TestTier2Arith(t *testing.T) {
 	}
 }
 
-// TestTier2Ops covers ${var...} operator rewrites into pure command
+// TestParameterOperators covers ${var...} operator rewrites into pure command
 // substitutions.
-func TestTier2Ops(t *testing.T) {
+func TestParameterOperators(t *testing.T) {
 	tests := []struct {
 		name string
 		in   string
@@ -1875,9 +1874,9 @@ func TestTier2Ops(t *testing.T) {
 	}
 }
 
-// TestTier2Arrays covers bash array operations mapped onto fish lists,
+// TestArrays covers bash array operations mapped onto fish lists,
 // including the 0-based to 1-based index shift.
-func TestTier2Arrays(t *testing.T) {
+func TestArrays(t *testing.T) {
 	tests := []struct {
 		name string
 		in   string

@@ -16,7 +16,7 @@ const indentUnit = "    "
 //
 // Structural nodes (if/while/for/case/function/blocks) are rewritten into
 // fish syntax. Simple command statements are delegated to the mvdan
-// printer verbatim, which preserves tier-0 constructs unchanged.
+// printer verbatim, which preserves native fish constructs unchanged.
 // Unsupported statements are emitted verbatim and reported as warnings.
 type emitter struct {
 	buf               bytes.Buffer
@@ -90,8 +90,7 @@ func (e *emitter) warn(pos syntax.Pos, format string, args ...any) {
 }
 
 // render prints any non-file node through the mvdan bash printer. The
-// result is verbatim bash text; callers rely on it being fish-compatible
-// for tier-0 constructs.
+// result is verbatim bash text; callers rely on it being fish-compatible.
 func (e *emitter) render(node syntax.Node) string {
 	if node == nil {
 		return ""
