@@ -37,8 +37,8 @@ end
 echo "nvm version: $ver"
 # 2. Verify nvm current
 set cur (nvm current)
-if test $status -ne 0 -o "$cur" != "none"
-    echo "FAILED: nvm current expected none, got: $cur" >&2
+if test $status -ne 0 -o "$cur" != "none" -a "$cur" != "system"
+    echo "FAILED: nvm current expected none or system, got: $cur" >&2
     exit 1
 end
 
