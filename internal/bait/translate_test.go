@@ -2586,6 +2586,31 @@ func TestDotHelperEmitted(t *testing.T) {
 	}
 }
 
+func TestTranslateWithOptionsNoHelpers(t *testing.T) {
+	in := "source ./sub.sh\nhash ls\nwhile getopts :a opt \"$arg\"; do echo $opt; done\n"
+	outWithHelpers, _, err := Translate([]byte(in))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(outWithHelpers), "function source") {
+		t.Errorf("expected function source to be emitted by default")
+	}
+
+	outNoHelpers, _, err := TranslateWithOptions([]byte(in), Options{NoHelpers: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	outStr := string(outNoHelpers)
+	for _, helperFunc := range []string{"function source", "function .", "function hash", "function getopts"} {
+		if strings.Contains(outStr, helperFunc) {
+			t.Errorf("did not expect %q to be emitted with NoHelpers=true, got: %s", helperFunc, outStr)
+		}
+	}
+	if !strings.Contains(outStr, "source ./sub.sh") {
+		t.Errorf("expected source ./sub.sh in output, got: %s", outStr)
+	}
+}
+
 func TestHelperAPI(t *testing.T) {
 	tests := []struct {
 		name     string

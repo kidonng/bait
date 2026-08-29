@@ -42,11 +42,7 @@ bait < script.sh | source
 curl script.sh | bait | source
 ```
 
-Bind a shortcut to paste bash snippet into fish:
-
-```sh
-bind ctrl-b 'commandline --insert (fish_clipboard_paste | bait)
-```
+### Advanced
 
 Load helpers to directly `source` bash scripts:
 
@@ -54,6 +50,21 @@ Load helpers to directly `source` bash scripts:
 bait helper source > ~/.config/fish/functions/source.fish
 bait helper . > ~/.config/fish/functions/..fish
 ```
+
+Load all helpers:
+
+```fish
+for helper in (bait helper --names)
+    bait helper $helper > ~/.config/fish/functions/$helper.fish
+end
+```
+
+Bind a shortcut to paste bash snippet into fish:
+
+```fish
+bind ctrl-b 'commandline --insert (fish_clipboard_paste | bait --no-helpers)'
+```
+
 
 ## Docs
 

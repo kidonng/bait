@@ -24,6 +24,7 @@ type emitter struct {
 	printer           *syntax.Printer
 	warnings          []Warning
 	err               error
+	noHelpers         bool
 	inFunction        bool
 	inSubshell        bool
 	neededHelpers     [numHelpers]bool
@@ -36,6 +37,7 @@ type emitter struct {
 
 func (e *emitter) newSubEmitter() *emitter {
 	sub := newEmitter()
+	sub.noHelpers = e.noHelpers
 	sub.inFunction = e.inFunction
 	sub.inSubshell = e.inSubshell
 	if e.funcLocals != nil {
@@ -368,13 +370,15 @@ func (e *emitter) file(f *syntax.File) {
 		}
 	}
 
-	for _, h := range allHelpers {
-		if e.neededHelpers[h.kind] {
-			e.buf.WriteString(h.code)
-			if !strings.HasSuffix(h.code, "\n") {
+	if !e.noHelpers {
+		for _, h := range allHelpers {
+			if e.neededHelpers[h.kind] {
+				e.buf.WriteString(h.code)
+				if !strings.HasSuffix(h.code, "\n") {
+					e.buf.WriteByte('\n')
+				}
 				e.buf.WriteByte('\n')
 			}
-			e.buf.WriteByte('\n')
 		}
 	}
 	e.buf.Write(bodyBytes)

@@ -26,12 +26,23 @@ func (w Warning) Error() string {
 	return fmt.Sprintf("%d:%d: %s", w.Line, w.Col, w.Text)
 }
 
+// Options specifies translation options.
+type Options struct {
+	// NoHelpers suppresses emitting runtime helper functions.
+	NoHelpers bool
+}
+
 // Translate parses src as a bash script and returns its fish translation.
 //
 // Constructs that bait cannot translate are emitted unchanged and reported
 // through the returned warnings. The result is a best-effort translation
 // and should be reviewed before execution.
 func Translate(src []byte) ([]byte, []Warning, error) {
+	return TranslateWithOptions(src, Options{})
+}
+
+// TranslateWithOptions translates src using the provided options.
+func TranslateWithOptions(src []byte, opts Options) ([]byte, []Warning, error) {
 	src = translateShebang(src)
 	if len(bytes.TrimSpace(src)) == 0 {
 		return src, nil, nil
@@ -45,6 +56,7 @@ func Translate(src []byte) ([]byte, []Warning, error) {
 		return nil, nil, fmt.Errorf("parse bash: %w", err)
 	}
 	em := newEmitter()
+	em.noHelpers = opts.NoHelpers
 	em.normalize(file)
 	em.file(file)
 	if em.err != nil {

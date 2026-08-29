@@ -29,6 +29,12 @@ func TestHelp(t *testing.T) {
 			if !strings.Contains(stdout.String(), "BAIT_QUIET") {
 				t.Errorf("expected stdout to contain 'BAIT_QUIET', got %q", stdout.String())
 			}
+			if !strings.Contains(stdout.String(), "--no-helpers") {
+				t.Errorf("expected stdout to contain '--no-helpers', got %q", stdout.String())
+			}
+			if !strings.Contains(stdout.String(), "BAIT_NO_HELPERS") {
+				t.Errorf("expected stdout to contain 'BAIT_NO_HELPERS', got %q", stdout.String())
+			}
 			if stderr.Len() != 0 {
 				t.Errorf("expected empty stderr, got %q", stderr.String())
 			}
@@ -220,6 +226,51 @@ func TestQuietEnv(t *testing.T) {
 	})
 }
 
+func TestNoHelpersFlag(t *testing.T) {
+	script := "source ./sub.sh\n"
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{"--no-helpers"}, strings.NewReader(script), &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d", exitCode)
+	}
+	if strings.Contains(stdout.String(), "function source") {
+		t.Errorf("expected stdout not to contain 'function source', got: %s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "source ./sub.sh") {
+		t.Errorf("expected stdout to contain 'source ./sub.sh', got: %s", stdout.String())
+	}
+}
+
+func TestNoHelpersEnv(t *testing.T) {
+	script := "source ./sub.sh\n"
+	truthyVals := []string{"1", "true", "TRUE", "yes", "YES", "on"}
+	for _, val := range truthyVals {
+		t.Run("truthy_"+val, func(t *testing.T) {
+			t.Setenv("BAIT_NO_HELPERS", val)
+			var stdout, stderr bytes.Buffer
+			exitCode := run([]string{}, strings.NewReader(script), &stdout, &stderr)
+			if exitCode != 0 {
+				t.Fatalf("expected exit code 0, got %d", exitCode)
+			}
+			if strings.Contains(stdout.String(), "function source") {
+				t.Errorf("expected no helpers with BAIT_NO_HELPERS=%s, got: %s", val, stdout.String())
+			}
+		})
+	}
+
+	t.Run("cli flag overrides env", func(t *testing.T) {
+		t.Setenv("BAIT_NO_HELPERS", "1")
+		var stdout, stderr bytes.Buffer
+		exitCode := run([]string{"--no-helpers=false"}, strings.NewReader(script), &stdout, &stderr)
+		if exitCode != 0 {
+			t.Fatalf("expected exit code 0, got %d", exitCode)
+		}
+		if !strings.Contains(stdout.String(), "function source") {
+			t.Errorf("expected helpers when --no-helpers=false overrides BAIT_NO_HELPERS=1")
+		}
+	})
+}
+
 func TestHelperCommand(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -288,6 +339,42 @@ func TestHelperUnknown(t *testing.T) {
 	}
 }
 
+func TestHelperNames(t *testing.T) {
+	for _, flag := range []string{"--names", "-names"} {
+		t.Run(flag, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			exitCode := run([]string{"helper", flag}, strings.NewReader(""), &stdout, &stderr)
+			if exitCode != 0 {
+				t.Fatalf("expected exit code 0, got %d (stderr: %s)", exitCode, stderr.String())
+			}
+			if stderr.Len() != 0 {
+				t.Errorf("expected empty stderr, got %q", stderr.String())
+			}
+			lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
+			expected := []string{"source", ".", "getopts", "hash", "unalias", "__bait_words", "__bait_exec"}
+			if len(lines) != len(expected) {
+				t.Fatalf("expected %d names, got %d: %v", len(expected), len(lines), lines)
+			}
+			for i, exp := range expected {
+				if lines[i] != exp {
+					t.Errorf("line %d: expected %q, got %q", i, exp, lines[i])
+				}
+			}
+		})
+	}
+}
+
+func TestHelperNamesTooManyArguments(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{"helper", "--names", "extra"}, strings.NewReader(""), &stdout, &stderr)
+	if exitCode != 2 {
+		t.Fatalf("expected exit code 2, got %d", exitCode)
+	}
+	if !strings.Contains(stderr.String(), "error: too many arguments for --names") {
+		t.Errorf("expected stderr to contain 'error: too many arguments for --names', got: %q", stderr.String())
+	}
+}
+
 func TestHelperHelp(t *testing.T) {
 	for _, flag := range []string{"--help", "-h"} {
 		t.Run(flag, func(t *testing.T) {
@@ -301,6 +388,9 @@ func TestHelperHelp(t *testing.T) {
 			}
 			if !strings.Contains(stdout.String(), "helper <name>") {
 				t.Errorf("expected stdout to contain 'helper <name>', got %q", stdout.String())
+			}
+			if !strings.Contains(stdout.String(), "--names") {
+				t.Errorf("expected stdout to contain '--names', got %q", stdout.String())
 			}
 			if !strings.Contains(stdout.String(), "Available helpers:") {
 				t.Errorf("expected stdout to contain 'Available helpers:', got %q", stdout.String())
