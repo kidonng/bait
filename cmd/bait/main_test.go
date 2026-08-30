@@ -288,6 +288,7 @@ func TestHelperCommand(t *testing.T) {
 		{"unset", []string{"helper", "unset"}, "function unset"},
 		{"words", []string{"helper", "__bait_words"}, "function __bait_words"},
 		{"exec", []string{"helper", "__bait_exec"}, "function __bait_exec"},
+		{"ostype", []string{"helper", "__bait_ostype"}, "function __bait_ostype"},
 	}
 
 	for _, tc := range tests {
@@ -355,7 +356,7 @@ func TestHelperNames(t *testing.T) {
 				t.Errorf("expected empty stderr, got %q", stderr.String())
 			}
 			lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
-			expected := []string{"source", ".", "getopts", "hash", "unalias", "unset", "__bait_words", "__bait_exec"}
+			expected := []string{"source", ".", "getopts", "hash", "unalias", "unset", "__bait_words", "__bait_exec", "__bait_ostype"}
 			if len(lines) != len(expected) {
 				t.Fatalf("expected %d names, got %d: %v", len(expected), len(lines), lines)
 			}
@@ -399,7 +400,7 @@ func TestHelperHelp(t *testing.T) {
 			if !strings.Contains(stdout.String(), "Available helpers:") {
 				t.Errorf("expected stdout to contain 'Available helpers:', got %q", stdout.String())
 			}
-			for _, h := range []string{"source", ".", "getopts", "hash", "unalias", "__bait_words", "__bait_exec"} {
+			for _, h := range []string{"source", ".", "getopts", "hash", "unalias", "__bait_words", "__bait_exec", "__bait_ostype"} {
 				if !strings.Contains(stdout.String(), h) {
 					t.Errorf("expected stdout to contain helper %q, got %q", h, stdout.String())
 				}

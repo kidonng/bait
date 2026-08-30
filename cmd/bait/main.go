@@ -64,6 +64,7 @@ Available helpers:
   unset
   __bait_words
   __bait_exec
+  __bait_ostype
 
 Options:
   --names     list all available helper names

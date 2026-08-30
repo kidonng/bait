@@ -429,6 +429,9 @@ func (e *emitter) file(f *syntax.File) {
 				e.needHelper(helperUnset)
 			}
 		}
+		if pe, ok := n.(*syntax.ParamExp); ok && pe.Param != nil && pe.Param.Value == "OSTYPE" {
+			e.needHelper(helperOSType)
+		}
 		return true
 	})
 	var body bytes.Buffer
@@ -2901,7 +2904,8 @@ func (e *emitter) paramReplacements(pe *syntax.ParamExp) []syntax.WordPart {
 	case "DIRSTACK":
 		return []syntax.WordPart{namedParam("dirstack")}
 	case "OSTYPE":
-		return []syntax.WordPart{pipeSubstPart([]string{"uname", "-s"}, []string{"string", "lower"})}
+		e.needHelper(helperOSType)
+		return []syntax.WordPart{substPart("__bait_ostype")}
 	case "RANDOM":
 		return []syntax.WordPart{substPart("random")}
 	case "SRANDOM":

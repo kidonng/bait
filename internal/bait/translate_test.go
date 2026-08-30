@@ -1184,6 +1184,23 @@ func TestBashFishEquivalence(t *testing.T) {
 				"    echo \"f:[$x]\"\n" +
 				"done\n",
 		},
+		{
+			name: "ostype helper matches bash platform identifier",
+			src: "if [[ \"$OSTYPE\" == linux-gnu* || \"$OSTYPE\" == darwin* || \"$OSTYPE\" == linux* ]]; then\n" +
+				"    echo 'matched ostype prefix'\n" +
+				"fi\n" +
+				"case \"$OSTYPE\" in\n" +
+				"    darwin*)\n" +
+				"        echo 'matched darwin branch'\n" +
+				"        ;;\n" +
+				"    linux-gnu*|linux-musl*|linux*)\n" +
+				"        echo 'matched linux branch'\n" +
+				"        ;;\n" +
+				"    *)\n" +
+				"        echo 'matched other branch'\n" +
+				"        ;;\n" +
+				"esac\n",
+		},
 	}
 
 	for _, tc := range tests {
@@ -1715,9 +1732,9 @@ func TestParameterExpansions(t *testing.T) {
 			"echo $pipestatus $pipestatus[1] $pipestatus[2] $pipestatus $(count $pipestatus)\n",
 		},
 		{
-			"OSTYPE maps to uname -s lower",
+			"OSTYPE maps to __bait_ostype",
 			"echo $OSTYPE \"${OSTYPE}\"\n",
-			"echo $(uname -s | string lower) \"$(uname -s | string lower)\"\n",
+			baitOSTypeHelper + "\necho $(__bait_ostype) \"$(__bait_ostype)\"\n",
 		},
 		{
 			"BASH and BASH_ARGV0 maps to status",
@@ -2703,6 +2720,7 @@ func TestHelperAPI(t *testing.T) {
 		{"__bait_words", "function __bait_words"},
 		{"__bait_exec", "function __bait_exec"},
 		{"unset", "function unset"},
+		{"__bait_ostype", "function __bait_ostype"},
 	}
 
 	for _, tc := range tests {

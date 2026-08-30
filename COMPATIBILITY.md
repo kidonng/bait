@@ -143,7 +143,7 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 | `$GROUPS` | `$(id -g)` | Primary group ID |
 | `$HOSTNAME` | `$hostname` | Hostname |
 | `$HOSTTYPE`, `$MACHTYPE` | `$(uname -m)` | Machine architecture |
-| `$OSTYPE` | `$(uname -s \| string lower)` | Operating system (lowercase) |
+| `$OSTYPE` | `$(__bait_ostype)` | Operating system identifier (emulating Bash `linux-gnu`, `darwin<version>`, etc. via helper) |
 | `$PIPESTATUS` | `$pipestatus` | Array of pipeline exit codes |
 | `$DIRSTACK` | `$dirstack` | Directory stack array |
 | `$RANDOM`, `$SRANDOM` | `$(random)`, `$(random 0 4294967295)` | Random numbers (0–32767 and 32-bit unsigned 0–4294967295) |
@@ -218,4 +218,7 @@ When scripts use POSIX constructs that Fish does not provide natively, `bait` in
    - Translates Bash scripts on-the-fly via `bait` (requires `bait` in PATH) and evaluates them in the caller's scope. Can also be printed for interactive Fish configurations via `bait helper source` and `bait helper .`.
 7. **`unset` variable and function erasure**:
    - Injected when scripts call `unset`.
-   - Erases variables (including array elements with 0-based index translation) and function definitions, supporting `-v`, `-f`, `-n`, and `--`.
+   - Erases variables (including array elements with 0-based index translation) and function definitions, supporting `-v`, `-f`, `-n`, and `--` (with `-n` handled as standard variable erasure due to Fish's lack of namerefs).
+8. **`__bait_ostype` operating system identifier**:
+   - Injected when scripts expand `$OSTYPE`.
+   - Resolves the operating system identifier matching Bash's target format (e.g. `linux-gnu`, `linux-musl`, `darwin<version>`, `freebsd<version>`), ensuring pattern matches like `linux-gnu*` and `darwin*` behave identically to Bash.
