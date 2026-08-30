@@ -47,12 +47,15 @@ echo 'VAR=hello; echo "$VAR"' | bait
 # Translate to stdout
 bait install.sh > install.fish
 
-# Suppress warnings on stderr (or BAIT_QUIET=1 env)
-bait --quiet install.sh > install.fish
-
 # Source your favorite script
 bait < script.sh | source
 curl script.sh | bait | source
+
+# Suppress warnings on stderr (or BAIT_QUIET=1)
+bait --quiet install.sh > install.fish
+
+# Prevent helper injection (or BAIT_NO_HELPERS=1)
+bait --no-helpers install.sh > install.fish
 ```
 
 ### Advanced
@@ -77,7 +80,6 @@ Bind a shortcut to paste bash snippet into fish:
 ```fish
 bind ctrl-b 'commandline --insert (fish_clipboard_paste | bait --no-helpers)'
 ```
-
 
 ## Docs
 

@@ -26,6 +26,9 @@ While `bait` strives for behavioral equivalence, Fish semantics differ from Bash
 4. **Globbing Behavior**:
    - In Fish, unmatched globs abort the command (equivalent to Bash's `failglob`).
    - The `?` character is treated as a literal by default in modern Fish (`qmark-noglob`).
+5. **Exit Status Lifetime (`$?` vs `$status`)**:
+   - In Fish, `$status` is immediately updated by virtually every statement, built-in test (`test`, `string`), block boundary (`begin ... end`), and command substitution.
+   - Unlike Bash where `$?` can survive certain non-mutating shell constructs, in Fish `$status` must be captured immediately into a variable (`set --local exit_code $status`) if it needs to be checked after intermediate statements.
 
 ---
 
@@ -36,13 +39,13 @@ The following constructs are currently untranslated by `bait` or lack direct Fis
 ### Currently Untranslated Syntax
 
 - **Loops**: C-style `for ((i=0; i<n; i++))` loops and `select` loops (not yet translated to equivalent `while` loops)
-- **Parameter Assertions**: `${v:=def}`, `${v?=error}` (not yet expanded to conditional checks)
+- **Parameter Assertions**: `${v:=def}`, `${v=def}`, `${v?=error}`, `${v?error}` (not yet expanded to conditional checks; emitted verbatim with warning)
 - **Extended Arithmetic Operators**: Ternary `?:`, bitwise (`& | ^ ~ << >>`), and logical operators inside `$(( ... ))`
 - **Dynamic Array Indexing**: Variable array indexing (`arr[$i]`) and non-integer substring/slice offsets (require dynamic 1-based index shifting)
 - **Case Modification**: Pattern-based (`${v^^pattern}`, `${v,,pattern}`) and single-character (`${v^}`, `${v,}`) transformations (full conversions `${v^^}` and `${v,,}` are supported)
 - **Case Fallthrough**: `;&` and `;;&`
 - **Process Substitution**: Output process substitution `>(cmd)`
-- **Variable Attributes**: `readonly`, namerefs (`declare -n`)
+- **Variable Attributes**: `readonly`, namerefs (`declare -n`), and attribute declaration flags (`declare -i`, `declare -a`, `declare -A`, `declare -r`, `typeset -i`, etc.; unsupported attributes are stripped or warn, and associative arrays `-A` have no Fish equivalent)
 - **Export Flags**: `export -f`, `export -n`, etc.
 - **Word Boundaries**: Embedded `$@` or `$*` inside larger words (e.g. `prefix$@suffix`)
 
@@ -124,6 +127,38 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 | `unalias foo`, `unalias "$1"`, `unalias -a` | `unalias foo`, `unalias "$argv[1]"`, `unalias -a` | Supported via an on-demand runtime helper |
 | `source file.sh`, `. file.sh` | `source file.sh`, `. file.sh` | Supported via an on-demand runtime helper translating Bash scripts on-the-fly |
 
+#### Lexical Scoping Decision Matrix
+
+`bait` enforces uniform lexical scoping across all constructs without dynamic caller-callee heuristics:
+
+| Bash Construct | Context | Fish Translation | Target Scope | Semantic Contract |
+|---|---|---|---|---|
+| `x=val` | Top-level | `set x val` | Universal / local to script | Standard script-level binding |
+| `x=val` (undeclared) | Inside function | `set --global x val` | Global | Emulates Bash's dynamic global assignment |
+| `local x=val` / `local x` | Inside function | `set --function x val` | Function | Strictly scoped to current function frame |
+| `declare x=val` / `typeset x=val` | Inside function | `set --function x val` | Function | Function-local unless `-g` is supplied |
+| `declare -g x=val` | Inside function | `set --global x val` | Global | Explicitly targets global scope |
+| `x=val` (after `local x`) | Inside function | `set x val` | Function | Mutates existing function-local variable |
+| `((x++))` / `((x = val))` | Inside function (undeclared) | `set --global x (math ...)` | Global | Arithmetic commands match unadorned assignment scoping |
+| `((x++))` (after `local x`) | Inside function | `set x (math ...)` | Function | Reassigns existing function-local variable |
+| `read x` | Inside function (undeclared) | `read --global x` | Global | Preserves global side-effect of `read` |
+| `read x` (after `local x`) | Inside function | `read x` | Function | Modifies declared local variable |
+
+#### Array Indexing & Slicing Transformation Guide
+
+Bash uses 0-based arrays, while Fish lists are 1-based. `bait` systematically rewrites static indices and slices:
+
+| Operation | Bash (0-based) | Fish (1-based) | Notes |
+|---|---|---|---|
+| First element | `${arr[0]}` | `$arr[1]` | Index shifted by +1 |
+| Literal N-th element | `${arr[N]}` | `$arr[N+1]` | Literal offset shifted by +1 |
+| Last element | `${arr[-1]}` | `$arr[-1]` | Negative index from end supported natively by Fish |
+| Length-based slice | `${arr[@]:start:len}` | `$arr[(start+1)..(start+len)]` | Shifted start index + computed end index |
+| Open slice to end | `${arr[@]:start}` | `$arr[(start+1)..-1]` | Slice starting from 1-based offset to end (`-1`) |
+| Negative slice offset | `${arr[@]: -N}` | `$arr[-N..-1]` | Slice last `N` elements to end |
+| Array element erasure | `unset "arr[N]"` | `set --erase arr[N+1]` | Done via `unset` helper with 0-to-1 conversion |
+
+
 ### Parameter Expansions & Special Variables
 
 #### Special Variables
@@ -139,7 +174,7 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 | `"$@"`, `${arr[@]}` | `$argv`, `$arr` | Unquoted list (see [Runtime Differences](#1-runtime-differences)) |
 | `"$*"` | `"$argv"` | Space-joined single string |
 | `$*`, `${arr[*]}` | `$argv`, `$arr` | Unquoted list |
-| `$UID` | `$(id -u)` | User ID |
+| `$UID`, `$EUID` | `$(id -u)`, `$EUID` | User ID (`$EUID` is native in modern Fish) |
 | `$GROUPS` | `$(id -g)` | Primary group ID |
 | `$HOSTNAME` | `$hostname` | Hostname |
 | `$HOSTTYPE`, `$MACHTYPE` | `$(uname -m)` | Machine architecture |
@@ -149,6 +184,7 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 | `$RANDOM`, `$SRANDOM` | `$(random)`, `$(random 0 4294967295)` | Random numbers (0–32767 and 32-bit unsigned 0–4294967295) |
 | `$EPOCHSECONDS` | `$(date +%s)` | Unix epoch timestamp |
 | `$BASH`, `$BASH_COMMAND`, `$FUNCNAME`, `$FUNCNAME[0]` | `$(status fish-path)`, `$(status current-command)`, `$(status current-function)` | Execution context introspection |
+| `$BASH_VERSION` | `$(echo 5.2.0)` | Bash compatibility version string |
 | `$-` (standalone) | `$(status is-interactive && echo i \|\| echo '')` | Interactive shell check (emits warning; uses `status is-interactive`) |
 
 *Note: Bash-internal completion variables (`COMP_*`), debug stack arrays (`BASH_ARGC`, `BASH_LINENO`), and prompt variables (`PS0`…`PS4`) are not mapped to Fish.*
