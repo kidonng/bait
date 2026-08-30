@@ -621,6 +621,19 @@ func (e *emitter) simple(s *syntax.Stmt) {
 			}
 		}
 		e.warnBashOnlyBuiltin(s, c)
+		if isSynthesizedSet(c) {
+			sc := classifyComments(s)
+			e.leadingComments(sc.leading)
+			varName := c.Args[1].Parts[0].(*syntax.Lit).Value
+			val := e.renderWordSmart(c.Args[2])
+			scope := ""
+			if e.inFunction && (e.funcLocals == nil || (!e.funcLocals[varName])) {
+				scope = "--global"
+			}
+			line := setLineText(scope, varName, val) + e.tails(s)
+			e.printLineWithTrailing(line, sc.trailing)
+			return
+		}
 		if len(c.Assigns) == 0 && e.isSetBuiltin(c) {
 			if e.setCmd(s, c) {
 				return
@@ -716,6 +729,10 @@ func (e *emitter) isSetBuiltin(c *syntax.CallExpr) bool {
 	return e.render(c.Args[0]) == "set"
 }
 
+func isSynthesizedSet(c *syntax.CallExpr) bool {
+	return c != nil && len(c.Args) == 3 && c.Args[0].Pos().Col() == 0 && isLitWord(c.Args[0], "set")
+}
+
 func (e *emitter) shiftCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 	sc := classifyComments(s)
 	e.leadingComments(sc.leading)
@@ -736,7 +753,9 @@ func (e *emitter) shiftCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 		}
 		return
 	}
-	e.printLineWithTrailing(fmt.Sprintf("set --erase argv[1..%s]%s", arg, tail), sc.trailing)
+	argWord := e.renderWordSmart(c.Args[1])
+	unquoted := unquoteArg(argWord)
+	e.printLineWithTrailing(fmt.Sprintf("if test \"%s\" -gt 0 2>/dev/null; set --erase argv[1..%s]; end%s", unquoted, unquoted, tail), sc.trailing)
 }
 
 func unquoteArg(arg string) string {
@@ -1333,6 +1352,11 @@ func (e *emitter) normalize(f *syntax.File) {
 			if len(x.Args) > 0 {
 				if isLitWord(x.Args[0], "getopts") {
 					e.needHelper(helperGetopts)
+					if len(x.Args) >= 3 {
+						if lit, ok := isBareLit(x.Args[2]); ok {
+							x.Args[2] = litWord(e.varName(lit))
+						}
+					}
 					if len(x.Args) == 3 {
 						x.Args = append(x.Args, &syntax.Word{Parts: []syntax.WordPart{argvParam()}})
 					}
@@ -1554,6 +1578,15 @@ func (e *emitter) chainSideText(st *syntax.Stmt) string {
 // become set commands, everything else renders verbatim.
 func (e *emitter) chainLeaf(st *syntax.Stmt) string {
 	c, ok := st.Cmd.(*syntax.CallExpr)
+	if isSynthesizedSet(c) {
+		varName := c.Args[1].Parts[0].(*syntax.Lit).Value
+		val := e.renderWordSmart(c.Args[2])
+		scope := ""
+		if e.inFunction && (e.funcLocals == nil || !e.funcLocals[varName]) {
+			scope = "--global"
+		}
+		return setLineText(scope, varName, val) + e.tails(st)
+	}
 	if !ok || len(c.Args) != 0 || len(c.Assigns) == 0 {
 		if operand, negated, ok := matchTestDashV(c); ok {
 			line := e.renderTestDashV(operand, negated)
@@ -1606,7 +1639,7 @@ func (e *emitter) chainLeaf(st *syntax.Stmt) string {
 			return e.render(st)
 		}
 		curScope := scope
-		if e.inFunction && e.funcLocals != nil && e.funcLocals[a.Name.Value] {
+		if e.inFunction && e.funcLocals != nil && (e.funcLocals[a.Name.Value] || e.funcLocals[e.varName(a.Name.Value)]) {
 			curScope = ""
 		}
 		parts = append(parts, fmt.Sprintf("set %s%s %s",
@@ -2400,7 +2433,7 @@ func (e *emitter) assignStmt(s *syntax.Stmt, c *syntax.CallExpr) {
 	for _, a := range c.Assigns {
 		curScope := scope
 		if a.Name != nil {
-			if e.inFunction && e.funcLocals != nil && e.funcLocals[a.Name.Value] {
+			if e.inFunction && e.funcLocals != nil && (e.funcLocals[a.Name.Value] || e.funcLocals[e.varName(a.Name.Value)]) {
 				curScope = ""
 			}
 		}
@@ -2595,7 +2628,13 @@ func (e *emitter) declClause(s *syntax.Stmt, d *syntax.DeclClause) {
 				if a.Name != nil {
 					args = append(args, e.varName(a.Name.Value))
 				} else if a.Value != nil {
-					args = append(args, e.renderWordSmart(a.Value))
+					val := e.renderWordSmart(a.Value)
+					unquoted := unquoteArg(val)
+					if mangled, ok := fishReservedVars[unquoted]; ok {
+						args = append(args, mangled)
+					} else {
+						args = append(args, val)
+					}
 				}
 				continue
 			}
@@ -2651,6 +2690,7 @@ func (e *emitter) declClause(s *syntax.Stmt, d *syntax.DeclClause) {
 					e.funcLocals = make(map[string]bool)
 				}
 				e.funcLocals[a.Name.Value] = true
+				e.funcLocals[e.varName(a.Name.Value)] = true
 			}
 			if e.commandPrefixVars[a.Name.Value] && isEmptyValue(a.Value) {
 				if scope != "" {
@@ -3075,24 +3115,26 @@ func (e *emitter) arithCommand(ac *syntax.ArithmCmd) syntax.Command {
 		if !ok {
 			return nil
 		}
+		mangled := e.varName(name)
 		op := "+"
 		if x.Op == syntax.Dec {
 			op = "-"
 		}
-		return setCall(name, mathSubst("$"+name+" "+op+" 1"))
+		return setCall(mangled, mathSubst("$"+mangled+" "+op+" 1"))
 
 	case *syntax.BinaryArithm:
 		if name, ok := bareArithName(x.X); ok && isAssignOp(x.Op) {
+			mangled := e.varName(name)
 			var payload string
 			var valid bool
 			if x.Op == syntax.Assgn {
 				payload, valid = e.arithmText(x.Y)
 			} else {
 				rhs, rhsOK := e.arithmText(x.Y)
-				payload, valid = "$"+name+" "+arithAssignSymbols[x.Op]+" "+rhs, rhsOK
+				payload, valid = "$"+mangled+" "+arithAssignSymbols[x.Op]+" "+rhs, rhsOK
 			}
 			if valid {
-				return setCall(name, mathSubst(payload))
+				return setCall(mangled, mathSubst(payload))
 			}
 			return nil
 		}
@@ -3128,7 +3170,7 @@ func (e *emitter) arithmText(n syntax.ArithmExpr) (string, bool) {
 			return s, true
 		}
 		if syntax.ValidName(s) {
-			return "$" + s, true
+			return "$" + e.varName(s), true
 		}
 		return "", false
 	case *syntax.ParenArithm:
@@ -3166,7 +3208,7 @@ func (e *emitter) operandValue(n syntax.ArithmExpr) (*syntax.Word, bool) {
 	case strings.HasPrefix(s, "$"):
 		return dq(litPart(s)), true
 	case syntax.ValidName(s):
-		return dq(namedParam(s)), true
+		return dq(namedParam(e.varName(s))), true
 	}
 	return nil, false
 }
@@ -3342,9 +3384,22 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 		if pe.Repl.All {
 			args = append(args, "--all")
 		}
+		var replArg string
+		if pe.Repl.With == nil {
+			replArg = "''"
+		} else if containsParam(pe.Repl.With) {
+			pe.Repl.With.Parts = e.spliceParts(pe.Repl.With.Parts, false)
+			repl := e.renderWordSmart(pe.Repl.With)
+			if !strings.HasPrefix(repl, `"`) && !strings.HasPrefix(repl, "'") {
+				repl = `"` + repl + `"`
+			}
+			replArg = repl
+		} else {
+			replArg = fishSingleQuote(e.render(pe.Repl.With))
+		}
 		args = append(args, "--",
 			regexArg,
-			fishSingleQuote(e.render(pe.Repl.With)),
+			replArg,
 			varPlain)
 		return []syntax.WordPart{substPart(args...)}, true
 
@@ -3597,71 +3652,92 @@ func containsParam(w *syntax.Word) bool {
 }
 
 func (e *emitter) renderDynamicRegex(w *syntax.Word, isPrefix bool, isSuffix bool, lazy bool) (string, bool) {
-	if !containsParam(w) {
-		body, ok := globToRegex(e.render(w), lazy)
-		if !ok {
-			return "", false
-		}
-		if isPrefix {
-			body = "^" + body
-		}
-		if isSuffix {
-			body += "$"
-		}
-		return fishSingleQuote(body), true
+	type segment struct {
+		isStatic bool
+		text     string
 	}
-
-	var segments []string
+	var segments []segment
 	if isPrefix {
-		segments = append(segments, fishSingleQuote("^"))
+		segments = append(segments, segment{isStatic: true, text: "^"})
 	}
 
-	var walkParts func(parts []syntax.WordPart) bool
-	walkParts = func(parts []syntax.WordPart) bool {
+	var walkParts func(parts []syntax.WordPart, inQuotes bool) bool
+	walkParts = func(parts []syntax.WordPart, inQuotes bool) bool {
 		for _, p := range parts {
 			switch pt := p.(type) {
 			case *syntax.Lit:
-				re, ok := globToRegex(pt.Value, lazy)
-				if !ok {
-					return false
-				}
-				if re != "" {
-					segments = append(segments, fishSingleQuote(re))
+				if inQuotes {
+					segments = append(segments, segment{isStatic: true, text: regexp.QuoteMeta(pt.Value)})
+				} else {
+					re, ok := globToRegex(pt.Value, lazy)
+					if !ok {
+						return false
+					}
+					if re != "" {
+						segments = append(segments, segment{isStatic: true, text: re})
+					}
 				}
 			case *syntax.SglQuoted:
-				re := regexp.QuoteMeta(pt.Value)
-				if re != "" {
-					segments = append(segments, fishSingleQuote(re))
-				}
+				segments = append(segments, segment{isStatic: true, text: regexp.QuoteMeta(pt.Value)})
 			case *syntax.DblQuoted:
-				if !walkParts(pt.Parts) {
+				if !walkParts(pt.Parts, true) {
 					return false
 				}
 			case *syntax.ParamExp:
 				rendered := e.renderWordSmart(&syntax.Word{Parts: []syntax.WordPart{pt}})
-				segments = append(segments, fmt.Sprintf("(string escape --style=regex -- \"%s\")", rendered))
+				segments = append(segments, segment{
+					isStatic: false,
+					text:     fmt.Sprintf("(string escape --style=regex -- \"%s\")", rendered),
+				})
 			default:
 				rendered := e.renderWordSmart(&syntax.Word{Parts: []syntax.WordPart{pt}})
 				if strings.HasPrefix(rendered, "$") {
-					segments = append(segments, fmt.Sprintf("(string escape --style=regex -- \"%s\")", rendered))
+					segments = append(segments, segment{
+						isStatic: false,
+						text:     fmt.Sprintf("(string escape --style=regex -- \"%s\")", rendered),
+					})
 				} else {
-					segments = append(segments, fmt.Sprintf("(string escape --style=regex -- %s)", rendered))
+					segments = append(segments, segment{
+						isStatic: false,
+						text:     fmt.Sprintf("(string escape --style=regex -- %s)", rendered),
+					})
 				}
 			}
 		}
 		return true
 	}
 
-	if !walkParts(w.Parts) {
+	if w != nil && !walkParts(w.Parts, false) {
 		return "", false
 	}
 	if isSuffix {
-		segments = append(segments, fishSingleQuote("$"))
+		segments = append(segments, segment{isStatic: true, text: "$"})
 	}
 	if len(segments) == 0 {
 		return "''", true
 	}
-	return strings.Join(segments, ""), true
+
+	var parts []string
+	var staticBuf strings.Builder
+	flushStatic := func() {
+		if staticBuf.Len() > 0 {
+			parts = append(parts, fishSingleQuote(staticBuf.String()))
+			staticBuf.Reset()
+		}
+	}
+	for _, seg := range segments {
+		if seg.isStatic {
+			staticBuf.WriteString(seg.text)
+		} else {
+			flushStatic()
+			parts = append(parts, seg.text)
+		}
+	}
+	flushStatic()
+	if len(parts) == 0 {
+		return "''", true
+	}
+	return strings.Join(parts, ""), true
 }
 
 func findClosingBracket(runes []rune, start int) int {

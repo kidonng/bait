@@ -40,7 +40,13 @@ function source --no-scope-shadowing --description "Evaluate contents of file, t
         set --local __bait_input
         read --null __bait_input
 
-        if printf "%s" "$__bait_input" | $__bait_fish --no-execute 2>/dev/null
+        set --local __bait_has_bash_shebang 0
+        set --local __bait_first_line (printf "%s" "$__bait_input" | begin; set -l l; read -l l; echo "$l"; end)
+        if string match --quiet --regex '^#!\s*(\S+/)?(env\s+(-\S+\s+)*)?(bash|sh|ash|dash)\b' -- "$__bait_first_line"
+            set __bait_has_bash_shebang 1
+        end
+
+        if test $__bait_has_bash_shebang -eq 0; and printf "%s" "$__bait_input" | $__bait_fish --no-execute 2>/dev/null
             printf "%s" "$__bait_input" | builtin source - $__bait_args
             return $status
         else
@@ -65,7 +71,14 @@ function source --no-scope-shadowing --description "Evaluate contents of file, t
             return $status
         end
 
-        if $__bait_fish --no-execute "$__bait_file" 2>/dev/null
+        set --local __bait_has_bash_shebang 0
+        set --local __bait_first_line
+        read -l __bait_first_line <"$__bait_file"
+        if string match --quiet --regex '^#!\s*(\S+/)?(env\s+(-\S+\s+)*)?(bash|sh|ash|dash)\b' -- "$__bait_first_line"
+            set __bait_has_bash_shebang 1
+        end
+
+        if test $__bait_has_bash_shebang -eq 0; and $__bait_fish --no-execute "$__bait_file" 2>/dev/null
             builtin source $argv
             return $status
         else

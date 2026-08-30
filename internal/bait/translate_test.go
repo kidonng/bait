@@ -1126,6 +1126,64 @@ func TestBashFishEquivalence(t *testing.T) {
 				"unset 'items[-1]'\n" +
 				"echo \"after_neg:${items[*]}\"\n",
 		},
+		{
+			name: "function arithmetic assignment is global like bash",
+			src: "incr_global() {\n" +
+				"    ((count = 42))\n" +
+				"    ((count++))\n" +
+				"}\n" +
+				"count=0\n" +
+				"incr_global\n" +
+				"echo \"count:$count\"\n",
+		},
+		{
+			name: "function arithmetic assignment with local",
+			src: "incr_local() {\n" +
+				"    local count=10\n" +
+				"    ((count++))\n" +
+				"    echo \"local_count:$count\"\n" +
+				"}\n" +
+				"count=1\n" +
+				"incr_local\n" +
+				"echo \"outer_count:$count\"\n",
+		},
+		{
+			name: "reserved variable status arithmetic and getopts",
+			src: "status=10\n" +
+				"echo \"arith:$((status + 5))\"\n" +
+				"((status++))\n" +
+				"echo \"status_after:$status\"\n",
+		},
+		{
+			name: "pattern replacement with variable",
+			src: "orig=\"hello 123 world\"\n" +
+				"rep=\"456\"\n" +
+				"echo \"rep:${orig/123/$rep}\"\n",
+		},
+		{
+			name: "pattern strip with quoted wildcard",
+			src: "s=\"*.txt\"\n" +
+				"echo \"stripped:[${s#\"*.txt\"}]\"\n" +
+				"s2=\"foo.txt\"\n" +
+				"echo \"kept:[${s2#\"*.txt\"}]\"\n",
+		},
+		{
+			name: "dynamic shift with zero",
+			src: "test_shift() {\n" +
+				"    n=0\n" +
+				"    shift $n\n" +
+				"    echo \"args:$*\"\n" +
+				"}\n" +
+				"test_shift a b c\n",
+		},
+		{
+			name: "custom ifs empty fields",
+			src: "IFS=\":\"\n" +
+				"val=\"a::b\"\n" +
+				"for x in $val; do\n" +
+				"    echo \"f:[$x]\"\n" +
+				"done\n",
+		},
 	}
 
 	for _, tc := range tests {
@@ -1974,7 +2032,7 @@ func TestShiftBuiltin(t *testing.T) {
 		{"bare shift", "shift\n", "set --erase argv[1]\n"},
 		{"shift 1", "shift 1\n", "set --erase argv[1]\n"},
 		{"shift 2", "shift 2\n", "set --erase argv[1..2]\n"},
-		{"shift dynamic", "shift $n\n", "set --erase argv[1..$n]\n"},
+		{"shift dynamic", "shift $n\n", "if test \"$n\" -gt 0 2>/dev/null; set --erase argv[1..$n]; end\n"},
 		{"shift 0 is no-op", "shift 0\n", "true\n"},
 	}
 	for _, tc := range tests {

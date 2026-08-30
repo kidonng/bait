@@ -8,13 +8,23 @@ function __bait_words --no-scope-shadowing
         end
         return 0
     end
-    if set --query IFS; and test "$IFS" != (printf '\n \t' | string collect)
+    if set --query IFS; and not string match --quiet --regex '^\s+$' -- "$IFS"
         set --local cur $argv
         for d in (string split "" -- "$IFS")
             test -n "$d"; and set cur (string split -- "$d" $cur)
         end
+        set --local is_whitespace_ifs 1
+        if string match --quiet --regex '\S' -- "$IFS"
+            if not string match --quiet --regex '\s' -- "$IFS"
+                set is_whitespace_ifs 0
+            end
+        end
         for w in $cur
-            test -n "$w"; and printf '%s\n' $w
+            if test $is_whitespace_ifs -eq 0
+                printf '%s\n' "$w"
+            else
+                test -n "$w"; and printf '%s\n' "$w"
+            end
         end
         return 0
     end
