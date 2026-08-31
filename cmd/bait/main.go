@@ -65,6 +65,7 @@ Available helpers:
   __bait_words
   __bait_exec
   __bait_ostype
+  __bait_eval
 
 Options:
   --names     list all available helper names

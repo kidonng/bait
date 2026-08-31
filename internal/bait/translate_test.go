@@ -423,21 +423,6 @@ func TestWarnings(t *testing.T) {
 			"status print-stack-trace",
 		},
 		{
-			"eval passthrough warning",
-			"eval \"echo hello\"\n",
-			"eval executes fish syntax",
-		},
-		{
-			"eval in condition warning",
-			"if eval \"$cmd\"; then echo ok; fi\n",
-			"eval executes fish syntax",
-		},
-		{
-			"eval in command substitution warning",
-			"x=$(eval \"$cmd\")\n",
-			"eval executes fish syntax",
-		},
-		{
 			"multiple heredocs warning",
 			"cmd <<EOF1 <<EOF2\na\nEOF1\nb\nEOF2\n",
 			"multiple here-documents on a single command are not supported",
@@ -2731,7 +2716,7 @@ func TestTranslateWithOptionsNoHelpers(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	outStr := string(outNoHelpers)
-	for _, helperFunc := range []string{"function source", "function .", "function hash", "function getopts", "function unset"} {
+	for _, helperFunc := range []string{"function source", "function .", "function hash", "function getopts", "function unset", "function __bait_eval"} {
 		if strings.Contains(outStr, helperFunc) {
 			t.Errorf("did not expect %q to be emitted with NoHelpers=true, got: %s", helperFunc, outStr)
 		}
@@ -2755,6 +2740,8 @@ func TestHelperAPI(t *testing.T) {
 		{"__bait_exec", "function __bait_exec"},
 		{"unset", "function unset"},
 		{"__bait_ostype", "function __bait_ostype"},
+		{"__bait_eval", "function __bait_eval"},
+		{"eval", "function __bait_eval"},
 	}
 
 	for _, tc := range tests {
@@ -2803,11 +2790,80 @@ func TestBaitExecDoesNotEvalMetacharacters(t *testing.T) {
 	}
 }
 
-func TestEvalPassthroughWithWarning(t *testing.T) {
-	src := "eval \"echo hello\"\n"
-	got, warnings, err := Translate([]byte(src))
+func TestEvalHelperEmitted(t *testing.T) {
+	in := "eval \"echo hello\"\n"
+	got, warnings, err := Translate([]byte(in))
 	if err != nil {
 		t.Fatalf("Translate failed: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", warnings)
+	}
+	gotStr := string(got)
+	if !strings.Contains(gotStr, "function __bait_eval") {
+		t.Errorf("expected __bait_eval helper to be emitted, got: %s", gotStr)
+	}
+	if !strings.Contains(gotStr, "__bait_eval \"echo hello\"") {
+		t.Errorf("expected '__bait_eval \"echo hello\"' in output, got: %s", gotStr)
+	}
+}
+
+func TestBaitEvalHelperExecution(t *testing.T) {
+	if _, err := exec.LookPath("fish"); err != nil {
+		t.Skip("fish not installed")
+	}
+	t.Run("missing_bait_returns_127", func(t *testing.T) {
+		fishScript := fmt.Sprintf("%s\n__bait_eval \"echo 1\"\n", baitEvalHelper)
+		cmd := exec.Command("fish", "-c", fishScript)
+		cmd.Env = []string{"PATH=/nonexistent"}
+		out, err := cmd.CombinedOutput()
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			if exitErr.ExitCode() != 127 {
+				t.Errorf("expected exit code 127, got %d", exitErr.ExitCode())
+			}
+		} else {
+			t.Errorf("expected exit code 127, got %v (output: %s)", err, string(out))
+		}
+		if !strings.Contains(string(out), "eval: 'bait' is required") {
+			t.Errorf("expected missing bait error message, got: %s", string(out))
+		}
+	})
+
+	t.Run("empty_arguments_is_noop", func(t *testing.T) {
+		fishScript := fmt.Sprintf("%s\n__bait_eval\n", baitEvalHelper)
+		cmd := exec.Command("fish", "-c", fishScript)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("expected 0 exit status, got %v (output: %s)", err, string(out))
+		}
+	})
+
+	t.Run("evaluates_translated_code_with_mock_bait", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		mockBait := filepath.Join(tmpDir, "bait")
+		script := "#!/bin/sh\nread -r line\ncase \"$line\" in\n  \"FOO=bar\") echo 'set FOO bar' ;;\n  *) echo \"$line\" ;;\nesac\n"
+		if err := os.WriteFile(mockBait, []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		fishScript := fmt.Sprintf("%s\n__bait_eval \"FOO=bar\"\necho \"FOO:$FOO\"\n", baitEvalHelper)
+		cmd := exec.Command("fish", "-c", fishScript)
+		cmd.Env = []string{"PATH=" + tmpDir + ":" + os.Getenv("PATH")}
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("fish execution failed: %v (output: %s)", err, string(out))
+		}
+		if !strings.Contains(string(out), "FOO:bar") {
+			t.Errorf("expected FOO:bar in output, got: %s", string(out))
+		}
+	})
+}
+
+func TestEvalPassthroughWithWarningWhenNoHelpers(t *testing.T) {
+	src := "eval \"echo hello\"\n"
+	got, warnings, err := TranslateWithOptions([]byte(src), Options{NoHelpers: true})
+	if err != nil {
+		t.Fatalf("TranslateWithOptions failed: %v", err)
 	}
 	if string(got) != src {
 		t.Errorf("expected verbatim output %q, got %q", src, string(got))
@@ -2821,6 +2877,36 @@ func TestEvalPassthroughWithWarning(t *testing.T) {
 	}
 	if !strings.Contains(w.Text, "eval executes fish syntax") {
 		t.Errorf("expected warning text to mention eval executes fish syntax, got: %s", w.Text)
+	}
+}
+
+func TestEvalNoHelpersWarnings(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+	}{
+		{"eval in condition", "if eval \"$cmd\"; then echo ok; fi\n"},
+		{"eval in command substitution", "x=$(eval \"$cmd\")\n"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, warnings, err := TranslateWithOptions([]byte(tc.src), Options{NoHelpers: true})
+			if err != nil {
+				t.Fatalf("TranslateWithOptions(%q) error: %v", tc.src, err)
+			}
+			if len(warnings) == 0 {
+				t.Fatalf("TranslateWithOptions(%q) produced no warnings, want one containing 'eval executes fish syntax' (output: %q)", tc.src, got)
+			}
+			found := false
+			for _, w := range warnings {
+				if strings.Contains(w.Text, "eval executes fish syntax") {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("expected warning to contain 'eval executes fish syntax', got: %v", warnings)
+			}
+		})
 	}
 }
 

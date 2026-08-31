@@ -1359,8 +1359,15 @@ func (e *emitter) normalize(f *syntax.File) {
 					e.needHelper(helperUnset)
 				}
 			}
-			if len(x.Args) > 0 && isLitWord(x.Args[0], "eval") && x.Args[0].Pos().Col() > 0 {
-				e.warn(x.Args[0].Pos(), "eval executes fish syntax; incompatible bash syntax will fail at runtime; emitted verbatim")
+			if len(x.Args) > 0 && isLitWord(x.Args[0], "eval") {
+				if e.noHelpers {
+					if x.Args[0].Pos().Col() > 0 {
+						e.warn(x.Args[0].Pos(), "eval executes fish syntax; incompatible bash syntax will fail at runtime; emitted verbatim")
+					}
+				} else {
+					e.needHelper(helperEval)
+					x.Args[0] = litWord("__bait_eval")
+				}
 			}
 			normalizeReadCmd(x)
 			for i := 1; i < len(x.Args); i++ {

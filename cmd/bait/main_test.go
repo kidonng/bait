@@ -289,6 +289,7 @@ func TestHelperCommand(t *testing.T) {
 		{"words", []string{"helper", "__bait_words"}, "function __bait_words"},
 		{"exec", []string{"helper", "__bait_exec"}, "function __bait_exec"},
 		{"ostype", []string{"helper", "__bait_ostype"}, "function __bait_ostype"},
+		{"eval", []string{"helper", "__bait_eval"}, "function __bait_eval"},
 	}
 
 	for _, tc := range tests {
@@ -356,7 +357,7 @@ func TestHelperNames(t *testing.T) {
 				t.Errorf("expected empty stderr, got %q", stderr.String())
 			}
 			lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
-			expected := []string{"source", ".", "getopts", "hash", "unalias", "unset", "__bait_words", "__bait_exec", "__bait_ostype"}
+			expected := []string{"source", ".", "getopts", "hash", "unalias", "unset", "__bait_words", "__bait_exec", "__bait_ostype", "__bait_eval"}
 			if len(lines) != len(expected) {
 				t.Fatalf("expected %d names, got %d: %v", len(expected), len(lines), lines)
 			}

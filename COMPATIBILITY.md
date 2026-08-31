@@ -55,7 +55,6 @@ The following constructs are currently untranslated by `bait` or lack direct Fis
 - **Bash-only Builtins**: Builtins without Fish equivalents (`shopt`, `let`, `caller`, `compgen`, `compopt`, `enable`, `fc`)
 - **High File Descriptor Redirections**: Redirections to file descriptors above 2 (`3>`, `4>&1`, etc.) on blocks, functions, or builtins (supported in Fish only for external commands)
 - **Background Function Execution**: Functions cannot be started in the background in Fish (`func &`)
-- **Dynamic Evaluation**: `eval` statements pass through verbatim (Fish `eval` executes Fish syntax; dynamic execution of incompatible Bash syntax will fail at runtime)
 - **Interactive Shell Detection**: Standalone `$-` parameter expansion (warns and rewrites to `status is-interactive` fallback)
 
 ---
@@ -122,7 +121,7 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 | `read -r line`, `read _`, `read status`, `read pipestatus` | `read line`, `read _unused`, `read _status`, `read _pipestatus` | Drops `-r` (default in Fish); automatically mangles variable names conflicting with Fish read-only variables (e.g. `_` $\to$ `_unused`, `status` $\to$ `_status`) |
 | `set` (bare), `set -` | *(dropped with warning)* | Prints shell state / trace flags in Bash; dropped in Fish |
 | `set -e`, `set -u`, `set +x`, `set -o ...` | *(dropped with warning)* | Fish has no shell option flags |
-| `eval "..."` | `eval "..."` | Passthrough (emits warning: Fish `eval` executes Fish syntax; incompatible Bash syntax will fail at runtime) |
+| `eval "..."` | `__bait_eval "..."` | Supported via an on-demand runtime helper translating Bash code on-the-fly (requires `bait` in PATH; falls back to passthrough with warning when `--no-helpers` is specified) |
 | `hash cmd`, `hash cmd1 cmd2`, `hash -r` | `hash cmd`, `hash cmd1 cmd2`, `hash -r` | Supported via an on-demand runtime helper |
 | `unalias foo`, `unalias "$1"`, `unalias -a` | `unalias foo`, `unalias "$argv[1]"`, `unalias -a` | Supported via an on-demand runtime helper |
 | `source file.sh`, `. file.sh` | `source file.sh`, `. file.sh` | Supported via an on-demand runtime helper translating Bash scripts on-the-fly |
@@ -258,3 +257,6 @@ When scripts use POSIX constructs that Fish does not provide natively, `bait` in
 8. **`__bait_ostype` operating system identifier**:
    - Injected when scripts expand `$OSTYPE`.
    - Resolves the operating system identifier matching Bash's target format (e.g. `linux-gnu`, `linux-musl`, `darwin<version>`, `freebsd<version>`), ensuring pattern matches like `linux-gnu*` and `darwin*` behave identically to Bash.
+9. **`__bait_eval` dynamic evaluation**:
+   - Injected when scripts call `eval` (`eval "..."` $\to$ `__bait_eval "..."`).
+   - Evaluates dynamic commands in the caller's scope via `--no-scope-shadowing`, translating Bash constructs on-the-fly via `bait` (requires `bait` in PATH).

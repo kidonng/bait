@@ -11,6 +11,9 @@ var baitWordsHelper string
 //go:embed helpers/__bait_exec.fish
 var baitExecHelper string
 
+//go:embed helpers/__bait_eval.fish
+var baitEvalHelper string
+
 //go:embed helpers/getopts.fish
 var baitGetoptsHelper string
 
@@ -44,6 +47,7 @@ const (
 	helperDot
 	helperUnset
 	helperOSType
+	helperEval
 	numHelpers
 )
 
@@ -62,6 +66,7 @@ var allHelpers = []helperInfo{
 	{kind: helperDot, code: baitDotHelper},
 	{kind: helperUnset, code: baitUnsetHelper},
 	{kind: helperOSType, code: baitOSTypeHelper},
+	{kind: helperEval, code: baitEvalHelper},
 }
 
 func (e *emitter) needHelper(h helperKind) {
@@ -94,6 +99,8 @@ func Helper(name string) (string, error) {
 		return baitWordsHelper, nil
 	case "__bait_exec":
 		return baitExecHelper, nil
+	case "eval", "__bait_eval":
+		return baitEvalHelper, nil
 	case "__bait_ostype":
 		return baitOSTypeHelper, nil
 	default:
@@ -113,5 +120,6 @@ func Helpers() []string {
 		"__bait_words",
 		"__bait_exec",
 		"__bait_ostype",
+		"__bait_eval",
 	}
 }
