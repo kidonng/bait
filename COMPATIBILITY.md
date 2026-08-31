@@ -226,9 +226,9 @@ Bash arithmetic `$(( ... ))` and statements `(( ... ))` are integer-only. `bait`
 | `$((a + b * 2))` | `$(math --scale=0 "$a + $b * 2")` |
 | `((i++))`, `((--i))` | `set i $(math --scale=0 "$i + 1")`, `set i $(math --scale=0 "$i - 1")` |
 | `((n += 5))` | `set n $(math --scale=0 "$n + 5")` |
+| `((a = 1, b = 2))` | `set a $(math --scale=0 "1")`<br>`set b $(math --scale=0 "2")` (comma expressions flattened into sequential statements) |
 | `((x > 0))` | `test "$x" -gt 0` (comparisons map to `test` flags `-gt`, `-lt`, `-eq`, etc.) |
 | `((count))` | `test "$count" -ne 0` (truthiness test) |
-
 ### On-Demand Runtime Helpers
 
 When scripts use POSIX constructs that Fish does not provide natively, `bait` injects helper functions at the top of the file (suppressible via `--no-helpers`):

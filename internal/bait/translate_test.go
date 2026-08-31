@@ -1223,6 +1223,33 @@ func TestBashFishEquivalence(t *testing.T) {
 				"        ;;\n" +
 				"esac\n",
 		},
+		{
+			name: "arithmetic compound comma expressions",
+			src: "a=0\nb=0\nc=0\n" +
+				"(( a = 1, b = 2, c = a + b ))\n" +
+				"echo \"a:$a b:$b c:$c\"\n" +
+				"(( a++, b += 10, c *= 2 ))\n" +
+				"echo \"a:$a b:$b c:$c\"\n",
+		},
+		{
+			name: "arithmetic compound comma in function with local and global",
+			src: "f() {\n" +
+				"    local x=0\n" +
+				"    (( x = 5, y = 10, z = x + y ))\n" +
+				"    echo \"inner: x=$x y=$y z=$z\"\n" +
+				"}\n" +
+				"x=1\ny=2\nz=3\n" +
+				"f\n" +
+				"echo \"outer: x=$x y=$y z=$z\"\n",
+		},
+		{
+			name: "arithmetic compound comma in loop",
+			src: "sum=0\n" +
+				"for i in 1 2 3; do\n" +
+				"    (( a = i * 2, sum += a ))\n" +
+				"done\n" +
+				"echo \"sum:$sum a:$a\"\n",
+		},
 	}
 
 	for _, tc := range tests {
@@ -1849,6 +1876,31 @@ func TestArithmetic(t *testing.T) {
 			"variable expansion",
 			"echo $((x * 2))\n",
 			"echo $(math --scale=0 \"$x * 2\")\n",
+		},
+		{
+			"compound comma assignment",
+			"(( a = 1, b = 2 ))\n",
+			"set a $(math --scale=0 \"1\")\nset b $(math --scale=0 \"2\")\n",
+		},
+		{
+			"compound comma increment and assign",
+			"(( i++, n += 2, total = a * b ))\n",
+			"set i $(math --scale=0 \"$i + 1\")\nset n $(math --scale=0 \"$n + 2\")\nset total $(math --scale=0 \"$a * $b\")\n",
+		},
+		{
+			"compound comma parenthesized",
+			"(( (a = 1, b = 2), c = 3 ))\n",
+			"set a $(math --scale=0 \"1\")\nset b $(math --scale=0 \"2\")\nset c $(math --scale=0 \"3\")\n",
+		},
+		{
+			"compound comma in if body",
+			"if true; then\n  (( a = 1, b = 2 ))\nfi\n",
+			"if true\n    set a $(math --scale=0 \"1\")\n    set b $(math --scale=0 \"2\")\nend\n",
+		},
+		{
+			"compound comma with comments",
+			"# comment before\n(( a = 1, b = 2 )) # comment after\n",
+			"# comment before\nset a $(math --scale=0 \"1\")\nset b $(math --scale=0 \"2\") # comment after\n",
 		},
 	}
 

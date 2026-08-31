@@ -3055,22 +3055,92 @@ func matchesAnySpecial(pe *syntax.ParamExp, names []string) bool {
 
 // rewriteArithmetic replaces (( )) commands whose shape fish can express
 // with set/test/math equivalents, so conditions and bodies alike see the
-// translated node.
+// translated node. Comma expressions are flattened into sequential set
+// statements in statement lists.
 func (e *emitter) rewriteArithmetic(f *syntax.File) {
 	syntax.Walk(f, func(n syntax.Node) bool {
-		stmt, ok := n.(*syntax.Stmt)
-		if !ok || stmt.Cmd == nil {
-			return true
-		}
-		ac, ok := stmt.Cmd.(*syntax.ArithmCmd)
-		if !ok {
-			return true
-		}
-		if repl := e.arithCommand(ac); repl != nil {
-			stmt.Cmd = repl
+		switch x := n.(type) {
+		case *syntax.File:
+			x.Stmts = e.flattenStmts(x.Stmts)
+		case *syntax.Block:
+			x.Stmts = e.flattenStmts(x.Stmts)
+		case *syntax.Subshell:
+			x.Stmts = e.flattenStmts(x.Stmts)
+		case *syntax.CaseItem:
+			x.Stmts = e.flattenStmts(x.Stmts)
+		case *syntax.IfClause:
+			x.Cond = e.flattenStmts(x.Cond)
+			x.Then = e.flattenStmts(x.Then)
+		case *syntax.WhileClause:
+			x.Cond = e.flattenStmts(x.Cond)
+			x.Do = e.flattenStmts(x.Do)
+		case *syntax.ForClause:
+			x.Do = e.flattenStmts(x.Do)
+		case *syntax.CmdSubst:
+			x.Stmts = e.flattenStmts(x.Stmts)
+		case *syntax.ProcSubst:
+			x.Stmts = e.flattenStmts(x.Stmts)
+		case *syntax.BinaryCmd:
+			e.rewriteSingleStmt(x.X)
+			e.rewriteSingleStmt(x.Y)
+		case *syntax.FuncDecl:
+			e.rewriteSingleStmt(x.Body)
+		case *syntax.Stmt:
+			if ac, ok := x.Cmd.(*syntax.ArithmCmd); ok {
+				if repl := e.arithCommand(ac); repl != nil {
+					x.Cmd = repl
+				}
+			}
 		}
 		return true
 	})
+}
+
+func (e *emitter) flattenStmts(stmts []*syntax.Stmt) []*syntax.Stmt {
+	var result []*syntax.Stmt
+	for _, st := range stmts {
+		if st == nil {
+			continue
+		}
+		if ac, ok := st.Cmd.(*syntax.ArithmCmd); ok {
+			if cmds := e.arithCommands(ac); len(cmds) > 0 {
+				sc := classifyComments(st)
+				for i, cmd := range cmds {
+					newStmt := &syntax.Stmt{
+						Cmd:        cmd,
+						Position:   st.Position,
+						Semicolon:  st.Semicolon,
+						Negated:    st.Negated && (i == len(cmds)-1),
+						Background: st.Background && (i == len(cmds)-1),
+					}
+					if i == 0 && len(sc.leading) > 0 {
+						newStmt.Comments = append(newStmt.Comments, sc.leading...)
+					}
+					if i == len(cmds)-1 {
+						if len(sc.trailing) > 0 {
+							newStmt.Comments = append(newStmt.Comments, sc.trailing...)
+						}
+						newStmt.Redirs = st.Redirs
+					}
+					result = append(result, newStmt)
+				}
+				continue
+			}
+		}
+		result = append(result, st)
+	}
+	return result
+}
+
+func (e *emitter) rewriteSingleStmt(s *syntax.Stmt) {
+	if s == nil || s.Cmd == nil {
+		return
+	}
+	if ac, ok := s.Cmd.(*syntax.ArithmCmd); ok {
+		if repl := e.arithCommand(ac); repl != nil {
+			s.Cmd = repl
+		}
+	}
 }
 
 var arithSymbols = map[syntax.BinAritOperator]string{
@@ -3096,11 +3166,65 @@ func isAssignOp(op syntax.BinAritOperator) bool {
 	return op == syntax.Assgn || arithAssignSymbols[op] != ""
 }
 
+// arithCommands converts an (( )) command into a slice of fish equivalents, or
+// nil when no faithful translation exists. Comma expressions yield multiple commands.
+func (e *emitter) arithCommands(ac *syntax.ArithmCmd) []syntax.Command {
+	if ac == nil || ac.X == nil {
+		return nil
+	}
+	parts := splitCommaArithm(ac.X)
+	cmds := make([]syntax.Command, len(parts))
+	for i, part := range parts {
+		cmd := e.arithExpr(part)
+		if cmd == nil {
+			return nil
+		}
+		cmds[i] = cmd
+	}
+	return cmds
+}
+
 // arithCommand converts an (( )) command into its fish equivalent, or
 // nil when no faithful translation exists (the caller then warns and
 // emits verbatim through the default path).
 func (e *emitter) arithCommand(ac *syntax.ArithmCmd) syntax.Command {
-	switch x := ac.X.(type) {
+	cmds := e.arithCommands(ac)
+	if len(cmds) == 0 {
+		return nil
+	}
+	if len(cmds) == 1 {
+		return cmds[0]
+	}
+	stmts := make([]*syntax.Stmt, len(cmds))
+	for i, c := range cmds {
+		stmts[i] = &syntax.Stmt{Cmd: c}
+	}
+	return &syntax.Block{Stmts: stmts}
+}
+
+func splitCommaArithm(expr syntax.ArithmExpr) []syntax.ArithmExpr {
+	for {
+		paren, ok := expr.(*syntax.ParenArithm)
+		if !ok {
+			break
+		}
+		expr = paren.X
+	}
+	if bin, ok := expr.(*syntax.BinaryArithm); ok && bin.Op == syntax.Comma {
+		return append(splitCommaArithm(bin.X), splitCommaArithm(bin.Y)...)
+	}
+	return []syntax.ArithmExpr{expr}
+}
+
+func (e *emitter) arithExpr(expr syntax.ArithmExpr) syntax.Command {
+	for {
+		paren, ok := expr.(*syntax.ParenArithm)
+		if !ok {
+			break
+		}
+		expr = paren.X
+	}
+	switch x := expr.(type) {
 	case *syntax.UnaryArithm:
 		if x.Op != syntax.Inc && x.Op != syntax.Dec {
 			return nil
