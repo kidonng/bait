@@ -458,6 +458,11 @@ func TestWarnings(t *testing.T) {
 			"redirection to file descriptor 3 on builtin is not supported in fish",
 		},
 		{
+			"high FD redirect on builtin function like dirs",
+			"dirs 3>log\n",
+			"redirection to file descriptor 3 on builtin is not supported in fish",
+		},
+		{
 			"background function definition",
 			"my_func() { echo hi; } &\n",
 			"fish does not support running functions in the background",
@@ -492,6 +497,20 @@ func TestWarnings(t *testing.T) {
 				t.Errorf("no warning contains %q; got %v", tc.wantText, warnings)
 			}
 		})
+	}
+}
+
+func TestExternalCommandHighFDNoWarning(t *testing.T) {
+	// Commands that do not overlap with Fish builtins should not trigger builtin high FD warning.
+	src := "vared 3>log\n"
+	_, warnings, err := Translate([]byte(src))
+	if err != nil {
+		t.Fatalf("Translate failed: %v", err)
+	}
+	for _, w := range warnings {
+		if strings.Contains(w.Text, "on builtin") {
+			t.Errorf("unexpected builtin high FD warning for external command: %v", w)
+		}
 	}
 }
 
@@ -1177,6 +1196,24 @@ func TestBashFishEquivalence(t *testing.T) {
 				"test_shift a b c\n",
 		},
 		{
+			name: "dynamic shift with negative number",
+			src: "test_shift() {\n" +
+				"    n=-1\n" +
+				"    shift $n 2>/dev/null || true\n" +
+				"    echo \"args:$*\"\n" +
+				"}\n" +
+				"test_shift a b c\n",
+		},
+		{
+			name: "dynamic shift with positive number",
+			src: "test_shift() {\n" +
+				"    n=2\n" +
+				"    shift $n\n" +
+				"    echo \"args:$*\"\n" +
+				"}\n" +
+				"test_shift a b c d\n",
+		},
+		{
 			name: "custom ifs empty fields",
 			src: "IFS=\":\"\n" +
 				"val=\"a::b\"\n" +
@@ -1468,11 +1505,6 @@ func TestVariableMangling(t *testing.T) {
 			"hostname variable mangled to _hostname",
 			"hostname=\"srv1\"\necho $hostname\n",
 			"set _hostname \"srv1\"\necho $_hostname\n",
-		},
-		{
-			"CMD_DURATION mangled to _CMD_DURATION",
-			"CMD_DURATION=\"100\"\necho $CMD_DURATION\n",
-			"set _CMD_DURATION \"100\"\necho $_CMD_DURATION\n",
 		},
 		{
 			"status_generation mangled to _status_generation",
@@ -2049,8 +2081,10 @@ func TestShiftBuiltin(t *testing.T) {
 		{"bare shift", "shift\n", "set --erase argv[1]\n"},
 		{"shift 1", "shift 1\n", "set --erase argv[1]\n"},
 		{"shift 2", "shift 2\n", "set --erase argv[1..2]\n"},
-		{"shift dynamic", "shift $n\n", "if test \"$n\" -gt 0 2>/dev/null; set --erase argv[1..$n]; end\n"},
+		{"shift dynamic", "shift $n\n", "test \"$n\" -gt 0 2>/dev/null; and set --erase argv[1..$n]\n"},
 		{"shift 0 is no-op", "shift 0\n", "true\n"},
+		{"shift dynamic unquoted", "shift \"$n\"\n", "test \"$n\" -gt 0 2>/dev/null; and set --erase argv[1..$n]\n"},
+		{"shift dynamic in chain", "shift $n && echo done\n", "test \"$n\" -gt 0 2>/dev/null; and set --erase argv[1..$n] && echo done\n"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -3028,6 +3062,35 @@ func TestLeadingRedirectionWithDynamicCommand(t *testing.T) {
 	}
 	if !strings.Contains(gotStr, "__bait_exec $cmd hello >& 2") {
 		t.Errorf("expected '__bait_exec $cmd hello >& 2', got:\n%s", gotStr)
+	}
+}
+func TestDynamicExecDoesNotEmitBaitWords(t *testing.T) {
+	src := "cmd=\"echo hi\"\n$cmd\n"
+	got, _, err := Translate([]byte(src))
+	if err != nil {
+		t.Fatalf("Translate failed: %v", err)
+	}
+	gotStr := string(got)
+	if !strings.Contains(gotStr, "function __bait_exec") {
+		t.Errorf("expected __bait_exec helper, got:\n%s", gotStr)
+	}
+	if strings.Contains(gotStr, "__bait_words") {
+		t.Errorf("expected no __bait_words helper emitted, got:\n%s", gotStr)
+	}
+}
+
+func TestDynamicExecInlineDoesNotEmitBaitWords(t *testing.T) {
+	src := "true && $cmd foo\n"
+	got, _, err := Translate([]byte(src))
+	if err != nil {
+		t.Fatalf("Translate failed: %v", err)
+	}
+	gotStr := string(got)
+	if !strings.Contains(gotStr, "__bait_exec") {
+		t.Errorf("expected __bait_exec, got:\n%s", gotStr)
+	}
+	if strings.Contains(gotStr, "__bait_words") {
+		t.Errorf("expected no __bait_words helper emitted, got:\n%s", gotStr)
 	}
 }
 

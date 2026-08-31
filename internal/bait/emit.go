@@ -251,20 +251,20 @@ func (e *emitter) checkHighFDRedir(s *syntax.Stmt, kind string) {
 	}
 }
 
+// fishBuiltins lists Fish built-in commands and standard functions that
+// overlap with Bash builtins or keywords. Redirections to file descriptors
+// above 2 on these targets are not supported in Fish and trigger a warning.
 var fishBuiltins = map[string]bool{
-	"alias": true, "and": true, "argparse": true, "begin": true, "bg": true,
-	"bind": true, "block": true, "breakpoint": true, "builtin": true, "case": true,
-	"cd": true, "command": true, "commandline": true, "complete": true, "contains": true,
-	"continue": true, "count": true, "disown": true, "echo": true, "else": true,
-	"emit": true, "end": true, "eval": true, "exec": true, "exit": true,
-	"false": true, "fg": true, "fish": true, "fish_indent": true, "fish_opt": true,
-	"for": true, "function": true, "functions": true, "history": true, "if": true,
-	"jobs": true, "math": true, "not": true, "or": true, "path": true,
-	"printf": true, "pwd": true, "random": true, "read": true, "realpath": true,
-	"return": true, "set": true, "set_color": true, "shift": true, "source": true,
-	".": true, "status": true, "string": true, "switch": true, "test": true,
-	"[": true, "time": true, "true": true, "type": true, "ulimit": true,
-	"umask": true, "vared": true, "wait": true, "while": true,
+	"!": true, ".": true, ":": true, "[": true, "alias": true,
+	"bg": true, "bind": true, "break": true, "builtin": true, "case": true,
+	"cd": true, "command": true, "complete": true, "continue": true, "dirs": true,
+	"disown": true, "echo": true, "else": true, "eval": true, "exec": true,
+	"exit": true, "export": true, "false": true, "fg": true, "for": true,
+	"function": true, "help": true, "history": true, "if": true, "jobs": true,
+	"kill": true, "popd": true, "printf": true, "pushd": true, "pwd": true,
+	"read": true, "return": true, "set": true, "source": true, "suspend": true,
+	"test": true, "time": true, "trap": true, "true": true, "type": true,
+	"ulimit": true, "umask": true, "wait": true, "while": true,
 }
 
 func isFishBuiltin(name string) bool {
@@ -412,28 +412,6 @@ func (e *emitter) condText(cond []*syntax.Stmt) string {
 }
 
 func (e *emitter) file(f *syntax.File) {
-	syntax.Walk(f, func(n syntax.Node) bool {
-		if fd, ok := n.(*syntax.FuncDecl); ok && fd.Name != nil {
-			e.knownFuncs[fd.Name.Value] = true
-		}
-		if c, ok := n.(*syntax.CallExpr); ok && len(c.Args) > 0 {
-			if isLitWord(c.Args[0], "hash") {
-				e.needHelper(helperHash)
-			} else if isLitWord(c.Args[0], "unalias") {
-				e.needHelper(helperUnalias)
-			} else if isLitWord(c.Args[0], "source") {
-				e.needHelper(helperSource)
-			} else if isLitWord(c.Args[0], ".") {
-				e.needHelper(helperDot)
-			} else if isLitWord(c.Args[0], "unset") {
-				e.needHelper(helperUnset)
-			}
-		}
-		if pe, ok := n.(*syntax.ParamExp); ok && pe.Param != nil && pe.Param.Value == "OSTYPE" {
-			e.needHelper(helperOSType)
-		}
-		return true
-	})
 	var body bytes.Buffer
 	origBuf := e.buf
 	e.buf = body
@@ -649,7 +627,6 @@ func (e *emitter) simple(s *syntax.Stmt) {
 		if len(c.Assigns) == 0 && len(c.Args) > 0 {
 			if _, ok := singleBareParam(c.Args[0]); ok {
 				e.needHelper(helperExec)
-				e.needHelper(helperWords)
 				if hasLeadingRedir(s) || (e.inSubshell && hasHighFDTargetRedir(s.Redirs)) {
 					sc := classifyComments(s)
 					e.leadingComments(sc.leading)
@@ -758,7 +735,7 @@ func (e *emitter) shiftCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 	}
 	argWord := e.renderWordSmart(c.Args[1])
 	unquoted := unquoteArg(argWord)
-	e.printLineWithTrailing(fmt.Sprintf("if test \"%s\" -gt 0 2>/dev/null; set --erase argv[1..%s]; end%s", unquoted, unquoted, tail), sc.trailing)
+	e.printLineWithTrailing(fmt.Sprintf("test \"%s\" -gt 0 2>/dev/null; and set --erase argv[1..%s]%s", unquoted, unquoted, tail), sc.trailing)
 }
 
 func unquoteArg(arg string) string {
@@ -1061,7 +1038,6 @@ var fishReservedVars = map[string]string{
 	"history":           "_history",
 	"hostname":          "_hostname",
 	"pipestatus":        "_pipestatus",
-	"CMD_DURATION":      "_CMD_DURATION",
 	"status_generation": "_status_generation",
 }
 
@@ -1350,6 +1326,14 @@ func (e *emitter) normalize(f *syntax.File) {
 	e.analyzeVariables(f)
 	syntax.Walk(f, func(n syntax.Node) bool {
 		switch x := n.(type) {
+		case *syntax.FuncDecl:
+			if x.Name != nil {
+				e.knownFuncs[x.Name.Value] = true
+			}
+		case *syntax.ParamExp:
+			if x.Param != nil && x.Param.Value == "OSTYPE" {
+				e.needHelper(helperOSType)
+			}
 		case *syntax.CallExpr:
 			normalizeCommandName(x)
 			if len(x.Args) > 0 {
@@ -1614,7 +1598,6 @@ func (e *emitter) chainLeaf(st *syntax.Stmt) string {
 		if c != nil && len(c.Assigns) == 0 && len(c.Args) > 0 {
 			if _, ok := singleBareParam(c.Args[0]); ok {
 				e.needHelper(helperExec)
-				e.needHelper(helperWords)
 				return "__bait_exec " + e.render(st)
 			}
 		}
