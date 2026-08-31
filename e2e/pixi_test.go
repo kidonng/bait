@@ -13,7 +13,7 @@ func TestPixiInstall(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	t.Cleanup(cancel)
 
-	src, err := downloadScript(ctx, "https://pixi.sh/install.sh")
+	src, err := downloadScript(ctx, "https://pixi.prefix.dev/install.sh")
 	if err != nil {
 		t.Fatalf("download failed: %v", err)
 	}

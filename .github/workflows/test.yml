@@ -23,5 +23,8 @@ jobs:
       - name: Check flake
         run: nix flake check
 
-      - name: Run tests
+      - name: Run unit tests
         run: nix run .#test
+
+      - name: Run e2e tests
+        run: nix run .#e2e

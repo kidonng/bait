@@ -38,7 +38,8 @@
 ## Developer Workflows
 
 - **Run CLI**: `nix run . -- [options] [script]` or `echo '...' | nix run .`
-- **Run All Tests**: `nix run .#test`
+- **Run Unit & Equivalence Tests**: `nix run .#test`
+- **Run E2E Tests**: `nix run .#e2e`
 - **Run Checks**: `nix flake check`
 - **Format Code**: `nix run .#fmt` or `nix fmt`
 

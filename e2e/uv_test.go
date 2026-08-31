@@ -14,7 +14,7 @@ func TestUvInstall(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	t.Cleanup(cancel)
 
-	src, err := downloadScript(ctx, "https://astral.sh/uv/install.sh")
+	src, err := downloadScript(ctx, "https://releases.astral.sh/installers/uv/latest/uv-installer.sh")
 	if err != nil {
 		t.Fatalf("download failed: %v", err)
 	}

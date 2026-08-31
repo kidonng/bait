@@ -22,7 +22,7 @@ func TestNVM(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	t.Cleanup(cancel)
 
-	src, err := downloadScript(ctx, "https://github.com/nvm-sh/nvm/raw/refs/heads/master/nvm.sh")
+	src, err := downloadScript(ctx, "https://raw.githubusercontent.com/nvm-sh/nvm/refs/heads/master/nvm.sh")
 	if err != nil {
 		t.Fatalf("download failed: %v", err)
 	}

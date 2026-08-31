@@ -34,10 +34,13 @@
         mkTask pkgs "bait-test" ''
           echo "==> Running internal unit and equivalence tests..."
           go test -v ./internal/bait ./cmd/bait
+        '';
+
+      e2eRunner = pkgs:
+        mkTask pkgs "bait-e2e" ''
           echo "==> Running e2e sandbox tests..."
           go test -v ./e2e
         '';
-
       fmtRunner = pkgs:
         mkTask pkgs "bait-fmt" ''
           echo "==> Formatting Go files..."
@@ -56,6 +59,7 @@
           vendorHash = "sha256-tCFu9E2pFBWBQFiRVvI16FNI3dE1bUKJlsEbvDAo7lo=";
         };
         test = testRunner pkgs;
+        e2e = e2eRunner pkgs;
         fmt = fmtRunner pkgs;
         default = bait;
       });
