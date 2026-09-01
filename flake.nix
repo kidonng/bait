@@ -2,7 +2,7 @@
   description = "🎣 Bait: Almost Idiomatic Transpiler";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    nixpkgs.url = "https://flakehub.com/f/DeterminateSystems/nixpkgs-weekly/0.1";
   };
 
   outputs = { nixpkgs, ... }:
