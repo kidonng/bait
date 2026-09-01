@@ -33,13 +33,13 @@
       testRunner = pkgs:
         mkTask pkgs "bait-test" ''
           echo "==> Running internal unit and equivalence tests..."
-          go test -v ./internal/bait ./cmd/bait
+          go test ./internal/bait ./cmd/bait
         '';
 
       e2eRunner = pkgs:
         mkTask pkgs "bait-e2e" ''
           echo "==> Running e2e sandbox tests..."
-          go test -v ./e2e
+          go test ./e2e
         '';
       fmtRunner = pkgs:
         mkTask pkgs "bait-fmt" ''
