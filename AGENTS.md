@@ -7,7 +7,7 @@
 ## Architectural Principles
 
 1. **Leverage Modern Fish Native Compatibility (Passthrough First)**
-   - Modern Fish (v3.4.0+) natively supports or provides wrappers for many POSIX/Bash constructs (pipes, redirections, combiners, command substitutions, brace expansions, per-command environment variables, backgrounding, and builtins).
+   - Modern Fish (v4.0.0+) natively supports or provides wrappers for many POSIX/Bash constructs (pipes, redirections, combiners, command substitutions, brace expansions, per-command environment variables, backgrounding, and builtins).
    - **Rule**: Never rewrite what Fish already natively accepts. Unchanged constructs pass through byte-for-byte (modulo printer whitespace normalization).
 
 2. **Minimal & Principled Transformation**

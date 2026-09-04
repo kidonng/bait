@@ -4,7 +4,7 @@
 
 ## Overview
 
-- **Target Version**: **Fish 3.4.0+**. Translated scripts strictly require Fish 3.4.0 or newer (specifically for POSIX-style `$(cmd)` command substitutions and `set --function` lexical scoping).
+- **Target Version**: **Fish 4.0.0+**. Translated scripts strictly require Fish 4.0.0 or newer (specifically for POSIX-style `$(cmd)` command substitutions, `set --function` lexical scoping, and native `{ ... }` command blocks).
 - **Passthrough First**: Constructs natively supported by modern Fish (pipes, redirects, combiners, commands, per-command env `VAR=val cmd`, backgrounding, quotes) pass through byte-for-byte.
 - **Idiomatic Fish**: Incompatible syntax is translated into native Fish keywords, builtins, and modern `$(cmd)` command substitutions.
 - **On-Demand Helpers**: Runtime helper functions are injected strictly on demand when scripts require missing POSIX semantics (suppressible via `--no-helpers`); clean scripts carry zero runtime overhead.
@@ -17,7 +17,7 @@
 While `bait` strives for behavioral equivalence, Fish semantics differ from Bash in several intentional ways:
 
 1. **Subshell Isolation Loss**:
-   - Subshells `( … )` become `begin … end` (both at statement level and nested inside command substitutions or pipelines). Fish has no subshell isolation; variable and directory mutations persist after the block. Every occurrence emits a warning.
+   - Subshells `( … )` become `{ … }` (both at statement level and nested inside command substitutions or pipelines). Fish has no subshell isolation; variable and directory mutations persist after the block. Every occurrence emits a warning.
 2. **List Expansions & Quoting**:
    - In Bash, `"$@"` expands to separate words, while `"$*"` expands to a single space-joined string.
    - In Fish, quoting a list `"$argv"` joins all elements into a single space-separated string. Therefore, `"$@"` and `"${arr[@]}"` translate to unquoted `$argv` and `$arr` to preserve argument splitting, while `"$*"` translates to `"$argv"` to preserve single joined string semantics.
@@ -27,7 +27,7 @@ While `bait` strives for behavioral equivalence, Fish semantics differ from Bash
    - In Fish, unmatched globs abort the command (equivalent to Bash's `failglob`).
    - The `?` character is treated as a literal by default in modern Fish (`qmark-noglob`).
 5. **Exit Status Lifetime (`$?` vs `$status`)**:
-   - In Fish, `$status` is immediately updated by virtually every statement, built-in test (`test`, `string`), block boundary (`begin ... end`), and command substitution.
+   - In Fish, `$status` is immediately updated by virtually every statement, built-in test (`test`, `string`), block boundary (`{ ... }`), and command substitution.
    - Unlike Bash where `$?` can survive certain non-mutating shell constructs, in Fish `$status` must be captured immediately into a variable (`set --local exit_code $status`) if it needs to be checked after intermediate statements.
 
 ---
@@ -71,9 +71,9 @@ The following constructs are currently untranslated by `bait` or lack direct Fis
 | `for x in …; do … done` | `for x in … … end` | Bare `for x` iterates `$argv` |
 | `case x in p) …;; esac` | `switch x` / `case 'p'` / `end` | Wildcards and multiple patterns supported; patterns containing bracket classes (`[...]`) translate to `if`/`else if` regex blocks |
 | `f() { … }`, `function f { … }` | `function f … end` | Function definition |
-| `{ … }` | `begin … end` | Anonymous command block |
-| `( … )` | `begin … end` | Anonymous command block (emits warning: subshell isolation is lost) |
-| `cmd &`, `end &` | `cmd &`, `end &` | Background execution (background function calls emit a warning) |
+| `{ … }` | `{ … }` | Anonymous command block (native passthrough in Fish 4.0+) |
+| `( … )` | `{ … }` | Anonymous command block (emits warning: subshell isolation is lost) |
+| `cmd &`, `} &` | `cmd &`, `} &` | Background execution (background function calls emit a warning) |
 | `<(cmd)` | `(cmd \| psub)` | Process substitution via Fish `psub` |
 | `<< EOF`, `<<- EOF` | `printf '%s\n' '...' \| cmd` | Here-document pipeline |
 | `<<< WORD` | `printf '%s\n' WORD \| cmd` | Here-string pipeline |
@@ -94,7 +94,7 @@ The following constructs are currently untranslated by `bait` or lack direct Fis
 | `[[ $- == *i* ]]`, `case $- in *i*)` | `status is-interactive` | Interactive shell check |
 | `[[ cond1 && cond2 ]]` | `cond1 && cond2` | Logical AND |
 | `[[ cond1 \|\| cond2 ]]` | `cond1 \|\| cond2` | Logical OR |
-| `[[ (c1 \|\| c2) && c3 ]]` | `begin c1 \|\| c2; end && c3` | Grouped condition |
+| `[[ (c1 \|\| c2) && c3 ]]` | `{ c1 \|\| c2; } && c3` | Grouped condition |
 
 ### Variables, Scoping & State Builtins
 
