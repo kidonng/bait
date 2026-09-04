@@ -93,7 +93,7 @@ func (e *emitter) renderTestExpr(expr syntax.TestExpr) string {
 	case nil:
 		return "test -n ''"
 	case *syntax.ParenTest:
-		return "begin " + e.renderTestExpr(x.X) + "; end"
+		return "{ " + e.renderTestExpr(x.X) + "; }"
 	case *syntax.UnaryTest:
 		return e.renderUnaryTest(x)
 	case *syntax.BinaryTest:

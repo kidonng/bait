@@ -176,7 +176,7 @@ func TestTestClause(t *testing.T) {
 		{
 			"parenthesized group",
 			"[[ ( -n \"$a\" || -n \"$b\" ) && \"$c\" == \"d\" ]]\n",
-			"begin test -n \"$a\" || test -n \"$b\"; end && test \"$c\" = \"d\"\n",
+			"{ test -n \"$a\" || test -n \"$b\"; } && test \"$c\" = \"d\"\n",
 		},
 		{
 			"integer comparison",

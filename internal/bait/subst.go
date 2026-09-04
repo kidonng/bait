@@ -204,5 +204,5 @@ func (e *emitter) procSubstText(ps *syntax.ProcSubst) (string, bool) {
 		lines[i] = pad + lines[i]
 	}
 	endPad := strings.Repeat(indentUnit, e.depth)
-	return "(begin\n" + strings.Join(lines, "\n") + "\n" + endPad + "end | psub)", true
+	return "({\n" + strings.Join(lines, "\n") + "\n" + endPad + "} | psub)", true
 }

@@ -199,6 +199,11 @@ func TestProcSubst(t *testing.T) {
 			"while read -r line; do echo \"$line\"; done < <(find . -name \"*.go\")\n",
 			"while read line\n    echo \"$line\"\nend < (find . -name \"*.go\" | psub)\n",
 		},
+		{
+			"multiline process substitution",
+			"cat <(\n  echo a\n  echo b\n)\n",
+			"cat ({\n    echo a\n    echo b\n} | psub)\n",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

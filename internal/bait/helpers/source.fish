@@ -41,7 +41,7 @@ function source --no-scope-shadowing --description "Evaluate contents of file, t
         read --null __bait_input
 
         set --local __bait_has_bash_shebang 0
-        set --local __bait_first_line (printf "%s" "$__bait_input" | begin; set -l l; read -l l; echo "$l"; end)
+        set --local __bait_first_line (printf "%s" "$__bait_input" | { set -l l; read -l l; echo "$l"; })
         if string match --quiet --regex '^#!\s*(\S+/)?(env\s+(-\S+\s+)*)?(bash|sh|ash|dash)\b' -- "$__bait_first_line"
             set __bait_has_bash_shebang 1
         end
