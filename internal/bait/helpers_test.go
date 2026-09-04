@@ -95,7 +95,7 @@ func TestCmdSubstFish(t *testing.T) {
 		{
 			"subshell inside substitution becomes begin block",
 			"x=$( (echo hi); )\n",
-			"set x $(begin\n    echo hi\nend)\n",
+			"set x $({\n    echo hi\n})\n",
 			1,
 		},
 		{
@@ -107,7 +107,7 @@ func TestCmdSubstFish(t *testing.T) {
 		{
 			"pipe into subshell in condition position",
 			"if [ \"$(echo a | (cat))\" = a ]; then echo match; fi\n",
-			"if [ \"$(echo a | begin\n    cat\nend)\" = a ]\n    echo match\nend\n",
+			"if [ \"$(echo a | {\n    cat\n})\" = a ]\n    echo match\nend\n",
 			1,
 		},
 	}

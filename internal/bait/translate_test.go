@@ -252,10 +252,10 @@ func TestCompoundStatements(t *testing.T) {
 		{
 			"brace group with redirect",
 			"{ echo a; echo b; } > out.txt\n",
-			"begin\n" +
+			"{\n" +
 				"    echo a\n" +
 				"    echo b\n" +
-				"end > out.txt\n",
+				"} > out.txt\n",
 		},
 		{
 			"negated condition",
@@ -274,9 +274,9 @@ func TestCompoundStatements(t *testing.T) {
 		{
 			"backgrounded group",
 			"{ sleep 1; } &\n",
-			"begin\n" +
+			"{\n" +
 				"    sleep 1\n" +
-				"end &\n",
+				"} &\n",
 		},
 		{
 			"comments inside if body",
@@ -524,12 +524,12 @@ func TestSubshell(t *testing.T) {
 		in   string
 		want string
 	}{
-		{"basic subshell", "(cd /tmp && ls)\n", "begin\n    cd /tmp && ls\nend\n"},
-		{"multiple commands", "(cd /tmp; pwd)\n", "begin\n    cd /tmp\n    pwd\nend\n"},
-		{"subshell with redirection", "(cd /tmp && pwd) > /tmp/out\n", "begin\n    cd /tmp && pwd\nend > /tmp/out\n"},
-		{"subshell in chain", "(exit 0) && echo ok\n", "begin\n    exit 0\nend && echo ok\n"},
-		{"pipe into subshell", "echo hello | (cat)\n", "echo hello | begin\n    cat\nend\n"},
-		{"subshell inside command substitution", "x=$( (cd /tmp && pwd) )\n", "set x $(begin\n    cd /tmp && pwd\nend)\n"},
+		{"basic subshell", "(cd /tmp && ls)\n", "{\n    cd /tmp && ls\n}\n"},
+		{"multiple commands", "(cd /tmp; pwd)\n", "{\n    cd /tmp\n    pwd\n}\n"},
+		{"subshell with redirection", "(cd /tmp && pwd) > /tmp/out\n", "{\n    cd /tmp && pwd\n} > /tmp/out\n"},
+		{"subshell in chain", "(exit 0) && echo ok\n", "{\n    exit 0\n} && echo ok\n"},
+		{"pipe into subshell", "echo hello | (cat)\n", "echo hello | {\n    cat\n}\n"},
+		{"subshell inside command substitution", "x=$( (cd /tmp && pwd) )\n", "set x $({\n    cd /tmp && pwd\n})\n"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

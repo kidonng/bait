@@ -180,6 +180,16 @@ func (e *emitter) printEnd(tail string, trailing []syntax.Comment) {
 		e.comment(c)
 	}
 }
+func (e *emitter) printBraceClose(tail string, trailing []syntax.Comment) {
+	if len(trailing) == 0 {
+		e.printf("}%s", tail)
+		return
+	}
+	e.printf("}%s%s", tail, trailingCommentSuffix(trailing[0]))
+	for _, c := range trailing[1:] {
+		e.comment(c)
+	}
+}
 
 func (e *emitter) comment(c syntax.Comment) {
 	text := c.Text
@@ -305,7 +315,7 @@ func (e *emitter) stmt(s *syntax.Stmt) {
 	case *syntax.Block:
 		e.group(s, cmd.Stmts, cmd.Last)
 	case *syntax.Subshell:
-		e.warn(cmd.Lparen, "subshell isolation is lost: (...) translated to a begin block")
+		e.warn(cmd.Lparen, "subshell isolation is lost: (...) translated to a { ... } block")
 		e.group(s, cmd.Stmts, cmd.Last)
 	default:
 		e.warn(s.Position, "%s has no fish equivalent; emitted verbatim", describe(cmd))
@@ -710,12 +720,12 @@ func (e *emitter) group(s *syntax.Stmt, stmts []*syntax.Stmt, last []syntax.Comm
 	e.leadingComments(sc.leading)
 	tail := e.tails(s)
 	if s.Negated {
-		e.printf("! begin")
+		e.printf("! {")
 	} else {
-		e.printf("begin")
+		e.printf("{")
 	}
 	e.body(stmts, last)
-	e.printEnd(tail, sc.trailing)
+	e.printBraceClose(tail, sc.trailing)
 }
 
 func describe(cmd syntax.Command) string {
