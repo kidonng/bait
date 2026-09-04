@@ -623,7 +623,7 @@ func (e *emitter) chainLeaf(st *syntax.Stmt) string {
 						parts = append(parts, trimmed)
 					}
 				}
-				return "begin; " + strings.Join(parts, "; ") + "; end"
+				return "{ " + strings.Join(parts, "; ") + "; }"
 			}
 			return txt
 		}
@@ -666,7 +666,7 @@ func (e *emitter) chainLeaf(st *syntax.Stmt) string {
 	if len(parts) == 1 {
 		return parts[0]
 	}
-	return "begin; " + strings.Join(parts, "; ") + "; end"
+	return "{ " + strings.Join(parts, "; ") + "; }"
 }
 
 func hasStructural(s *syntax.Stmt) bool {

@@ -8,7 +8,7 @@ import (
 )
 
 // condText renders an if/while condition: a single statement verbatim,
-// several statements wrapped in an inline begin block (fish conditions
+// several statements wrapped in an inline brace block (fish conditions
 // take a single job).
 func (e *emitter) condText(cond []*syntax.Stmt) string {
 	if len(cond) == 1 {
@@ -38,7 +38,7 @@ func (e *emitter) condText(cond []*syntax.Stmt) string {
 	for i, st := range cond {
 		parts[i] = e.render(st)
 	}
-	return "begin " + strings.Join(parts, "; ") + "; end"
+	return "{ " + strings.Join(parts, "; ") + "; }"
 }
 
 func (e *emitter) ifClause(s *syntax.Stmt, f *syntax.IfClause) {

@@ -279,6 +279,18 @@ func TestCompoundStatements(t *testing.T) {
 				"} &\n",
 		},
 		{
+			"multi-statement if condition",
+			"if echo 1; true; then echo ok; fi\n",
+			"if { echo 1; true; }\n" +
+				"    echo ok\n" +
+				"end\n",
+		},
+		{
+			"multiple assignments in combiner chain",
+			"true && a=1 b=2 && echo ok\n",
+			"true && { set a 1; set b 2; } && echo ok\n",
+		},
+		{
 			"comments inside if body",
 			"if true; then\n" +
 				"\t# about to echo\n" +
