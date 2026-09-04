@@ -143,9 +143,12 @@ func (e *emitter) cmdSubstText(cs *syntax.CmdSubst) (string, bool) {
 	sub := e.newSubEmitter()
 	sub.inSubshell = true
 	for _, st := range cs.Stmts {
+		sub.newline(stmtStartPos(st))
 		sub.stmt(st)
+		sub.advanceLine(stmtEndLine(st))
 	}
 	for _, c := range cs.Last {
+		sub.newline(c.Pos())
 		sub.comment(c)
 	}
 	e.inheritSub(sub)
@@ -179,9 +182,12 @@ func (e *emitter) procSubstText(ps *syntax.ProcSubst) (string, bool) {
 	sub := e.newSubEmitter()
 	sub.inSubshell = true
 	for _, st := range ps.Stmts {
+		sub.newline(stmtStartPos(st))
 		sub.stmt(st)
+		sub.advanceLine(stmtEndLine(st))
 	}
 	for _, c := range ps.Last {
+		sub.newline(c.Pos())
 		sub.comment(c)
 	}
 	e.inheritSub(sub)

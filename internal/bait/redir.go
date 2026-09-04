@@ -325,8 +325,7 @@ func (e *emitter) emitHdoc(s *syntax.Stmt, hdoc *syntax.Redirect, rest []*syntax
 			break
 		}
 	}
-	sc := classifyComments(s)
-	e.leadingComments(sc.leading)
+	sc := e.prepareStmt(s)
 	origComments := s.Comments
 	s.Comments = nil
 	origRedirs := s.Redirs

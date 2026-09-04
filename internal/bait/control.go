@@ -42,42 +42,57 @@ func (e *emitter) condText(cond []*syntax.Stmt) string {
 }
 
 func (e *emitter) ifClause(s *syntax.Stmt, f *syntax.IfClause) {
-	sc := classifyComments(s)
-	e.leadingComments(sc.leading)
+	sc := e.prepareStmt(s)
 	tail := e.tails(s)
 	e.printf("if %s", e.condText(f.Cond))
+	e.advanceLine(f.Pos().Line())
+	for _, st := range f.Cond {
+		e.advanceLine(stmtEndLine(st))
+	}
 
 	pending := f.Last
 	e.body(f.Then, f.ThenLast)
 	for els := f.Else; els != nil; {
 		for _, c := range pending {
+			e.newline(c.Pos())
 			e.comment(c)
 		}
 		pending = els.Last
 		if len(els.Cond) == 0 {
+			e.newline(els.Pos())
 			e.printf("else")
+			e.advanceLine(els.Pos().Line())
 			e.body(els.Then, els.ThenLast)
 			break
 		}
+		e.newline(els.Pos())
 		e.printf("else if %s", e.condText(els.Cond))
+		e.advanceLine(els.Pos().Line())
+		for _, st := range els.Cond {
+			e.advanceLine(stmtEndLine(st))
+		}
 		e.body(els.Then, els.ThenLast)
 		els = els.Else
 	}
 	for _, c := range pending {
+		e.newline(c.Pos())
 		e.comment(c)
 	}
 	e.printEnd(tail, sc.trailing)
 }
 
 func (e *emitter) whileClause(s *syntax.Stmt, w *syntax.WhileClause) {
-	sc := classifyComments(s)
-	e.leadingComments(sc.leading)
+	sc := e.prepareStmt(s)
 	tail := e.tails(s)
 	cond := e.condText(w.Cond)
 	if w.Until {
 		cond = "not " + cond
 	}
 	e.printf("while %s", cond)
+	e.advanceLine(w.Pos().Line())
+	for _, st := range w.Cond {
+		e.advanceLine(stmtEndLine(st))
+	}
 	e.body(w.Do, w.DoLast)
 	e.printEnd(tail, sc.trailing)
 }
@@ -121,26 +136,37 @@ func (e *emitter) forClause(s *syntax.Stmt, f *syntax.ForClause) {
 		items = []string{"(true)"}
 	}
 	tail := e.tails(s)
-	sc := classifyComments(s)
-	e.leadingComments(sc.leading)
+	sc := e.prepareStmt(s)
 	headerSuffix := ""
 	if sc.headerTrailing != nil {
 		headerSuffix = trailingCommentSuffix(*sc.headerTrailing)
 	}
 	e.printf("for %s in %s%s", e.varName(iter.Name.Value), strings.Join(items, " "), headerSuffix)
+	e.advanceLine(f.Pos().Line())
+	if f.DoPos.Line() > 0 {
+		e.advanceLine(f.DoPos.Line())
+	}
 	e.body(f.Do, f.DoLast)
 	e.printEnd(tail, sc.trailing)
 }
 
 func (e *emitter) caseClause(s *syntax.Stmt, cl *syntax.CaseClause) {
 	tail := e.tails(s)
-	sc := classifyComments(s)
-	e.leadingComments(sc.leading)
+	sc := e.prepareStmt(s)
 	if pred, ifItem, elseItem, ok := evalInteractiveCase(cl); ok {
 		if elseItem == nil {
 			e.printf("if %s", pred)
+			e.advanceLine(ifItem.Pos().Line())
+			for _, p := range ifItem.Patterns {
+				e.advanceLine(p.End().Line())
+			}
 			e.body(ifItem.Stmts, ifItem.Last)
+			e.advanceLine(ifItem.End().Line())
+			if ifItem.OpPos.IsValid() {
+				e.advanceLine(ifItem.OpPos.Line())
+			}
 			for _, c := range cl.Last {
+				e.newline(c.Pos())
 				e.comment(c)
 			}
 			e.printEnd(tail, sc.trailing)
@@ -148,20 +174,47 @@ func (e *emitter) caseClause(s *syntax.Stmt, cl *syntax.CaseClause) {
 		}
 		if len(ifItem.Stmts) == 0 && len(ifItem.Last) == 0 {
 			e.printf("if not %s", pred)
+			e.advanceLine(elseItem.Pos().Line())
+			for _, p := range elseItem.Patterns {
+				e.advanceLine(p.End().Line())
+			}
 			e.body(elseItem.Stmts, elseItem.Last)
+			e.advanceLine(elseItem.End().Line())
+			if elseItem.OpPos.IsValid() {
+				e.advanceLine(elseItem.OpPos.Line())
+			}
 			for _, c := range cl.Last {
+				e.newline(c.Pos())
 				e.comment(c)
 			}
 			e.printEnd(tail, sc.trailing)
 			return
 		}
 		e.printf("if %s", pred)
+		e.advanceLine(ifItem.Pos().Line())
+		for _, p := range ifItem.Patterns {
+			e.advanceLine(p.End().Line())
+		}
 		e.body(ifItem.Stmts, ifItem.Last)
+		e.advanceLine(ifItem.End().Line())
+		if ifItem.OpPos.IsValid() {
+			e.advanceLine(ifItem.OpPos.Line())
+		}
 		if len(elseItem.Stmts) > 0 || len(elseItem.Last) > 0 {
+			e.newline(elseItem.Pos())
 			e.printf("else")
+			e.advanceLine(elseItem.Pos().Line())
+			for _, p := range elseItem.Patterns {
+				e.advanceLine(p.End().Line())
+			}
 			e.body(elseItem.Stmts, elseItem.Last)
+			e.advanceLine(elseItem.End().Line())
+			if elseItem.OpPos.IsValid() {
+				e.advanceLine(elseItem.OpPos.Line())
+			}
 		}
 		for _, c := range cl.Last {
+			e.newline(c.Pos())
 			e.comment(c)
 		}
 		e.printEnd(tail, sc.trailing)
@@ -180,7 +233,13 @@ func (e *emitter) caseClause(s *syntax.Stmt, cl *syntax.CaseClause) {
 		wTxt = `"` + wTxt + `"`
 	}
 	e.printf("switch %s", wTxt)
+	e.advanceLine(cl.Pos().Line())
 	for _, item := range cl.Items {
+		for _, c := range item.Comments {
+			e.newline(c.Pos())
+			e.comment(c)
+		}
+		e.newline(item.Pos())
 		if item.Op != syntax.Break {
 			e.warn(item.Pos(), "case fallthrough (%s) has no fish equivalent; converted to a plain case", item.Op)
 		}
@@ -189,9 +248,18 @@ func (e *emitter) caseClause(s *syntax.Stmt, cl *syntax.CaseClause) {
 			patterns[i] = e.renderCasePattern(p)
 		}
 		e.printf("case %s", strings.Join(patterns, " "))
+		e.advanceLine(item.Pos().Line())
+		for _, p := range item.Patterns {
+			e.advanceLine(p.End().Line())
+		}
 		e.body(item.Stmts, item.Last)
+		e.advanceLine(item.End().Line())
+		if item.OpPos.IsValid() {
+			e.advanceLine(item.OpPos.Line())
+		}
 	}
 	for _, c := range cl.Last {
+		e.newline(c.Pos())
 		e.comment(c)
 	}
 	e.printEnd(tail, sc.trailing)
@@ -218,8 +286,14 @@ func (e *emitter) caseClauseAsIf(s *syntax.Stmt, cl *syntax.CaseClause, tail str
 	first := true
 	for i, item := range cl.Items {
 		if !first && i == len(cl.Items)-1 && len(item.Patterns) == 1 && isCatchAll(item.Patterns[0]) {
+			e.newline(item.Pos())
 			e.printf("else")
+			e.advanceLine(item.Pos().Line())
 			e.body(item.Stmts, item.Last)
+			e.advanceLine(item.End().Line())
+			if item.OpPos.IsValid() {
+				e.advanceLine(item.OpPos.Line())
+			}
 			continue
 		}
 		var conds []string
@@ -228,13 +302,22 @@ func (e *emitter) caseClauseAsIf(s *syntax.Stmt, cl *syntax.CaseClause, tail str
 			conds = append(conds, fmt.Sprintf("string match --regex --quiet -- %s %s", fishSingleQuote("^"+re+"$"), target))
 		}
 		cond := strings.Join(conds, "; or ")
+		e.newline(item.Pos())
 		if first {
 			e.printf("if %s", cond)
 			first = false
 		} else {
 			e.printf("else if %s", cond)
 		}
+		e.advanceLine(item.Pos().Line())
+		for _, p := range item.Patterns {
+			e.advanceLine(p.End().Line())
+		}
 		e.body(item.Stmts, item.Last)
+		e.advanceLine(item.End().Line())
+		if item.OpPos.IsValid() {
+			e.advanceLine(item.OpPos.Line())
+		}
 	}
 	for _, c := range cl.Last {
 		e.comment(c)

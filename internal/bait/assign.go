@@ -66,8 +66,7 @@ func (e *emitter) assignStmt(s *syntax.Stmt, c *syntax.CallExpr) {
 			lines = append(lines, setLineText(curScope, e.varName(a.Name.Value), e.assignValue(a)))
 		}
 	}
-	sc := classifyComments(s)
-	e.leadingComments(sc.leading)
+	sc := e.prepareStmt(s)
 	e.printLinesWithTrailing(lines, sc.trailing)
 }
 
@@ -237,8 +236,7 @@ func (e *emitter) declClause(s *syntax.Stmt, d *syntax.DeclClause) {
 				args = append(args, fmt.Sprintf("%s=%s", e.varName(a.Name.Value), val))
 			}
 		}
-		sc := classifyComments(s)
-		e.leadingComments(sc.leading)
+		sc := e.prepareStmt(s)
 		if len(args) == 0 {
 			e.printLineWithTrailing("export", sc.trailing)
 		} else {
@@ -292,8 +290,7 @@ func (e *emitter) declClause(s *syntax.Stmt, d *syntax.DeclClause) {
 			lines = append(lines, setLineText(scope, e.varName(a.Name.Value), e.assignValue(a)))
 		}
 	}
-	sc := classifyComments(s)
-	e.leadingComments(sc.leading)
+	sc := e.prepareStmt(s)
 	e.printLinesWithTrailing(lines, sc.trailing)
 }
 
@@ -379,8 +376,7 @@ func isSynthesizedSet(c *syntax.CallExpr) bool {
 }
 
 func (e *emitter) shiftCmd(s *syntax.Stmt, c *syntax.CallExpr) {
-	sc := classifyComments(s)
-	e.leadingComments(sc.leading)
+	sc := e.prepareStmt(s)
 	tail := e.tails(s)
 	if len(c.Args) <= 1 {
 		e.printLineWithTrailing("set --erase argv[1]"+tail, sc.trailing)

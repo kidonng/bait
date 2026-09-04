@@ -689,3 +689,74 @@ func TestCommentPreservation(t *testing.T) {
 		})
 	}
 }
+
+func TestNewlinePreservation(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "blank line between simple commands",
+			in:   "echo 1\n\necho 2\n",
+			want: "echo 1\n\necho 2\n",
+		},
+		{
+			name: "blank line between assignments",
+			in:   "a=1\n\nb=2\n",
+			want: "set a 1\n\nset b 2\n",
+		},
+		{
+			name: "collapse multiple blank lines to single blank line",
+			in:   "echo 1\n\n\n\necho 2\n",
+			want: "echo 1\n\necho 2\n",
+		},
+		{
+			name: "blank line before comment",
+			in:   "echo 1\n\n# my comment\necho 2\n",
+			want: "echo 1\n\n# my comment\necho 2\n",
+		},
+		{
+			name: "blank line after comment",
+			in:   "# header comment\n\necho 1\n",
+			want: "# header comment\n\necho 1\n",
+		},
+		{
+			name: "blank line inside function",
+			in:   "myfunc() {\n    echo 1\n\n    echo 2\n}\n",
+			want: "function myfunc\n    echo 1\n\n    echo 2\nend\n",
+		},
+		{
+			name: "blank line between functions",
+			in:   "f1() {\n    echo 1\n}\n\nf2() {\n    echo 2\n}\n",
+			want: "function f1\n    echo 1\nend\n\nfunction f2\n    echo 2\nend\n",
+		},
+		{
+			name: "blank line in if statement",
+			in:   "if true; then\n    echo 1\n\n    echo 2\nfi\n",
+			want: "if true\n    echo 1\n\n    echo 2\nend\n",
+		},
+		{
+			name: "blank lines at top of file stripped",
+			in:   "\n\necho 1\n",
+			want: "echo 1\n",
+		},
+		{
+			name: "blank line after shebang preserved",
+			in:   "#!/usr/bin/env bash\n\necho 1\n",
+			want: "#!/usr/bin/env fish\n\necho 1\n",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _, err := TranslateWithOptions([]byte(tc.in), Options{NoHelpers: true})
+			if err != nil {
+				t.Fatalf("Translate(%q) error: %v", tc.in, err)
+			}
+			if string(got) != tc.want {
+				t.Errorf("mismatch\n in:   %q\n got:  %q\n want: %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}

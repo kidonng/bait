@@ -75,8 +75,7 @@ func evalInteractiveTest(b *syntax.BinaryTest) (pred string, ok bool) {
 }
 
 func (e *emitter) testClause(s *syntax.Stmt, tc *syntax.TestClause) {
-	sc := classifyComments(s)
-	e.leadingComments(sc.leading)
+	sc := e.prepareStmt(s)
 	tail := e.tails(s)
 	res := e.renderTestExpr(tc.X)
 	var line string

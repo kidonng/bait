@@ -31,6 +31,7 @@ type emitter struct {
 	multiWordScalars  map[string]bool
 	commandPrefixVars map[string]bool
 	knownFuncs        map[string]bool
+	lastLine          uint
 }
 
 func (e *emitter) newSubEmitter() *emitter {
@@ -74,8 +75,10 @@ func newEmitter() *emitter {
 }
 
 func (e *emitter) printf(format string, args ...any) {
-	e.buf.WriteString(strings.Repeat(indentUnit, e.depth))
-	fmt.Fprintf(&e.buf, format, args...)
+	if format != "" || len(args) > 0 {
+		e.buf.WriteString(strings.Repeat(indentUnit, e.depth))
+		fmt.Fprintf(&e.buf, format, args...)
+	}
 	e.buf.WriteByte('\n')
 }
 
@@ -132,8 +135,65 @@ func classifyComments(s *syntax.Stmt) stmtComments {
 	return sc
 }
 
+func (e *emitter) newline(pos syntax.Pos) {
+	if !pos.IsValid() {
+		return
+	}
+	line := pos.Line()
+	if e.lastLine > 0 && line > e.lastLine+1 {
+		e.buf.WriteByte('\n')
+	}
+	if line > e.lastLine {
+		e.lastLine = line
+	}
+}
+
+func (e *emitter) advanceLine(line uint) {
+	if line > e.lastLine {
+		e.lastLine = line
+	}
+}
+
+func stmtStartPos(s *syntax.Stmt) syntax.Pos {
+	if s == nil {
+		return syntax.Pos{}
+	}
+	pos := s.Pos()
+	if len(s.Comments) > 0 {
+		cPos := s.Comments[0].Pos()
+		if pos.After(cPos) {
+			return cPos
+		}
+	}
+	return pos
+}
+
+func stmtEndLine(s *syntax.Stmt) uint {
+	if s == nil {
+		return 0
+	}
+	end := s.End().Line()
+	for _, c := range s.Comments {
+		if c.End().Line() > end {
+			end = c.End().Line()
+		}
+	}
+	return end
+}
+
+func (e *emitter) prepareStmt(s *syntax.Stmt) stmtComments {
+	sc := classifyComments(s)
+	for _, c := range sc.leading {
+		e.newline(c.Pos())
+		e.comment(c)
+	}
+	e.newline(s.Pos())
+	return sc
+}
+
 func (e *emitter) leadingComments(comments []syntax.Comment) {
 	for _, c := range comments {
+		e.newline(c.Pos())
 		e.comment(c)
 	}
 }
@@ -152,7 +212,9 @@ func (e *emitter) printLineWithTrailing(line string, trailing []syntax.Comment) 
 		return
 	}
 	e.printf("%s%s", line, trailingCommentSuffix(trailing[0]))
+	e.advanceLine(trailing[0].End().Line())
 	for _, c := range trailing[1:] {
+		e.newline(c.Pos())
 		e.comment(c)
 	}
 }
@@ -160,6 +222,7 @@ func (e *emitter) printLineWithTrailing(line string, trailing []syntax.Comment) 
 func (e *emitter) printLinesWithTrailing(lines []string, trailing []syntax.Comment) {
 	if len(lines) == 0 {
 		for _, c := range trailing {
+			e.newline(c.Pos())
 			e.comment(c)
 		}
 		return
@@ -176,7 +239,9 @@ func (e *emitter) printEnd(tail string, trailing []syntax.Comment) {
 		return
 	}
 	e.printf("end%s%s", tail, trailingCommentSuffix(trailing[0]))
+	e.advanceLine(trailing[0].End().Line())
 	for _, c := range trailing[1:] {
+		e.newline(c.Pos())
 		e.comment(c)
 	}
 }
@@ -186,7 +251,9 @@ func (e *emitter) printBraceClose(tail string, trailing []syntax.Comment) {
 		return
 	}
 	e.printf("}%s%s", tail, trailingCommentSuffix(trailing[0]))
+	e.advanceLine(trailing[0].End().Line())
 	for _, c := range trailing[1:] {
+		e.newline(c.Pos())
 		e.comment(c)
 	}
 }
@@ -197,6 +264,7 @@ func (e *emitter) comment(c syntax.Comment) {
 		text = "#" + text
 	}
 	e.printf("%s", text)
+	e.advanceLine(c.End().Line())
 }
 
 func (e *emitter) wrapperComments(s *syntax.Stmt) {
@@ -208,9 +276,12 @@ func (e *emitter) wrapperComments(s *syntax.Stmt) {
 func (e *emitter) body(stmts []*syntax.Stmt, dangling []syntax.Comment) {
 	e.depth++
 	for _, st := range stmts {
+		e.newline(stmtStartPos(st))
 		e.stmt(st)
+		e.advanceLine(stmtEndLine(st))
 	}
 	for _, c := range dangling {
+		e.newline(c.Pos())
 		e.comment(c)
 	}
 	e.depth--
@@ -221,9 +292,12 @@ func (e *emitter) file(f *syntax.File) {
 	origBuf := e.buf
 	e.buf = body
 	for _, stmt := range f.Stmts {
+		e.newline(stmtStartPos(stmt))
 		e.stmt(stmt)
+		e.advanceLine(stmtEndLine(stmt))
 	}
 	for _, c := range f.Last {
+		e.newline(c.Pos())
 		e.comment(c)
 	}
 	bodyBytes := e.buf.Bytes()
@@ -238,6 +312,7 @@ func (e *emitter) file(f *syntax.File) {
 	}
 
 	if !e.noHelpers {
+		wroteHelper := false
 		for _, h := range allHelpers {
 			if e.neededHelpers[h.kind] {
 				e.buf.WriteString(h.code)
@@ -245,7 +320,11 @@ func (e *emitter) file(f *syntax.File) {
 					e.buf.WriteByte('\n')
 				}
 				e.buf.WriteByte('\n')
+				wroteHelper = true
 			}
+		}
+		if wroteHelper {
+			bodyBytes = bytes.TrimLeft(bodyBytes, "\n")
 		}
 	}
 	e.buf.Write(bodyBytes)
@@ -328,8 +407,10 @@ func (e *emitter) stmt(s *syntax.Stmt) {
 func (e *emitter) lines(s string) {
 	pad := strings.Repeat(indentUnit, e.depth)
 	for _, l := range strings.Split(s, "\n") {
-		e.buf.WriteString(pad)
-		e.buf.WriteString(l)
+		if l != "" {
+			e.buf.WriteString(pad)
+			e.buf.WriteString(l)
+		}
 		e.buf.WriteByte('\n')
 	}
 }
@@ -341,8 +422,7 @@ func (e *emitter) lines(s string) {
 func (e *emitter) simple(s *syntax.Stmt) {
 	if c, ok := s.Cmd.(*syntax.CallExpr); ok {
 		if operand, negated, ok := matchTestDashV(c); ok {
-			sc := classifyComments(s)
-			e.leadingComments(sc.leading)
+			sc := e.prepareStmt(s)
 			line := e.renderTestDashV(operand, negated)
 			if s.Negated {
 				line = "! " + line
@@ -372,8 +452,7 @@ func (e *emitter) simple(s *syntax.Stmt) {
 		}
 		e.warnBashOnlyBuiltin(s, c)
 		if isSynthesizedSet(c) {
-			sc := classifyComments(s)
-			e.leadingComments(sc.leading)
+			sc := e.prepareStmt(s)
 			varName := c.Args[1].Parts[0].(*syntax.Lit).Value
 			val := e.renderWordSmart(c.Args[2])
 			scope := ""
@@ -397,8 +476,7 @@ func (e *emitter) simple(s *syntax.Stmt) {
 			if _, ok := singleBareParam(c.Args[0]); ok {
 				e.needHelper(helperExec)
 				if hasLeadingRedir(s) || (e.inSubshell && hasHighFDTargetRedir(s.Redirs)) {
-					sc := classifyComments(s)
-					e.leadingComments(sc.leading)
+					sc := e.prepareStmt(s)
 					line := e.render(s.Cmd)
 					if s.Negated {
 						line = "! " + line
@@ -412,8 +490,7 @@ func (e *emitter) simple(s *syntax.Stmt) {
 			}
 		}
 		if hasLeadingRedir(s) || (e.inSubshell && hasHighFDTargetRedir(s.Redirs)) {
-			sc := classifyComments(s)
-			e.leadingComments(sc.leading)
+			sc := e.prepareStmt(s)
 			line := e.render(s.Cmd)
 			if s.Negated {
 				line = "! " + line
@@ -443,8 +520,7 @@ func hasLeadingRedir(s *syntax.Stmt) bool {
 // emitSimpleFish renders a simple command whose arguments or env-prefix
 // assignments contain structural command substitutions.
 func (e *emitter) emitSimpleFish(s *syntax.Stmt, c *syntax.CallExpr) {
-	sc := classifyComments(s)
-	e.leadingComments(sc.leading)
+	sc := e.prepareStmt(s)
 	var parts []string
 	if s.Negated {
 		parts = append(parts, "!")
@@ -482,12 +558,13 @@ func (e *emitter) binary(s *syntax.Stmt) {
 	// plain sequence in both shells; emit the two statements in order.
 	if _, ok := bcmd.X.Cmd.(*syntax.FuncDecl); ok && bcmd.Op == syntax.AndStmt {
 		e.stmt(bcmd.X)
+		e.newline(stmtStartPos(bcmd.Y))
 		e.stmt(bcmd.Y)
+		e.advanceLine(stmtEndLine(bcmd.Y))
 		return
 	}
 	if hasStructural(bcmd.X) || hasStructural(bcmd.Y) {
-		sc := classifyComments(s)
-		e.leadingComments(sc.leading)
+		sc := e.prepareStmt(s)
 		line := fmt.Sprintf("%s %s %s%s", e.chainSideText(bcmd.X), binOpText(bcmd.Op),
 			e.chainSideText(bcmd.Y), e.tails(s))
 		e.printLineWithTrailing(line, sc.trailing)
@@ -537,8 +614,7 @@ func chainNeedsRewrite(b *syntax.BinaryCmd) bool {
 // emitChain renders an &&/||/| chain leaf by leaf so that assignment
 // leaves can become set commands; plain command leaves stay verbatim.
 func (e *emitter) emitChain(s *syntax.Stmt, b *syntax.BinaryCmd) {
-	sc := classifyComments(s)
-	e.leadingComments(sc.leading)
+	sc := e.prepareStmt(s)
 	var leaves []*syntax.Stmt
 	var ops []syntax.BinCmdOperator
 	var walk func(*syntax.BinaryCmd)
@@ -684,13 +760,13 @@ func hasStructural(s *syntax.Stmt) bool {
 }
 
 func (e *emitter) funcDecl(s *syntax.Stmt, fd *syntax.FuncDecl) {
-	sc := classifyComments(s)
-	e.leadingComments(sc.leading)
+	sc := e.prepareStmt(s)
 	tail := e.tails(s)
 	if fd.Body != nil && len(fd.Body.Redirs) > 0 {
 		tail += e.tails(fd.Body)
 	}
 	e.printf("function %s", fd.Name.Value)
+	e.advanceLine(fd.Pos().Line())
 	saved := e.inFunction
 	savedLocals := e.funcLocals
 	e.inFunction = true
@@ -701,7 +777,9 @@ func (e *emitter) funcDecl(s *syntax.Stmt, fd *syntax.FuncDecl) {
 			e.inFunction = saved
 			e.funcLocals = savedLocals
 			e.printEnd(tail, sc.trailing)
+			e.newline(stmtStartPos(bcmd.Y))
 			e.stmt(bcmd.Y)
+			e.advanceLine(stmtEndLine(bcmd.Y))
 			return
 		}
 	}
@@ -716,14 +794,14 @@ func (e *emitter) funcDecl(s *syntax.Stmt, fd *syntax.FuncDecl) {
 }
 
 func (e *emitter) group(s *syntax.Stmt, stmts []*syntax.Stmt, last []syntax.Comment) {
-	sc := classifyComments(s)
-	e.leadingComments(sc.leading)
+	sc := e.prepareStmt(s)
 	tail := e.tails(s)
 	if s.Negated {
 		e.printf("! {")
 	} else {
 		e.printf("{")
 	}
+	e.advanceLine(s.Pos().Line())
 	e.body(stmts, last)
 	e.printBraceClose(tail, sc.trailing)
 }
