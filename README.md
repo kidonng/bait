@@ -1,4 +1,4 @@
-# 🎣 Bait: Almost Idiomatic Transpiler
+# 🐛 Bait: Almost Idiomatic Transpiler
 
 <table>
 <tr>

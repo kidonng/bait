@@ -1,5 +1,5 @@
 {
-  description = "🎣 Bait: Almost Idiomatic Transpiler";
+  description = "🐛 Bait: Almost Idiomatic Transpiler";
 
   inputs = {
     nixpkgs.url = "https://flakehub.com/f/DeterminateSystems/nixpkgs-weekly/0.1";
