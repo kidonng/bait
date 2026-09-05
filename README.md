@@ -21,7 +21,7 @@ https://github.com/user-attachments/assets/d23f56dc-42a6-425b-9de0-432306c8ec47
 </tr>
 </table>
 
-> [!INFO]
+> [!NOTE]
 > Want the reverse (fish → Bash)? Checkout [Hook](https://github.com/kidonng/hook)!
 
 ## Install
