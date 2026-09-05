@@ -53,7 +53,7 @@
       packages = forAllSystems (pkgs: rec {
         bait = pkgs.buildGoModule {
           pname = "bait";
-          version = "0.4.0";
+          version = "0.5.0";
           src = ./.;
           subPackages = [ "cmd/bait" ];
           vendorHash = "sha256-tCFu9E2pFBWBQFiRVvI16FNI3dE1bUKJlsEbvDAo7lo=";
