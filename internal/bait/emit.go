@@ -588,15 +588,6 @@ func (e *emitter) markSynth(st *syntax.Stmt) {
 // valid fish verbatim; a structural operand (rare) falls back.
 func (e *emitter) binary(s *syntax.Stmt) {
 	bcmd := s.Cmd.(*syntax.BinaryCmd)
-	// A function definition always succeeds, so `f() { … } && cmd` is a
-	// plain sequence in both shells; emit the two statements in order.
-	if _, ok := bcmd.X.Cmd.(*syntax.FuncDecl); ok && bcmd.Op == syntax.AndStmt {
-		e.stmt(bcmd.X)
-		e.newline(stmtStartPos(bcmd.Y))
-		e.stmt(bcmd.Y)
-		e.advanceLine(stmtEndLine(bcmd.Y))
-		return
-	}
 	if hasStructural(bcmd.X) || hasStructural(bcmd.Y) {
 		sc := e.prepareStmt(s)
 		line := fmt.Sprintf("%s %s %s%s", e.chainSideText(bcmd.X), binOpText(bcmd.Op),
@@ -738,9 +729,26 @@ func hasStructural(s *syntax.Stmt) bool {
 
 func (e *emitter) funcDecl(s *syntax.Stmt, fd *syntax.FuncDecl) {
 	sc := e.prepareStmt(s)
-	tail := e.tails(s)
-	if fd.Body != nil && len(fd.Body.Redirs) > 0 {
-		tail += e.tails(fd.Body)
+	bodyStmts := []*syntax.Stmt{fd.Body}
+	var bodyLast []syntax.Comment
+	bodyTails := ""
+	if fd.Body != nil {
+		bodyTails = e.tails(fd.Body)
+	}
+	var op syntax.BinCmdOperator
+	var rhs *syntax.Stmt
+	switch cmd := fd.Body.Cmd.(type) {
+	case *syntax.Block:
+		bodyStmts, bodyLast = cmd.Stmts, cmd.Last
+	case *syntax.BinaryCmd:
+		// mvdan attaches a trailing `&&`/`||`/`|` to the function body.
+		// The operator applies to the definition command, which always
+		// succeeds, so it is emitted after `end`, never inside the body.
+		if blk, ok := cmd.X.Cmd.(*syntax.Block); ok {
+			bodyStmts, bodyLast = blk.Stmts, blk.Last
+			bodyTails = e.tails(cmd.X)
+			op, rhs = cmd.Op, cmd.Y
+		}
 	}
 	e.printf("function %s", fd.Name.Value)
 	e.advanceLine(fd.Pos().Line())
@@ -748,26 +756,34 @@ func (e *emitter) funcDecl(s *syntax.Stmt, fd *syntax.FuncDecl) {
 	savedLocals := e.funcLocals
 	e.inFunction = true
 	e.funcLocals = make(map[string]bool)
-	if bcmd, ok := fd.Body.Cmd.(*syntax.BinaryCmd); ok && bcmd.Op == syntax.AndStmt {
-		if blk, ok := bcmd.X.Cmd.(*syntax.Block); ok {
-			e.body(blk.Stmts, blk.Last)
-			e.inFunction = saved
-			e.funcLocals = savedLocals
-			e.printEnd(tail, sc.trailing)
-			e.newline(stmtStartPos(bcmd.Y))
-			e.stmt(bcmd.Y)
-			e.advanceLine(stmtEndLine(bcmd.Y))
-			return
-		}
-	}
-	if blk, ok := fd.Body.Cmd.(*syntax.Block); ok {
-		e.body(blk.Stmts, blk.Last)
+	if bodyTails != "" {
+		// Redirections attached to a definition apply whenever the
+		// function is invoked, so they wrap the body, not the definition.
+		e.printf("{")
+		e.body(bodyStmts, bodyLast)
+		e.printBraceClose(bodyTails, nil)
 	} else {
-		e.body([]*syntax.Stmt{fd.Body}, nil)
+		e.body(bodyStmts, bodyLast)
 	}
 	e.inFunction = saved
 	e.funcLocals = savedLocals
-	e.printEnd(tail, sc.trailing)
+	e.printEnd("", sc.trailing)
+	if op == 0 || rhs == nil {
+		return
+	}
+	e.newline(stmtStartPos(rhs))
+	switch op {
+	case syntax.AndStmt:
+		// The definition always succeeds, so the `&&` branch runs
+		// unconditionally.
+		e.stmt(rhs)
+	default:
+		if op == syntax.Pipe || op == syntax.PipeAll {
+			e.warn(fd.Pos(), "function defined in a pipeline stays defined in the current shell; bash defines it in a subshell")
+		}
+		e.printLineWithTrailing("true "+binOpText(op)+" "+e.chainLeaf(rhs), nil)
+	}
+	e.advanceLine(stmtEndLine(rhs))
 }
 
 func (e *emitter) group(s *syntax.Stmt, stmts []*syntax.Stmt, last []syntax.Comment) {

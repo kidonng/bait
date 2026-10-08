@@ -789,6 +789,14 @@ func TestBashFishEquivalence(t *testing.T) {
 			name: "set builtin in condition",
 			src:  "if set -- gamma; then echo \"g=$1\"; fi\n",
 		},
+		{
+			name: "function definition with or operator",
+			src:  "f() { false; } || echo never\nf\necho \"st=$?\"\n",
+		},
+		{
+			name: "function definition redirect applies at call time",
+			src:  "rm -f out.txt\nf() { echo hi; } > out.txt\nf\ncat out.txt\n",
+		},
 	}
 
 	for _, tc := range tests {

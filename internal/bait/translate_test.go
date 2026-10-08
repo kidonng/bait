@@ -243,6 +243,22 @@ func TestCompoundStatements(t *testing.T) {
 				"end\n",
 		},
 		{
+			"function definition piped",
+			"f() { echo a; } | cat\n",
+			"function f\n" +
+				"    echo a\n" +
+				"end\n" +
+				"true | cat\n",
+		},
+		{
+			"function definition with or operator",
+			"f() { echo a; } || echo b\n",
+			"function f\n" +
+				"    echo a\n" +
+				"end\n" +
+				"true || echo b\n",
+		},
+		{
 			"function keyword form",
 			"function foo { echo hi; }\n",
 			"function foo\n" +
@@ -378,6 +394,11 @@ func TestWarnings(t *testing.T) {
 			"select loop",
 			"select v in a b; do echo $v; done\n",
 			"select loop",
+		},
+		{
+			"function defined in a pipeline",
+			"f() { echo a; } | cat\n",
+			"current shell",
 		},
 		{
 			"arithmetic command",
