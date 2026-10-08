@@ -67,6 +67,16 @@ func (e *emitter) assignStmt(s *syntax.Stmt, c *syntax.CallExpr) {
 		}
 	}
 	sc := e.prepareStmt(s)
+	if s.Negated && len(lines) > 0 {
+		if len(lines) == 1 {
+			lines[0] = "! " + lines[0]
+		} else {
+			for i := range lines {
+				lines[i] = strings.TrimSpace(lines[i])
+			}
+			lines = []string{"! { " + strings.Join(lines, "; ") + "; }"}
+		}
+	}
 	e.printLinesWithTrailing(lines, sc.trailing)
 }
 

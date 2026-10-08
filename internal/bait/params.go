@@ -786,7 +786,7 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 					cond,
 					printVal(ref)),
 				printVal(e.argWord(exp.Word)))
-			return []syntax.WordPart{&syntax.CmdSubst{Stmts: []*syntax.Stmt{chain}}}, true
+			return []syntax.WordPart{e.synthCmdSubst(chain)}, true
 
 		case syntax.AlternateUnsetOrNull, syntax.AlternateUnset:
 			var cond *syntax.Stmt
@@ -800,7 +800,7 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 			chain := binCmd(syntax.OrStmt,
 				binCmd(syntax.AndStmt, cond, printVal(e.argWord(exp.Word))),
 				callStmt(litWord("true")))
-			return []syntax.WordPart{&syntax.CmdSubst{Stmts: []*syntax.Stmt{chain}}}, true
+			return []syntax.WordPart{e.synthCmdSubst(chain)}, true
 
 		case syntax.RemSmallPrefix, syntax.RemLargePrefix,
 			syntax.RemSmallSuffix, syntax.RemLargeSuffix:

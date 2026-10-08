@@ -332,7 +332,7 @@ func (e *emitter) emitHdoc(s *syntax.Stmt, hdoc *syntax.Redirect, rest []*syntax
 	s.Redirs = rest
 	var cmdText string
 	if hasStructural(s) {
-		cmdText = e.inlineStmtText(s)
+		cmdText = e.stmtText(s)
 	} else {
 		cmdText = e.render(s)
 	}

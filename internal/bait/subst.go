@@ -7,8 +7,8 @@ import (
 )
 
 // hasStructuralCmdSubst reports whether any command substitution or process
-// substitution inside n contains structural statements or requires translation.
-func hasStructuralCmdSubst(n syntax.Node) bool {
+// substitution inside n contains statements that require translation.
+func (e *emitter) hasStructuralCmdSubst(n syntax.Node) bool {
 	if n == nil {
 		return false
 	}
@@ -20,7 +20,7 @@ func hasStructuralCmdSubst(n syntax.Node) bool {
 			return false
 		case *syntax.CmdSubst:
 			for _, st := range ps.Stmts {
-				if hasStructural(st) || stmtNeedsRewrite(st) || stmtHasHighFDTargetRedir(st) {
+				if hasStructural(st) || e.stmtNeedsRewrite(st) || stmtHasHighFDTargetRedir(st) {
 					found = true
 					return false
 				}
@@ -31,21 +31,36 @@ func hasStructuralCmdSubst(n syntax.Node) bool {
 	return found
 }
 
-func stmtNeedsRewrite(st *syntax.Stmt) bool {
-	if st == nil {
+// stmtNeedsRewrite reports whether a statement contains something the
+// translator must rewrite (assignments, set/shift builtins, test -v,
+// command-name indirection, leading or high-fd redirections).
+func (e *emitter) stmtNeedsRewrite(st *syntax.Stmt) bool {
+	if st == nil || e.synthStmts[st] {
 		return false
 	}
 	if hasLeadingRedir(st) || hasHighFDTargetRedir(st.Redirs) {
 		return true
 	}
-	if b, ok := st.Cmd.(*syntax.BinaryCmd); ok && chainNeedsRewrite(b) {
-		return true
-	}
-	if c, ok := st.Cmd.(*syntax.CallExpr); ok {
+	switch c := st.Cmd.(type) {
+	case *syntax.BinaryCmd:
+		return e.chainNeedsRewrite(c)
+	case *syntax.CallExpr:
+		if len(c.Args) == 0 && len(c.Assigns) > 0 {
+			return true
+		}
+		if len(c.Args) > 0 && isLitWord(c.Args[0], "shift") {
+			return true
+		}
+		if len(c.Assigns) == 0 && len(c.Args) > 0 && (e.isSetBuiltin(c) || isSynthesizedSet(c)) {
+			return true
+		}
 		if len(c.Assigns) == 0 && len(c.Args) > 0 {
 			if _, ok := singleBareParam(c.Args[0]); ok {
 				return true
 			}
+		}
+		if _, _, ok := matchTestDashV(c); ok {
+			return true
 		}
 	}
 	return false
@@ -58,7 +73,7 @@ func (e *emitter) renderWordSmart(w *syntax.Word) string {
 	if w == nil {
 		return ""
 	}
-	if !hasStructuralCmdSubst(w) {
+	if !e.hasStructuralCmdSubst(w) {
 		return e.render(w)
 	}
 	if out, ok := e.renderWordFish(w); ok {

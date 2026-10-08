@@ -31,6 +31,7 @@ type emitter struct {
 	multiWordScalars  map[string]bool
 	commandPrefixVars map[string]bool
 	knownFuncs        map[string]bool
+	synthStmts        map[*syntax.Stmt]bool
 	lastLine          uint
 }
 
@@ -46,6 +47,7 @@ func (e *emitter) newSubEmitter() *emitter {
 		}
 	}
 	sub.knownLists = e.knownLists
+	sub.synthStmts = e.synthStmts
 	sub.multiWordScalars = e.multiWordScalars
 	sub.commandPrefixVars = e.commandPrefixVars
 	sub.knownFuncs = e.knownFuncs
@@ -71,6 +73,7 @@ func newEmitter() *emitter {
 		multiWordScalars:  make(map[string]bool),
 		commandPrefixVars: make(map[string]bool),
 		knownFuncs:        make(map[string]bool),
+		synthStmts:        make(map[*syntax.Stmt]bool),
 	}
 }
 
@@ -463,12 +466,12 @@ func (e *emitter) simple(s *syntax.Stmt) {
 			e.printLineWithTrailing(line, sc.trailing)
 			return
 		}
-		if len(c.Assigns) == 0 && e.isSetBuiltin(c) {
+		if !e.synthStmts[s] && len(c.Assigns) == 0 && e.isSetBuiltin(c) {
 			if e.setCmd(s, c) {
 				return
 			}
 		}
-		if hasStructuralCmdSubst(s) || (e.inSubshell && hasHighFDTargetRedir(s.Redirs)) {
+		if e.hasStructuralCmdSubst(s) || (e.inSubshell && hasHighFDTargetRedir(s.Redirs)) {
 			e.emitSimpleFish(s, c)
 			return
 		}
@@ -535,9 +538,11 @@ func (e *emitter) emitSimpleFish(s *syntax.Stmt, c *syntax.CallExpr) {
 	e.printLineWithTrailing(line, sc.trailing)
 }
 
-// inlineStmtText renders one statement through the translator into a
-// text chunk for embedding into a surrounding line.
-func (e *emitter) inlineStmtText(s *syntax.Stmt) string {
+// stmtText renders one statement through the translator into a text chunk
+// for embedding into a surrounding line. Every context that needs a
+// statement's fish text (chain leaves, conditions, command substitutions)
+// uses this function so all rewrites apply uniformly.
+func (e *emitter) stmtText(s *syntax.Stmt) string {
 	sub := e.newSubEmitter()
 	sub.stmt(s)
 	e.inheritSub(sub)
@@ -548,6 +553,35 @@ func (e *emitter) inlineStmtText(s *syntax.Stmt) string {
 		lines[i] = pad + lines[i]
 	}
 	return strings.Join(lines, "\n")
+}
+
+// nonEmptyLines splits text into trimmed, non-empty lines.
+func nonEmptyLines(text string) []string {
+	var lines []string
+	for _, l := range strings.Split(text, "\n") {
+		if trimmed := strings.TrimSpace(l); trimmed != "" {
+			lines = append(lines, trimmed)
+		}
+	}
+	return lines
+}
+
+// synthCmdSubst wraps statements the translator generated inside a command
+// substitution. Generated commands are already fish text; emission-time
+// rewrites (the set builtin in particular) must not treat them as source.
+func (e *emitter) synthCmdSubst(st *syntax.Stmt) *syntax.CmdSubst {
+	e.markSynth(st)
+	return &syntax.CmdSubst{Stmts: []*syntax.Stmt{st}}
+}
+
+// markSynth records a generated statement and everything nested in it.
+func (e *emitter) markSynth(st *syntax.Stmt) {
+	syntax.Walk(st, func(n syntax.Node) bool {
+		if inner, ok := n.(*syntax.Stmt); ok {
+			e.synthStmts[inner] = true
+		}
+		return true
+	})
 }
 
 // binary emits &&/||/pipe chains. Chains made only of simple commands are
@@ -570,39 +604,27 @@ func (e *emitter) binary(s *syntax.Stmt) {
 		e.printLineWithTrailing(line, sc.trailing)
 		return
 	}
-	if chainNeedsRewrite(bcmd) {
+	if e.chainNeedsRewrite(bcmd) {
 		e.emitChain(s, bcmd)
 		return
 	}
 	e.simple(s)
 }
 
-func chainNeedsRewrite(b *syntax.BinaryCmd) bool {
+// chainNeedsRewrite reports whether a combiner chain contains a statement
+// the translator must rewrite. It walks through stmtNeedsRewrite so the
+// chain and statement entry points decide identically.
+func (e *emitter) chainNeedsRewrite(b *syntax.BinaryCmd) bool {
 	found := false
 	syntax.Walk(b, func(n syntax.Node) bool {
-		if st, ok := n.(*syntax.Stmt); ok && (hasLeadingRedir(st) || hasHighFDTargetRedir(st.Redirs)) {
-			found = true
+		if found {
 			return false
 		}
-		c, ok := n.(*syntax.CallExpr)
+		st, ok := n.(*syntax.Stmt)
 		if !ok {
 			return true
 		}
-		if len(c.Args) == 0 && len(c.Assigns) > 0 {
-			found = true
-			return false
-		}
-		if len(c.Args) > 0 && isLitWord(c.Args[0], "shift") {
-			found = true
-			return false
-		}
-		if len(c.Assigns) == 0 && len(c.Args) > 0 {
-			if _, ok := singleBareParam(c.Args[0]); ok {
-				found = true
-				return false
-			}
-		}
-		if _, _, ok := matchTestDashV(c); ok {
+		if e.stmtNeedsRewrite(st) {
 			found = true
 			return false
 		}
@@ -657,92 +679,47 @@ func binOpText(op syntax.BinCmdOperator) string {
 }
 
 // chainSideText renders one side of a combiner/pipe: structural sides
-// become translated fish blocks (multi-line), plain sides render as
-// chain leaves.
+// become translated fish blocks, everything else renders as a chain leaf.
 func (e *emitter) chainSideText(st *syntax.Stmt) string {
-	if !hasStructural(st) {
-		if b, ok := st.Cmd.(*syntax.BinaryCmd); ok && chainNeedsRewrite(b) {
-			return e.inlineStmtText(st)
-		}
-		return e.chainLeaf(st)
+	if hasStructural(st) {
+		return e.stmtText(st)
 	}
-	return e.inlineStmtText(st)
+	return e.chainLeaf(st)
 }
 
-// chainLeaf renders one leaf of a combiner chain: pure assignments
-// become set commands, everything else renders verbatim.
+// chainLeaf renders one leaf of a combiner chain through the statement
+// translator, collapsing a multi-line translation into an inline block so
+// the surrounding `&&`/`||`/`|` operators keep their binding. Comments
+// force a multi-line block, since a `#` cannot share a line.
 func (e *emitter) chainLeaf(st *syntax.Stmt) string {
-	c, ok := st.Cmd.(*syntax.CallExpr)
-	if isSynthesizedSet(c) {
-		varName := c.Args[1].Parts[0].(*syntax.Lit).Value
-		val := e.renderWordSmart(c.Args[2])
-		scope := ""
-		if e.inFunction && (e.funcLocals == nil || !e.funcLocals[varName]) {
-			scope = "--global"
-		}
-		return setLineText(scope, varName, val) + e.tails(st)
+	text := e.stmtText(st)
+	lines := nonEmptyLines(text)
+	if len(lines) == 0 {
+		return "true"
 	}
-	if !ok || len(c.Args) != 0 || len(c.Assigns) == 0 {
-		if operand, negated, ok := matchTestDashV(c); ok {
-			line := e.renderTestDashV(operand, negated)
-			if st.Negated {
-				line = "! " + line
+	if len(lines) == 1 {
+		return lines[0]
+	}
+	if lines[0] == "{" && lines[len(lines)-1] == "}" {
+		return text
+	}
+	for _, l := range lines {
+		if strings.HasPrefix(l, "#") {
+			pad := strings.Repeat(indentUnit, e.depth+1)
+			endPad := strings.Repeat(indentUnit, e.depth)
+			var b strings.Builder
+			b.WriteString("{\n")
+			for _, l := range lines {
+				b.WriteString(pad)
+				b.WriteString(l)
+				b.WriteByte('\n')
 			}
-			return line
+			b.WriteString(endPad)
+			b.WriteString("}")
+			return b.String()
 		}
-		if c != nil && len(c.Args) > 0 && isLitWord(c.Args[0], "shift") {
-			txt := e.inlineStmtText(st)
-			if strings.Contains(txt, "\n") {
-				var parts []string
-				for _, line := range strings.Split(txt, "\n") {
-					if trimmed := strings.TrimSpace(line); trimmed != "" {
-						parts = append(parts, trimmed)
-					}
-				}
-				return "{ " + strings.Join(parts, "; ") + "; }"
-			}
-			return txt
-		}
-		if c != nil && len(c.Assigns) == 0 && len(c.Args) > 0 {
-			if _, ok := singleBareParam(c.Args[0]); ok {
-				e.needHelper(helperExec)
-				return "__bait_exec " + e.render(st)
-			}
-		}
-		if hasStructuralCmdSubst(st) {
-			return e.inlineStmtText(st)
-		}
-		if hasLeadingRedir(st) || (e.inSubshell && hasHighFDTargetRedir(st.Redirs)) {
-			line := e.render(st.Cmd)
-			if st.Negated {
-				line = "! " + line
-			}
-			line += e.tails(st)
-			return line
-		}
-		return e.render(st)
 	}
-	scope := ""
-	if e.inFunction {
-		scope = "--global"
-	}
-	var parts []string
-	for _, a := range c.Assigns {
-		if a.Name == nil || a.Append || a.Index != nil || a.Array != nil {
-			e.warn(st.Position, "assignment in a combiner chain cannot be translated; emitted verbatim")
-			return e.render(st)
-		}
-		curScope := scope
-		if e.inFunction && e.funcLocals != nil && (e.funcLocals[a.Name.Value] || e.funcLocals[e.varName(a.Name.Value)]) {
-			curScope = ""
-		}
-		parts = append(parts, fmt.Sprintf("set %s%s %s",
-			scopePrefix(curScope), e.varName(a.Name.Value), e.assignValue(a)))
-	}
-	if len(parts) == 1 {
-		return parts[0]
-	}
-	return "{ " + strings.Join(parts, "; ") + "; }"
+	return "{ " + strings.Join(lines, "; ") + "; }"
 }
 
 func hasStructural(s *syntax.Stmt) bool {

@@ -769,6 +769,26 @@ func TestBashFishEquivalence(t *testing.T) {
 			name: "quoted context variable followed by literal bracket",
 			src:  "f() { echo \"n=$FUNCNAME[0]\"; }\nf\n",
 		},
+		{
+			name: "multi-statement condition with assignment",
+			src:  "if a=1; b=2; then echo \"ok=$a$b\"; fi\n",
+		},
+		{
+			name: "condition with leading comment",
+			src:  "if\n# check\ntrue\nthen echo hi; fi\n",
+		},
+		{
+			name: "set builtin in chain",
+			src:  "true && set -- a b\necho \"one=$1\"\n",
+		},
+		{
+			name: "set builtin as chain root",
+			src:  "set -- x && echo \"one=$1\"\n",
+		},
+		{
+			name: "set builtin in condition",
+			src:  "if set -- gamma; then echo \"g=$1\"; fi\n",
+		},
 	}
 
 	for _, tc := range tests {

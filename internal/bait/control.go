@@ -7,38 +7,65 @@ import (
 	"mvdan.cc/sh/v3/syntax"
 )
 
-// condText renders an if/while condition: a single statement verbatim,
-// several statements wrapped in an inline brace block (fish conditions
-// take a single job).
+// condText renders an if/while condition. Every condition statement goes
+// through the shared statement translator. Several simple statements
+// collapse into an inline brace block; comments or embedded blocks force a
+// multi-line block, because a `#` cannot share a line and fish conditions
+// take a single job.
 func (e *emitter) condText(cond []*syntax.Stmt) string {
-	if len(cond) == 1 {
-		st := cond[0]
-		if hasStructural(st) {
-			return e.inlineStmtText(st)
-		}
-		if c, ok := st.Cmd.(*syntax.CallExpr); ok {
-			e.warnBashOnlyBuiltin(st, c)
-			if _, _, ok := matchTestDashV(c); ok {
-				return e.inlineStmtText(st)
-			}
-			if len(c.Args) == 0 && len(c.Assigns) > 0 {
-				assignTxt := e.inlineStmtText(st)
-				if st.Negated {
-					return "! " + assignTxt
-				}
-				return assignTxt
-			}
-			if hasStructuralCmdSubst(st) {
-				return e.inlineStmtText(st)
-			}
-		}
-		return e.render(st)
+	texts := make([]string, 0, len(cond))
+	for _, st := range cond {
+		texts = append(texts, e.stmtText(st))
 	}
-	parts := make([]string, len(cond))
-	for i, st := range cond {
-		parts[i] = e.render(st)
+	if len(texts) == 1 {
+		lines := nonEmptyLines(texts[0])
+		if len(lines) == 0 {
+			return "true"
+		}
+		if !hasCommentLine(lines) {
+			return texts[0]
+		}
 	}
-	return "{ " + strings.Join(parts, "; ") + "; }"
+	var inline []string
+	needsBlock := false
+	for _, t := range texts {
+		lines := nonEmptyLines(t)
+		if len(lines) != 1 {
+			needsBlock = true
+		}
+		inline = append(inline, lines...)
+	}
+	switch len(inline) {
+	case 0:
+		return "true"
+	case 1:
+		return inline[0]
+	}
+	if !needsBlock && !hasCommentLine(inline) {
+		return "{ " + strings.Join(inline, "; ") + "; }"
+	}
+	pad := strings.Repeat(indentUnit, e.depth+1)
+	endPad := strings.Repeat(indentUnit, e.depth)
+	var b strings.Builder
+	b.WriteString("{\n")
+	for _, l := range inline {
+		b.WriteString(pad)
+		b.WriteString(l)
+		b.WriteByte('\n')
+	}
+	b.WriteString(endPad)
+	b.WriteByte('}')
+	return b.String()
+}
+
+// hasCommentLine reports whether any line is a standalone comment.
+func hasCommentLine(lines []string) bool {
+	for _, l := range lines {
+		if strings.HasPrefix(l, "#") {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *emitter) ifClause(s *syntax.Stmt, f *syntax.IfClause) {
