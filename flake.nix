@@ -56,7 +56,7 @@
           version = "0.5.0";
           src = ./.;
           subPackages = [ "cmd/bait" ];
-          vendorHash = "sha256-tCFu9E2pFBWBQFiRVvI16FNI3dE1bUKJlsEbvDAo7lo=";
+          vendorHash = "sha256-CHWW6PxHK1O/UDuGkr1cM+KKC9BaK/MceF2tTrSE/iE=";
         };
         test = testRunner pkgs;
         e2e = e2eRunner pkgs;

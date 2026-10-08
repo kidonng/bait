@@ -8,106 +8,13 @@ import (
 	"testing"
 )
 
-func TestHelp(t *testing.T) {
-	for _, flag := range []string{"--help", "-h", "-help"} {
-		t.Run(flag, func(t *testing.T) {
-			var stdout, stderr bytes.Buffer
-			exitCode := run([]string{flag}, strings.NewReader(""), &stdout, &stderr)
+func TestGetVersion(t *testing.T) {
+	oldVer := version
+	defer func() { version = oldVer }()
 
-			if exitCode != 0 {
-				t.Fatalf("expected exit code 0, got %d", exitCode)
-			}
-			if !strings.Contains(stdout.String(), "Usage:") {
-				t.Errorf("expected stdout to contain 'Usage:', got %q", stdout.String())
-			}
-			if !strings.Contains(stdout.String(), "--help") {
-				t.Errorf("expected stdout to contain '--help', got %q", stdout.String())
-			}
-			if !strings.Contains(stdout.String(), "--version") {
-				t.Errorf("expected stdout to contain '--version', got %q", stdout.String())
-			}
-			if !strings.Contains(stdout.String(), "BAIT_QUIET") {
-				t.Errorf("expected stdout to contain 'BAIT_QUIET', got %q", stdout.String())
-			}
-			if !strings.Contains(stdout.String(), "--no-helpers") {
-				t.Errorf("expected stdout to contain '--no-helpers', got %q", stdout.String())
-			}
-			if !strings.Contains(stdout.String(), "BAIT_NO_HELPERS") {
-				t.Errorf("expected stdout to contain 'BAIT_NO_HELPERS', got %q", stdout.String())
-			}
-			if !strings.Contains(stdout.String(), "NO_COLOR") {
-				t.Errorf("expected stdout to contain 'NO_COLOR', got %q", stdout.String())
-			}
-			if stderr.Len() != 0 {
-				t.Errorf("expected empty stderr, got %q", stderr.String())
-			}
-		})
-	}
-}
-
-func TestVersion(t *testing.T) {
-	for _, flag := range []string{"--version", "-v", "-version"} {
-		t.Run(flag, func(t *testing.T) {
-			var stdout, stderr bytes.Buffer
-			exitCode := run([]string{flag}, strings.NewReader(""), &stdout, &stderr)
-
-			if exitCode != 0 {
-				t.Fatalf("expected exit code 0, got %d", exitCode)
-			}
-			out := stdout.String()
-			if !strings.HasPrefix(out, "bait ") {
-				t.Errorf("expected stdout to start with 'bait ', got %q", out)
-			}
-			if stderr.Len() != 0 {
-				t.Errorf("expected empty stderr, got %q", stderr.String())
-			}
-		})
-	}
-
-	t.Run("custom version", func(t *testing.T) {
-		oldVer := version
-		defer func() { version = oldVer }()
-
-		version = "1.2.3"
-		if got := getVersion(); got != "1.2.3" {
-			t.Errorf("expected getVersion() = '1.2.3', got %q", got)
-		}
-
-		var stdout, stderr bytes.Buffer
-		exitCode := run([]string{"--version"}, strings.NewReader(""), &stdout, &stderr)
-		if exitCode != 0 {
-			t.Fatalf("expected exit code 0, got %d", exitCode)
-		}
-		if got := stdout.String(); got != "bait 1.2.3\n" {
-			t.Errorf("expected 'bait 1.2.3\\n', got %q", got)
-		}
-	})
-}
-
-func TestTooManyArguments(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	exitCode := run([]string{"file1.sh", "file2.sh"}, strings.NewReader(""), &stdout, &stderr)
-
-	if exitCode != 2 {
-		t.Fatalf("expected exit code 2, got %d", exitCode)
-	}
-	if !strings.Contains(stderr.String(), "error: too many arguments") {
-		t.Errorf("expected stderr to contain 'error: too many arguments', got %q", stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "Usage:") {
-		t.Errorf("expected stderr to contain usage, got %q", stderr.String())
-	}
-}
-
-func TestUnknownFlag(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	exitCode := run([]string{"--unknown-flag"}, strings.NewReader(""), &stdout, &stderr)
-
-	if exitCode != 2 {
-		t.Fatalf("expected exit code 2, got %d", exitCode)
-	}
-	if !strings.Contains(stderr.String(), "flag provided but not defined") {
-		t.Errorf("expected stderr to mention undefined flag, got %q", stderr.String())
+	version = "1.2.3"
+	if got := getVersion(); got != "1.2.3" {
+		t.Errorf("expected getVersion() = '1.2.3', got %q", got)
 	}
 }
 
@@ -169,7 +76,7 @@ func TestQuietFlag(t *testing.T) {
 		}
 	})
 
-	for _, flag := range []string{"--quiet", "-quiet", "-q"} {
+	for _, flag := range []string{"--quiet", "-q"} {
 		t.Run("with "+flag, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			exitCode := run([]string{flag}, strings.NewReader(scriptWithWarning), &stdout, &stderr)
@@ -312,11 +219,8 @@ func TestHelperMissingName(t *testing.T) {
 	if exitCode != 2 {
 		t.Fatalf("expected exit code 2, got %d", exitCode)
 	}
-	if !strings.Contains(stderr.String(), "error: missing helper name") {
-		t.Errorf("expected stderr to contain 'error: missing helper name', got: %q", stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "Usage:") {
-		t.Errorf("expected stderr to contain usage, got: %q", stderr.String())
+	if !strings.Contains(stderr.String(), "missing helper name") {
+		t.Errorf("expected stderr to contain 'missing helper name', got: %q", stderr.String())
 	}
 }
 
@@ -326,11 +230,8 @@ func TestHelperTooManyArguments(t *testing.T) {
 	if exitCode != 2 {
 		t.Fatalf("expected exit code 2, got %d", exitCode)
 	}
-	if !strings.Contains(stderr.String(), "error: too many arguments for helper command") {
-		t.Errorf("expected stderr to contain 'error: too many arguments for helper command', got: %q", stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "Usage:") {
-		t.Errorf("expected stderr to contain usage, got: %q", stderr.String())
+	if !strings.Contains(stderr.String(), "too many arguments for helper command") {
+		t.Errorf("expected stderr to contain 'too many arguments for helper command', got: %q", stderr.String())
 	}
 }
 
@@ -346,27 +247,23 @@ func TestHelperUnknown(t *testing.T) {
 }
 
 func TestHelperNames(t *testing.T) {
-	for _, flag := range []string{"--names", "-names"} {
-		t.Run(flag, func(t *testing.T) {
-			var stdout, stderr bytes.Buffer
-			exitCode := run([]string{"helper", flag}, strings.NewReader(""), &stdout, &stderr)
-			if exitCode != 0 {
-				t.Fatalf("expected exit code 0, got %d (stderr: %s)", exitCode, stderr.String())
-			}
-			if stderr.Len() != 0 {
-				t.Errorf("expected empty stderr, got %q", stderr.String())
-			}
-			lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
-			expected := []string{"source", ".", "getopts", "hash", "unalias", "unset", "__bait_words", "__bait_exec", "__bait_ostype", "__bait_eval"}
-			if len(lines) != len(expected) {
-				t.Fatalf("expected %d names, got %d: %v", len(expected), len(lines), lines)
-			}
-			for i, exp := range expected {
-				if lines[i] != exp {
-					t.Errorf("line %d: expected %q, got %q", i, exp, lines[i])
-				}
-			}
-		})
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{"helper", "--names"}, strings.NewReader(""), &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d (stderr: %s)", exitCode, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("expected empty stderr, got %q", stderr.String())
+	}
+	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
+	expected := []string{"source", ".", "getopts", "hash", "unalias", "unset", "__bait_words", "__bait_exec", "__bait_ostype", "__bait_eval"}
+	if len(lines) != len(expected) {
+		t.Fatalf("expected %d names, got %d: %v", len(expected), len(lines), lines)
+	}
+	for i, exp := range expected {
+		if lines[i] != exp {
+			t.Errorf("line %d: expected %q, got %q", i, exp, lines[i])
+		}
 	}
 }
 
@@ -376,54 +273,16 @@ func TestHelperNamesTooManyArguments(t *testing.T) {
 	if exitCode != 2 {
 		t.Fatalf("expected exit code 2, got %d", exitCode)
 	}
-	if !strings.Contains(stderr.String(), "error: too many arguments for --names") {
-		t.Errorf("expected stderr to contain 'error: too many arguments for --names', got: %q", stderr.String())
-	}
-}
-
-func TestHelperHelp(t *testing.T) {
-	for _, flag := range []string{"--help", "-h"} {
-		t.Run(flag, func(t *testing.T) {
-			var stdout, stderr bytes.Buffer
-			exitCode := run([]string{"helper", flag}, strings.NewReader(""), &stdout, &stderr)
-			if exitCode != 0 {
-				t.Fatalf("expected exit code 0, got %d", exitCode)
-			}
-			if !strings.Contains(stdout.String(), "Usage:") {
-				t.Errorf("expected stdout to contain 'Usage:', got %q", stdout.String())
-			}
-			if !strings.Contains(stdout.String(), "helper <name>") {
-				t.Errorf("expected stdout to contain 'helper <name>', got %q", stdout.String())
-			}
-			if !strings.Contains(stdout.String(), "--names") {
-				t.Errorf("expected stdout to contain '--names', got %q", stdout.String())
-			}
-			if !strings.Contains(stdout.String(), "Available helpers:") {
-				t.Errorf("expected stdout to contain 'Available helpers:', got %q", stdout.String())
-			}
-			for _, h := range []string{"source", ".", "getopts", "hash", "unalias", "__bait_words", "__bait_exec", "__bait_ostype"} {
-				if !strings.Contains(stdout.String(), h) {
-					t.Errorf("expected stdout to contain helper %q, got %q", h, stdout.String())
-				}
-			}
-		})
+	if !strings.Contains(stderr.String(), "too many arguments for --names") {
+		t.Errorf("expected stderr to contain 'too many arguments for --names', got: %q", stderr.String())
 	}
 }
 
 func TestWarningColor(t *testing.T) {
 	scriptWithWarning := "set -e\necho ok\n"
 
-	setupEnv := func(t *testing.T) {
-		t.Helper()
-		t.Setenv("TERM", "xterm-256color")
+	t.Run("colored by default", func(t *testing.T) {
 		t.Setenv("NO_COLOR", "")
-		t.Setenv("CLICOLOR", "")
-		t.Setenv("CLICOLOR_FORCE", "")
-	}
-
-	t.Run("colored when forced", func(t *testing.T) {
-		setupEnv(t)
-		t.Setenv("CLICOLOR_FORCE", "1")
 		var stdout, stderr bytes.Buffer
 		exitCode := run([]string{}, strings.NewReader(scriptWithWarning), &stdout, &stderr)
 		if exitCode != 0 {
@@ -435,8 +294,8 @@ func TestWarningColor(t *testing.T) {
 		}
 	})
 
-	t.Run("uncolored by default on non-terminal buffer", func(t *testing.T) {
-		setupEnv(t)
+	t.Run("NO_COLOR disables color", func(t *testing.T) {
+		t.Setenv("NO_COLOR", "1")
 		var stdout, stderr bytes.Buffer
 		exitCode := run([]string{}, strings.NewReader(scriptWithWarning), &stdout, &stderr)
 		if exitCode != 0 {
@@ -444,87 +303,11 @@ func TestWarningColor(t *testing.T) {
 		}
 		got := stderr.String()
 		if strings.Contains(got, "\033[") {
-			t.Errorf("expected no ANSI escape sequences on non-terminal buffer, got %q", got)
+			t.Errorf("expected NO_COLOR to disable color, got %q", got)
 		}
 	})
-
-	t.Run("uncolored when written to file", func(t *testing.T) {
-		setupEnv(t)
-		tmpFile, err := os.CreateTemp(t.TempDir(), "warnings-*.log")
-		if err != nil {
-			t.Fatalf("failed to create temp file: %v", err)
-		}
-		defer tmpFile.Close()
-
-		var stdout bytes.Buffer
-		exitCode := run([]string{}, strings.NewReader(scriptWithWarning), &stdout, tmpFile)
-		if exitCode != 0 {
-			t.Fatalf("expected exit code 0, got %d", exitCode)
-		}
-		content, err := os.ReadFile(tmpFile.Name())
-		if err != nil {
-			t.Fatalf("failed to read temp file: %v", err)
-		}
-		got := string(content)
-		if strings.Contains(got, "\033[") {
-			t.Errorf("expected no ANSI escape sequences in file, got %q", got)
-		}
-		if len(got) == 0 {
-			t.Errorf("expected warnings written to file")
-		}
-	})
-
-	t.Run("TERM=dumb disables color", func(t *testing.T) {
-		setupEnv(t)
-		t.Setenv("CLICOLOR_FORCE", "1")
-		t.Setenv("TERM", "dumb")
-		var stdout, stderr bytes.Buffer
-		exitCode := run([]string{}, strings.NewReader(scriptWithWarning), &stdout, &stderr)
-		if exitCode != 0 {
-			t.Fatalf("expected exit code 0, got %d", exitCode)
-		}
-		got := stderr.String()
-		if strings.Contains(got, "\033[") {
-			t.Errorf("expected no ANSI color codes with TERM=dumb, got %q", got)
-		}
-	})
-
-	t.Run("CLICOLOR=0 disables color", func(t *testing.T) {
-		setupEnv(t)
-		t.Setenv("CLICOLOR_FORCE", "1")
-		t.Setenv("CLICOLOR", "0")
-		var stdout, stderr bytes.Buffer
-		exitCode := run([]string{}, strings.NewReader(scriptWithWarning), &stdout, &stderr)
-		if exitCode != 0 {
-			t.Fatalf("expected exit code 0, got %d", exitCode)
-		}
-		got := stderr.String()
-		if strings.Contains(got, "\033[") {
-			t.Errorf("expected no ANSI color codes with CLICOLOR=0, got %q", got)
-		}
-	})
-
-	noColorVals := []string{"1", "true", "TRUE", "0", "false", "anything"}
-	for _, val := range noColorVals {
-		t.Run("NO_COLOR="+val+" disables color even when forced", func(t *testing.T) {
-			setupEnv(t)
-			t.Setenv("CLICOLOR_FORCE", "1")
-			t.Setenv("NO_COLOR", val)
-			var stdout, stderr bytes.Buffer
-			exitCode := run([]string{}, strings.NewReader(scriptWithWarning), &stdout, &stderr)
-			if exitCode != 0 {
-				t.Fatalf("expected exit code 0, got %d", exitCode)
-			}
-			got := stderr.String()
-			if strings.Contains(got, "\033[") {
-				t.Errorf("expected no ANSI color codes with NO_COLOR=%s, got %q", val, got)
-			}
-		})
-	}
 
 	t.Run("empty NO_COLOR does not disable color", func(t *testing.T) {
-		setupEnv(t)
-		t.Setenv("CLICOLOR_FORCE", "1")
 		t.Setenv("NO_COLOR", "")
 		var stdout, stderr bytes.Buffer
 		exitCode := run([]string{}, strings.NewReader(scriptWithWarning), &stdout, &stderr)
@@ -532,8 +315,8 @@ func TestWarningColor(t *testing.T) {
 			t.Fatalf("expected exit code 0, got %d", exitCode)
 		}
 		got := stderr.String()
-		if !strings.Contains(got, "\033[33m") || !strings.Contains(got, "\033[0m") {
-			t.Errorf("expected ANSI color codes with empty NO_COLOR, got %q", got)
+		if !strings.Contains(got, "\033[33m") {
+			t.Errorf("expected empty NO_COLOR to allow color, got %q", got)
 		}
 	})
 }

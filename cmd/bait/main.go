@@ -2,17 +2,16 @@
 //
 // Usage:
 //
-//	bait [options] [file]
+//	bait [flags] [file]
+//	bait helper [flags] [name]
 //
 // With no file argument, bait reads from stdin and writes the fish
-// translation to stdout, cat-style. Constructs without a fish equivalent
-// are passed through unchanged and reported as warnings on stderr;
-// pass -quiet (or -q) to suppress them.
+// translation to stdout. Constructs without a fish equivalent are
+// passed through unchanged and reported as warnings on stderr.
 package main
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -20,57 +19,12 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/spf13/cobra"
+
 	"github.com/kidonng/bait/internal/bait"
 )
 
 var version = ""
-
-const usageText = `bait translates bash scripts into fish scripts.
-
-Usage:
-  bait [options] [file]
-  bait helper <name>
-
-With no file argument, bait reads from stdin and writes the fish
-translation to stdout.
-
-Commands:
-  helper <name>  print the content of a runtime helper
-
-Options:
-  -q, --quiet     suppress translation warnings on stderr
-  --no-helpers    do not inject runtime helper functions
-  -h, --help      show this help message
-  -v, --version   show version information
-
-Environment variables:
-  BAIT_QUIET       suppress translation warnings on stderr
-  BAIT_NO_HELPERS  do not inject runtime helper functions
-  NO_COLOR         disable ANSI color in warning output
-`
-
-const helperUsageText = `Usage:
-  bait helper <name>
-  bait helper --names
-
-Print the content of a runtime helper, or list all available helper names.
-
-Available helpers:
-  source
-  .
-  getopts
-  hash
-  unalias
-  unset
-  __bait_words
-  __bait_exec
-  __bait_ostype
-  __bait_eval
-
-Options:
-  --names     list all available helper names
-  -h, --help  show this help message
-`
 
 func getVersion() string {
 	if version != "" {
@@ -83,6 +37,7 @@ func getVersion() string {
 	}
 	return "dev"
 }
+
 func envQuiet() bool {
 	val := strings.TrimSpace(os.Getenv("BAIT_QUIET"))
 	if val == "" {
@@ -99,6 +54,7 @@ func envQuiet() bool {
 	}
 	return false
 }
+
 func envNoHelpers() bool {
 	val := strings.TrimSpace(os.Getenv("BAIT_NO_HELPERS"))
 	if val == "" {
@@ -116,157 +72,160 @@ func envNoHelpers() bool {
 	return false
 }
 
-func runHelper(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("bait helper", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-
-	var (
-		help  bool
-		names bool
-	)
-	fs.BoolVar(&names, "names", false, "list all available helper names")
-	fs.BoolVar(&help, "help", false, "show this help message")
-	fs.BoolVar(&help, "h", false, "show this help message")
-	fs.Usage = func() {
-		fmt.Fprint(stderr, helperUsageText)
-	}
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) || help {
-			fmt.Fprint(stdout, helperUsageText)
-			return 0
-		}
-		return 2
-	}
-
-	if help {
-		fmt.Fprint(stdout, helperUsageText)
-		return 0
-	}
-	if names {
-		if fs.NArg() > 0 {
-			fmt.Fprintln(stderr, "error: too many arguments for --names")
-			fs.Usage()
-			return 2
-		}
-		for _, h := range bait.Helpers() {
-			fmt.Fprintln(stdout, h)
-		}
-		return 0
-	}
-
-	if fs.NArg() == 0 {
-		fmt.Fprintln(stderr, "error: missing helper name")
-		fs.Usage()
-		return 2
-	}
-
-	if fs.NArg() > 1 {
-		fmt.Fprintln(stderr, "error: too many arguments for helper command")
-		fs.Usage()
-		return 2
-	}
-
-	name := fs.Arg(0)
-	code, err := bait.Helper(name)
-	if err != nil {
-		fmt.Fprintf(stderr, "error: unknown helper %q\n", name)
-		return 1
-	}
-
-	fmt.Fprint(stdout, code)
-	if !strings.HasSuffix(code, "\n") {
-		fmt.Fprintln(stdout)
-	}
-	return 0
+type exitError struct {
+	code int
 }
 
-func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	if len(args) > 0 && args[0] == "helper" {
-		return runHelper(args[1:], stdout, stderr)
-	}
-	fs := flag.NewFlagSet("bait", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+func (e exitError) Error() string {
+	return fmt.Sprintf("exit code %d", e.code)
+}
 
+func newHelperCmd() *cobra.Command {
+	var names bool
+
+	cmd := &cobra.Command{
+		Use:   "helper [name]",
+		Short: "print the content of a runtime helper",
+		Long:  "Print the content of a runtime helper, or list all available helper names.",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if names {
+				if len(args) > 0 {
+					return errors.New("too many arguments for --names")
+				}
+				return nil
+			}
+			if len(args) == 0 {
+				return errors.New("missing helper name")
+			}
+			if len(args) > 1 {
+				return errors.New("too many arguments for helper command")
+			}
+			return nil
+		},
+		PreRun: func(cmd *cobra.Command, args []string) {
+			cmd.SilenceUsage = true
+			cmd.SilenceErrors = true
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if names {
+				for _, h := range bait.Helpers() {
+					fmt.Fprintln(cmd.OutOrStdout(), h)
+				}
+				return nil
+			}
+
+			name := args[0]
+			code, err := bait.Helper(name)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "error: unknown helper %q\n", name)
+				return exitError{code: 1}
+			}
+
+			fmt.Fprint(cmd.OutOrStdout(), code)
+			if !strings.HasSuffix(code, "\n") {
+				fmt.Fprintln(cmd.OutOrStdout())
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().BoolVar(&names, "names", false, "list all available helper names")
+
+	return cmd
+}
+
+func newRootCmd(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 	var (
 		quiet     bool
 		noHelpers bool
-		help      bool
-		showVer   bool
 	)
 
-	defaultQuiet := envQuiet()
-	defaultNoHelpers := envNoHelpers()
-	fs.BoolVar(&quiet, "quiet", defaultQuiet, "suppress translation warnings on stderr")
-	fs.BoolVar(&quiet, "q", defaultQuiet, "suppress translation warnings on stderr")
-	fs.BoolVar(&noHelpers, "no-helpers", defaultNoHelpers, "do not inject runtime helper functions")
-	fs.BoolVar(&help, "help", false, "show this help message")
-	fs.BoolVar(&help, "h", false, "show this help message")
-	fs.BoolVar(&showVer, "version", false, "show version information")
-	fs.BoolVar(&showVer, "v", false, "show version information")
-	fs.Usage = func() {
-		fmt.Fprint(stderr, usageText)
+	cmd := &cobra.Command{
+		Use:   "bait [flags] [file]",
+		Short: "bait translates bash scripts into fish scripts",
+		Long: `bait translates bash scripts into fish scripts.
+
+With no file argument, bait reads from stdin and writes the fish
+translation to stdout.`,
+		Args: cobra.MaximumNArgs(1),
+		PreRun: func(cmd *cobra.Command, args []string) {
+			cmd.SilenceUsage = true
+			cmd.SilenceErrors = true
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var (
+				src  []byte
+				err  error
+				name string
+			)
+			if len(args) == 1 {
+				name = args[0]
+				src, err = os.ReadFile(name)
+			} else {
+				name = "<stdin>"
+				src, err = io.ReadAll(cmd.InOrStdin())
+			}
+			if err != nil {
+				fmt.Fprintln(cmd.ErrOrStderr(), err)
+				return exitError{code: 1}
+			}
+
+			out, warnings, err := bait.TranslateWithOptions(src, bait.Options{
+				NoHelpers: noHelpers,
+			})
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", name, err)
+				return exitError{code: 1}
+			}
+
+			if !quiet {
+				colorPrefix, colorSuffix := "", ""
+				if isColorEnabled() {
+					colorPrefix, colorSuffix = colorYellow, colorReset
+				}
+				for _, w := range warnings {
+					fmt.Fprintf(cmd.ErrOrStderr(), "%s%s:%d:%d: %s%s\n", colorPrefix, name, w.Line, w.Col, w.Text, colorSuffix)
+				}
+			}
+
+			cmd.OutOrStdout().Write(out)
+			return nil
+		},
 	}
 
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) || help {
-			fmt.Fprint(stdout, usageText)
-			return 0
+	cmd.SetIn(stdin)
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+
+	cmd.Version = getVersion()
+	cmd.SetVersionTemplate("bait {{.Version}}\n")
+
+	cmd.CompletionOptions.DisableDefaultCmd = true
+	cmd.SetHelpCommand(&cobra.Command{Hidden: true})
+
+	flags := cmd.Flags()
+	flags.BoolVarP(&quiet, "quiet", "q", envQuiet(), "suppress translation warnings on stderr")
+	flags.BoolVar(&noHelpers, "no-helpers", envNoHelpers(), "do not inject runtime helper functions")
+
+	cmd.AddCommand(newHelperCmd())
+
+	return cmd
+}
+
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	cmd := newRootCmd(stdin, stdout, stderr)
+	if args == nil {
+		args = []string{}
+	}
+	cmd.SetArgs(args)
+
+	if err := cmd.Execute(); err != nil {
+		var exitErr exitError
+		if errors.As(err, &exitErr) {
+			return exitErr.code
 		}
 		return 2
 	}
-
-	if help {
-		fmt.Fprint(stdout, usageText)
-		return 0
-	}
-
-	if showVer {
-		fmt.Fprintf(stdout, "bait %s\n", getVersion())
-		return 0
-	}
-
-	if fs.NArg() > 1 {
-		fmt.Fprintln(stderr, "error: too many arguments")
-		fs.Usage()
-		return 2
-	}
-
-	var (
-		src  []byte
-		err  error
-		name string
-	)
-	if fs.NArg() == 1 {
-		name = fs.Arg(0)
-		src, err = os.ReadFile(name)
-	} else {
-		name = "<stdin>"
-		src, err = io.ReadAll(stdin)
-	}
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-
-	out, warnings, err := bait.TranslateWithOptions(src, bait.Options{
-		NoHelpers: noHelpers,
-	})
-	if err != nil {
-		fmt.Fprintf(stderr, "%s: %v\n", name, err)
-		return 1
-	}
-
-	if !quiet {
-		colorPrefix, colorSuffix := "", ""
-		if isColorEnabled(stderr) {
-			colorPrefix, colorSuffix = colorYellow, colorReset
-		}
-		for _, w := range warnings {
-			fmt.Fprintf(stderr, "%s%s:%d:%d: %s%s\n", colorPrefix, name, w.Line, w.Col, w.Text, colorSuffix)
-		}
-	}
-
-	stdout.Write(out)
 	return 0
 }
 
@@ -279,26 +238,7 @@ const (
 	colorReset  = "\033[0m"
 )
 
-func isColorEnabled(w io.Writer) bool {
-	if val, ok := os.LookupEnv("NO_COLOR"); ok && val != "" {
-		return false
-	}
-	if os.Getenv("CLICOLOR") == "0" {
-		return false
-	}
-	if os.Getenv("TERM") == "dumb" {
-		return false
-	}
-	if val, ok := os.LookupEnv("CLICOLOR_FORCE"); ok && val != "0" && val != "" {
-		return true
-	}
-	f, ok := w.(*os.File)
-	if !ok {
-		return false
-	}
-	fi, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return fi.Mode()&os.ModeCharDevice != 0
+func isColorEnabled() bool {
+	val, ok := os.LookupEnv("NO_COLOR")
+	return !ok || val == ""
 }
