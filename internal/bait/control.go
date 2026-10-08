@@ -474,79 +474,61 @@ func tokenizePattern(w *syntax.Word) ([]patToken, bool) {
 	return tokens, true
 }
 
-func matchFlagRule(p *syntax.Word) (pred string, matched bool, isWildcard bool) {
-	if p == nil {
-		return "", false, false
-	}
+// dollarDashPredicate recognizes the idioms that test whether the shell is
+// interactive: for case/`==`-style glob patterns exactly `*i*`, and for
+// `=~` exactly the regex `i`. bash only sets the lower-case interactive
+// flag, so matching must be case- and position-sensitive: `i*`, `*i`,
+// `i`, `I`, and `?i?` all differ from an unanchored contains-i test.
+func dollarDashPredicate(p *syntax.Word, isRegex bool) (string, bool) {
 	tokens, ok := tokenizePattern(p)
 	if !ok {
-		raw := ""
-		for _, part := range p.Parts {
-			switch pt := part.(type) {
-			case *syntax.Lit:
-				raw += pt.Value
-			case *syntax.DblQuoted:
-				for _, dqp := range pt.Parts {
-					if dqlit, ok := dqp.(*syntax.Lit); ok {
-						raw += dqlit.Value
-					}
-				}
-			case *syntax.SglQuoted:
-				raw += pt.Value
-			}
-		}
-		trimmed := strings.Trim(raw, "*?.^$")
-		if strings.EqualFold(trimmed, "i") {
-			return "status is-interactive", true, false
-		}
-		if raw == "*" {
-			return "", false, true
-		}
-		return "", false, false
+		return "", false
 	}
-	if len(tokens) == 1 && tokens[0].val == "*" && tokens[0].isWildcard {
-		return "", false, true
-	}
-	var meaningful []string
-	for _, tok := range tokens {
-		if tok.isWildcard {
-			continue
+	if isRegex {
+		if len(tokens) == 1 && !tokens[0].isWildcard && tokens[0].val == "i" {
+			return "status is-interactive", true
 		}
-		meaningful = append(meaningful, tok.val)
+		return "", false
 	}
-	candidate := strings.Join(meaningful, "")
-	if strings.EqualFold(candidate, "i") {
-		return "status is-interactive", true, false
+	if len(tokens) == 3 && tokens[0].isWildcard && tokens[0].val == "*" &&
+		!tokens[1].isWildcard && tokens[1].val == "i" &&
+		tokens[2].isWildcard && tokens[2].val == "*" {
+		return "status is-interactive", true
 	}
-	return "", false, false
+	return "", false
 }
 
 func evalInteractiveCase(cl *syntax.CaseClause) (pred string, ifItem, elseItem *syntax.CaseItem, ok bool) {
 	if !isDollarDash(cl.Word) {
 		return "", nil, nil, false
 	}
+	// An item matches only when every one of its patterns is the same
+	// interactivity test: bash ORs an item's patterns, so translating
+	// from one recognized pattern would drop the others' alternatives.
+	itemPred := func(item *syntax.CaseItem) (string, bool) {
+		if len(item.Patterns) == 0 {
+			return "", false
+		}
+		pred := ""
+		for _, p := range item.Patterns {
+			pr, matched := dollarDashPredicate(p, false)
+			if !matched || (pred != "" && pr != pred) {
+				return "", false
+			}
+			pred = pr
+		}
+		return pred, true
+	}
 	if len(cl.Items) == 1 {
-		item0 := cl.Items[0]
-		for _, p := range item0.Patterns {
-			if pr, matched, _ := matchFlagRule(p); matched {
-				return pr, item0, nil, true
-			}
+		if pr, ok := itemPred(cl.Items[0]); ok {
+			return pr, cl.Items[0], nil, true
 		}
-	} else if len(cl.Items) == 2 {
-		item0, item1 := cl.Items[0], cl.Items[1]
-		var matchedPred string
-		for _, p := range item0.Patterns {
-			if pr, matched, _ := matchFlagRule(p); matched {
-				matchedPred = pr
-				break
-			}
-		}
-		var wildcard bool
-		if len(item1.Patterns) == 1 {
-			_, _, wildcard = matchFlagRule(item1.Patterns[0])
-		}
-		if matchedPred != "" && wildcard {
-			return matchedPred, item0, item1, true
+		return "", nil, nil, false
+	}
+	if len(cl.Items) == 2 {
+		pr, ok := itemPred(cl.Items[0])
+		if ok && len(cl.Items[1].Patterns) == 1 && isCatchAll(cl.Items[1].Patterns[0]) {
+			return pr, cl.Items[0], cl.Items[1], true
 		}
 	}
 	return "", nil, nil, false

@@ -54,24 +54,31 @@ func evalInteractiveTest(b *syntax.BinaryTest) (pred string, ok bool) {
 	if !dashX && !dashY {
 		return "", false
 	}
-	var pat *syntax.Word
-	if dashX {
-		pat = yWord
-	} else {
+	pat := yWord
+	if !dashX {
 		pat = xWord
 	}
-	flagPred, matched, _ := matchFlagRule(pat)
+	opStr := b.Op.String()
+	var isRegex, negated bool
+	switch opStr {
+	case "==", "=":
+	case "=~":
+		isRegex = true
+	case "!=":
+		negated = true
+	case "!~":
+		isRegex, negated = true, true
+	default:
+		return "", false
+	}
+	flagPred, matched := dollarDashPredicate(pat, isRegex)
 	if !matched {
 		return "", false
 	}
-	opStr := b.Op.String()
-	switch opStr {
-	case "==", "=", "=~":
-		return flagPred, true
-	case "!=", "!~":
+	if negated {
 		return "! " + flagPred, true
 	}
-	return "", false
+	return flagPred, true
 }
 
 func (e *emitter) testClause(s *syntax.Stmt, tc *syntax.TestClause) {
@@ -125,6 +132,11 @@ func (e *emitter) renderUnaryTest(u *syntax.UnaryTest) string {
 func (e *emitter) renderBinaryTest(b *syntax.BinaryTest) string {
 	if pred, ok := evalInteractiveTest(b); ok {
 		return pred
+	}
+	if xw, ok := b.X.(*syntax.Word); ok && isDollarDash(xw) {
+		e.warn(b.OpPos, "$- test is not the interactive idiom; only the interactive flag is emulated")
+	} else if yw, ok := b.Y.(*syntax.Word); ok && isDollarDash(yw) {
+		e.warn(b.OpPos, "$- test is not the interactive idiom; only the interactive flag is emulated")
 	}
 	opStr := b.Op.String()
 	switch opStr {

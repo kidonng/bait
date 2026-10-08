@@ -98,7 +98,7 @@ func (e *emitter) rewriteSingleStmt(s *syntax.Stmt) {
 
 var arithSymbols = map[syntax.BinAritOperator]string{
 	syntax.Add: "+", syntax.Sub: "-", syntax.Mul: "*",
-	syntax.Quo: "/", syntax.Rem: "%", syntax.Pow: "**",
+	syntax.Quo: "/", syntax.Rem: "%",
 	syntax.Eql: "==", syntax.Neq: "!=",
 	syntax.Lss: "<", syntax.Gtr: ">",
 	syntax.Leq: "<=", syntax.Geq: ">=",
@@ -106,7 +106,7 @@ var arithSymbols = map[syntax.BinAritOperator]string{
 
 var arithAssignSymbols = map[syntax.BinAritOperator]string{
 	syntax.AddAssgn: "+", syntax.SubAssgn: "-", syntax.MulAssgn: "*",
-	syntax.QuoAssgn: "/", syntax.RemAssgn: "%", syntax.PowAssgn: "**",
+	syntax.QuoAssgn: "/", syntax.RemAssgn: "%",
 }
 
 var arithTestFlags = map[syntax.BinAritOperator]string{
@@ -116,11 +116,12 @@ var arithTestFlags = map[syntax.BinAritOperator]string{
 }
 
 func isAssignOp(op syntax.BinAritOperator) bool {
-	return op == syntax.Assgn || arithAssignSymbols[op] != ""
+	return op == syntax.Assgn || op == syntax.PowAssgn || arithAssignSymbols[op] != ""
 }
 
 // arithCommands converts an (( )) command into a slice of fish equivalents, or
-// nil when no faithful translation exists. Comma expressions yield multiple commands.
+// nil when no faithful translation exists. Comma expressions yield multiple
+// commands; only the last one carries bash's exit status.
 func (e *emitter) arithCommands(ac *syntax.ArithmCmd) []syntax.Command {
 	if ac == nil || ac.X == nil {
 		return nil
@@ -128,7 +129,7 @@ func (e *emitter) arithCommands(ac *syntax.ArithmCmd) []syntax.Command {
 	parts := splitCommaArithm(ac.X)
 	cmds := make([]syntax.Command, len(parts))
 	for i, part := range parts {
-		cmd := e.arithExpr(part)
+		cmd := e.arithExpr(part, i == len(parts)-1)
 		if cmd == nil {
 			return nil
 		}
@@ -169,7 +170,7 @@ func splitCommaArithm(expr syntax.ArithmExpr) []syntax.ArithmExpr {
 	return []syntax.ArithmExpr{expr}
 }
 
-func (e *emitter) arithExpr(expr syntax.ArithmExpr) syntax.Command {
+func (e *emitter) arithExpr(expr syntax.ArithmExpr, withStatus bool) syntax.Command {
 	for {
 		paren, ok := expr.(*syntax.ParenArithm)
 		if !ok {
@@ -187,47 +188,88 @@ func (e *emitter) arithExpr(expr syntax.ArithmExpr) syntax.Command {
 			return nil
 		}
 		mangled := e.varName(name)
-		op := "+"
+		delta, inverse := "+", "-"
 		if x.Op == syntax.Dec {
-			op = "-"
+			delta, inverse = "-", "+"
 		}
-		return setCall(mangled, mathSubst("$"+mangled+" "+op+" 1"))
+		set := setCall(mangled, e.mathSubst("$"+mangled+" "+delta+" 1"))
+		if !withStatus {
+			return set
+		}
+		if x.Post {
+			// ((x++)) evaluates to the old value: the new value ∓ 1.
+			return e.arithStatus(set, "$"+mangled+" "+inverse+" 1")
+		}
+		return e.arithStatus(set, "$"+mangled)
 
 	case *syntax.BinaryArithm:
 		if name, ok := bareArithName(x.X); ok && isAssignOp(x.Op) {
 			mangled := e.varName(name)
+			rhs, rhsOK := e.arithmText(x.Y)
 			var payload string
 			var valid bool
-			if x.Op == syntax.Assgn {
-				payload, valid = e.arithmText(x.Y)
-			} else {
-				rhs, rhsOK := e.arithmText(x.Y)
+			switch x.Op {
+			case syntax.Assgn:
+				payload, valid = rhs, rhsOK
+			case syntax.PowAssgn:
+				payload, valid = "pow($"+mangled+", "+rhs+")", rhsOK
+			default:
 				payload, valid = "$"+mangled+" "+arithAssignSymbols[x.Op]+" "+rhs, rhsOK
 			}
-			if valid {
-				return setCall(mangled, mathSubst(payload))
+			if !valid {
+				return nil
 			}
-			return nil
+			set := setCall(mangled, e.mathSubst(payload))
+			if !withStatus {
+				return set
+			}
+			// An assignment expression evaluates to the assigned value.
+			return e.arithStatus(set, "$"+mangled)
 		}
 		if flag, isCmp := arithTestFlags[x.Op]; isCmp {
-			lhs, lok := e.operandValue(x.X)
-			rhs, rok := e.operandValue(x.Y)
+			lhs, lok := e.arithmText(x.X)
+			rhs, rok := e.arithmText(x.Y)
 			if lok && rok {
 				return &syntax.CallExpr{Args: []*syntax.Word{
-					litWord("test"), lhs, litWord(flag), rhs,
+					litWord("test"),
+					wordOf(e.mathSubst(lhs)),
+					litWord(flag),
+					wordOf(e.mathSubst(rhs)),
 				}}
 			}
 		}
 
 	case *syntax.Word:
-		val, ok := e.operandValue(x)
-		if ok {
+		if txt, ok := e.arithmText(x); ok {
 			return &syntax.CallExpr{Args: []*syntax.Word{
-				litWord("test"), val, litWord("-ne"), litWord("0"),
+				litWord("test"),
+				wordOf(e.mathSubst(txt)),
+				litWord("-ne"),
+				litWord("0"),
 			}}
 		}
 	}
 	return nil
+}
+
+// arithStatus builds `set …; test (value) -ne 0` so an arithmetic command
+// keeps bash's exit status: zero only when the expression's value is
+// nonzero. The block's status is the test's.
+func (e *emitter) arithStatus(set syntax.Command, valuePayload string) syntax.Command {
+	setStmt := &syntax.Stmt{Cmd: set}
+	testStmt := &syntax.Stmt{Cmd: &syntax.CallExpr{Args: []*syntax.Word{
+		litWord("test"),
+		wordOf(e.mathSubst(valuePayload)),
+		litWord("-ne"),
+		litWord("0"),
+	}}}
+	e.markSynth(setStmt)
+	e.markSynth(testStmt)
+	return &syntax.Block{Stmts: []*syntax.Stmt{setStmt, testStmt}}
+}
+
+func wordOf(parts ...syntax.WordPart) *syntax.Word {
+	return &syntax.Word{Parts: parts}
 }
 
 // arithmText renders an arithmetic expression as fish math payload text,
@@ -254,6 +296,11 @@ func (e *emitter) arithmText(n syntax.ArithmExpr) (string, bool) {
 		}
 		return "", false
 	case *syntax.BinaryArithm:
+		if a.Op == syntax.Pow {
+			lx, lok := e.arithmText(a.X)
+			ry, rok := e.arithmText(a.Y)
+			return "pow(" + lx + ", " + ry + ")", lok && rok
+		}
 		sym, ok := arithSymbols[a.Op]
 		if !ok {
 			return "", false
@@ -263,25 +310,6 @@ func (e *emitter) arithmText(n syntax.ArithmExpr) (string, bool) {
 		return lx + " " + sym + " " + ry, lok && rok
 	}
 	return "", false
-}
-
-// operandValue renders an arithmetic leaf as a test-safe argument word:
-// digits unquoted, variable references double-quoted against emptiness.
-func (e *emitter) operandValue(n syntax.ArithmExpr) (*syntax.Word, bool) {
-	w, ok := n.(*syntax.Word)
-	if !ok {
-		return nil, false
-	}
-	s := e.render(w)
-	switch {
-	case isDigits(s):
-		return litWord(s), true
-	case strings.HasPrefix(s, "$"):
-		return dq(litPart(s)), true
-	case syntax.ValidName(s):
-		return dq(namedParam(e.varName(s))), true
-	}
-	return nil, false
 }
 
 func bareArithName(n syntax.ArithmExpr) (string, bool) {
@@ -296,8 +324,21 @@ func bareArithName(n syntax.ArithmExpr) (string, bool) {
 	return l.Value, true
 }
 
-func mathSubst(payload string) syntax.WordPart {
-	return substPart("math", "--scale=0", "\""+payload+"\"")
+// mathSubst renders an arithmetic payload as a fish command substitution
+// with bash's coercion semantics: unset or non-numeric values evaluate to
+// zero instead of failing the math builtin, and the error text bash would
+// not produce is suppressed. The redirect is positioned after the command
+// word so the printer emits it in trail position.
+func (e *emitter) mathSubst(payload string) syntax.WordPart {
+	math := callStmt(litWord("math"), litWord("--scale=0"), litWord("\""+payload+"\""))
+	math.Redirs = []*syntax.Redirect{{
+		OpPos: syntax.NewPos(2, 1, 2),
+		Op:    syntax.RdrOut,
+		N:     &syntax.Lit{ValuePos: syntax.NewPos(2, 1, 2), Value: "2"},
+		Word:  litWord("/dev/null"),
+	}}
+	fallback := callStmt(litWord("echo"), litWord("0"))
+	return e.synthCmdSubst(binCmd(syntax.OrStmt, math, fallback))
 }
 
 func setCall(name string, value syntax.WordPart) syntax.Command {

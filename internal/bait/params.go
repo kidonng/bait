@@ -207,7 +207,7 @@ func (e *emitter) spliceParts(parts []syntax.WordPart) []syntax.WordPart {
 			prevExpand = true
 		case *syntax.ArithmExp:
 			if txt, ok := e.arithmText(p.X); ok {
-				out = append(out, mathSubst(txt))
+				out = append(out, e.mathSubst(txt))
 			} else {
 				e.warn(p.Pos(), "arithmetic uses an operator without a fish math equivalent; left untranslated")
 				out = append(out, p)
@@ -302,7 +302,7 @@ func (e *emitter) spliceQuoted(dq *syntax.DblQuoted) []syntax.WordPart {
 				e.warn(p.Pos(), "arithmetic uses an operator without a fish math equivalent; left untranslated")
 				appended = []syntax.WordPart{p}
 			} else {
-				appended = []syntax.WordPart{mathSubst(txt)}
+				appended = []syntax.WordPart{e.mathSubst(txt)}
 			}
 			isExpansion = true
 		case *syntax.CmdSubst, *syntax.ProcSubst:

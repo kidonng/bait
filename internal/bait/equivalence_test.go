@@ -797,6 +797,46 @@ func TestBashFishEquivalence(t *testing.T) {
 			name: "function definition redirect applies at call time",
 			src:  "rm -f out.txt\nf() { echo hi; } > out.txt\nf\ncat out.txt\n",
 		},
+		{
+			name: "post-increment status in condition",
+			src:  "i=0\nif ((i++)); then echo then; else echo else; fi\necho \"i=$i\"\n",
+		},
+		{
+			name: "assignment status zero",
+			src:  "x=3\n((x = 0))\necho \"st=$? x=$x\"\n",
+		},
+		{
+			name: "assignment status nonzero",
+			src:  "x=3\n((x = 4))\necho \"st=$? x=$x\"\n",
+		},
+		{
+			name: "decrement loop terminates",
+			src:  "i=2\nwhile ((i--)); do echo \"t:$i\"; done\necho \"done=$i\"\n",
+		},
+		{
+			name: "exponentiation",
+			src:  "echo $((2**3)) $((2**10)) $((2**0))\n",
+		},
+		{
+			name: "unset operand compares as zero",
+			src:  "a=\"\"\nif ((a < 1)); then echo lt; else echo ge; fi\necho $((a + 1))\n",
+		},
+		{
+			name: "compound assignment status",
+			src:  "x=5\n((x += 2))\necho \"x=$x st=$?\"\n",
+		},
+		{
+			name: "pre-increment status",
+			src:  "x=0\n((++x))\necho \"st=$? x=$x\"\n",
+		},
+		{
+			name: "post-decrement status",
+			src:  "x=0\n((x--))\necho \"st=$? x=$x\"\n",
+		},
+		{
+			name: "expression comparison",
+			src:  "i=2\nif ((i * 2 == 4)); then echo eq; fi\nif ((i + 1 > 10)); then echo big; else echo small; fi\n",
+		},
 	}
 
 	for _, tc := range tests {
