@@ -752,6 +752,23 @@ func TestBashFishEquivalence(t *testing.T) {
 			files: map[string]string{"f.txt": "hi\n"},
 			src:   "y=$(< f.txt)\necho \"y=$y\"\n",
 		},
+		{
+			name: "quoted expansion followed by identifier text",
+			src:  "V=hello\necho \"${V}_suffix\"\n",
+		},
+		{
+			name: "quoted dollar-at followed by identifier text",
+			args: []string{"a", "b"},
+			src:  "echo \"P$@S\"\n",
+		},
+		{
+			name: "unquoted expansion followed by literal bracket",
+			src:  "foo=hello\necho $foo[1]\n",
+		},
+		{
+			name: "quoted context variable followed by literal bracket",
+			src:  "f() { echo \"n=$FUNCNAME[0]\"; }\nf\n",
+		},
 	}
 
 	for _, tc := range tests {

@@ -134,7 +134,7 @@ func (e *emitter) rewriteParams(f *syntax.File) {
 				for _, item := range node.Items {
 					syntax.Walk(item, func(cn syntax.Node) bool {
 						if w, ok := cn.(*syntax.Word); ok {
-							w.Parts = e.spliceParts(w.Parts, false)
+							w.Parts = e.spliceParts(w.Parts)
 						}
 						return true
 					})
@@ -164,11 +164,15 @@ func (e *emitter) rewriteParams(f *syntax.File) {
 				node.Parts = []syntax.WordPart{namedParam(name)}
 				return true
 			}
-			node.Parts = e.spliceParts(node.Parts, false)
+			node.Parts = e.spliceParts(node.Parts)
 			return true
 		}
 		return true
 	})
+}
+
+func isNameChar(r byte) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_'
 }
 
 func needsFishBracing(parts []syntax.WordPart, i int) bool {
@@ -179,24 +183,28 @@ func needsFishBracing(parts []syntax.WordPart, i int) bool {
 	if !ok || len(lit.Value) == 0 {
 		return false
 	}
-	r := lit.Value[0]
-	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_'
+	return isNameChar(lit.Value[0])
 }
 
-func (e *emitter) spliceParts(parts []syntax.WordPart, inDblQuotes bool) []syntax.WordPart {
+func (e *emitter) spliceParts(parts []syntax.WordPart) []syntax.WordPart {
 	out := make([]syntax.WordPart, 0, len(parts)+1)
+	var prevEnd syntax.Pos
+	prevExpand := false
 	for i := range parts {
-		part := parts[i]
-		switch p := part.(type) {
+		switch p := parts[i].(type) {
 		case *syntax.ParamExp:
 			replaced := e.paramReplacements(p)
-			if !inDblQuotes && needsFishBracing(parts, i) && len(replaced) == 1 {
+			if needsFishBracing(parts, i) && len(replaced) == 1 {
 				if pe, ok := replaced[0].(*syntax.ParamExp); ok && bareParam(pe) && pe.Param != nil {
 					out = append(out, litPart("{$"+pe.Param.Value+"}"))
+					prevEnd = p.End()
+					prevExpand = true
 					continue
 				}
 			}
 			out = append(out, replaced...)
+			prevEnd = p.End()
+			prevExpand = true
 		case *syntax.ArithmExp:
 			if txt, ok := e.arithmText(p.X); ok {
 				out = append(out, mathSubst(txt))
@@ -204,14 +212,171 @@ func (e *emitter) spliceParts(parts []syntax.WordPart, inDblQuotes bool) []synta
 				e.warn(p.Pos(), "arithmetic uses an operator without a fish math equivalent; left untranslated")
 				out = append(out, p)
 			}
+			prevEnd = p.End()
+			prevExpand = true
+		case *syntax.Lit:
+			// bash never reads `[` after an unbraced expansion as an
+			// index; fish would. Escape it so the literal survives. Only
+			// source text is escaped; translator-generated index parts
+			// share the synthesized position of their reference.
+			if prevExpand && strings.HasPrefix(p.Value, "[") && sourceAdjacent(prevEnd, p.Pos()) {
+				p.Value = escapeIndexBrackets(p.Value)
+			}
+			out = append(out, p)
+			prevExpand = false
 		case *syntax.DblQuoted:
-			p.Parts = e.spliceParts(p.Parts, true)
-			out = append(out, p)
+			out = append(out, e.spliceQuoted(p)...)
+			prevEnd = p.End()
+			// A following source `[...]` must stay literal; fish would
+			// otherwise read it as an index of the quoted value.
+			prevExpand = true
 		default:
-			out = append(out, p)
+			out = append(out, parts[i])
+			prevEnd = parts[i].End()
+			switch parts[i].(type) {
+			case *syntax.CmdSubst, *syntax.ProcSubst:
+				prevExpand = true
+			default:
+				prevExpand = false
+			}
 		}
 	}
 	return out
+}
+
+// sourceAdjacent reports whether ref and p are valid source positions with
+// p at or after ref in (line, column) order. Synthesized nodes carry
+// incomplete positions and are never treated as adjacent source text.
+func sourceAdjacent(ref, p syntax.Pos) bool {
+	if !ref.IsValid() || !p.IsValid() {
+		return false
+	}
+	if p.Line() != ref.Line() {
+		return p.Line() > ref.Line()
+	}
+	return p.Col() >= ref.Col()
+}
+
+// expansionEndsInName reports whether a replacement's last part is a bare
+// fish variable reference, i.e. text following it in the same quoted
+// segment would be absorbed into the variable name.
+func expansionEndsInName(parts []syntax.WordPart) bool {
+	if len(parts) == 0 {
+		return false
+	}
+	pe, ok := parts[len(parts)-1].(*syntax.ParamExp)
+	return ok && bareParam(pe) && pe.Param != nil
+}
+
+// spliceQuoted rewrites the parts of a double-quoted region. fish cannot
+// delimit a variable name inside quotes, so the region is split into
+// adjacent segments wherever a replacement is followed by source text that
+// would otherwise be absorbed into the name or read as an index. The
+// original node is reused when nothing splits, preserving its source
+// positions.
+func (e *emitter) spliceQuoted(dq *syntax.DblQuoted) []syntax.WordPart {
+	if len(dq.Parts) == 0 {
+		return []syntax.WordPart{dq}
+	}
+	var out []syntax.WordPart
+	var cur []syntax.WordPart
+	split := false
+	flush := func() {
+		if len(cur) > 0 {
+			out = append(out, quotedSegment(cur))
+			cur = nil
+		}
+	}
+	for i := range dq.Parts {
+		var appended []syntax.WordPart
+		isExpansion := false
+		endsInName := false
+		switch p := dq.Parts[i].(type) {
+		case *syntax.ParamExp:
+			appended = e.paramReplacements(p)
+			isExpansion = true
+			endsInName = expansionEndsInName(appended)
+		case *syntax.ArithmExp:
+			txt, ok := e.arithmText(p.X)
+			if !ok {
+				e.warn(p.Pos(), "arithmetic uses an operator without a fish math equivalent; left untranslated")
+				appended = []syntax.WordPart{p}
+			} else {
+				appended = []syntax.WordPart{mathSubst(txt)}
+			}
+			isExpansion = true
+		case *syntax.CmdSubst, *syntax.ProcSubst:
+			appended = []syntax.WordPart{p}
+			isExpansion = true
+		default:
+			appended = []syntax.WordPart{dq.Parts[i]}
+		}
+		cur = append(cur, appended...)
+		if isExpansion && quotedSplitNeeded(dq.Parts, i, endsInName) {
+			flush()
+			split = true
+		}
+	}
+	flush()
+	if !split || len(out) == 0 {
+		if len(out) > 0 {
+			dq.Parts = out[0].(*syntax.DblQuoted).Parts
+		}
+		return []syntax.WordPart{dq}
+	}
+	return out
+}
+
+// quotedSegment builds one adjacent double-quoted segment. Its span is
+// derived from its content so the printer's line tracking stays valid.
+func quotedSegment(parts []syntax.WordPart) *syntax.DblQuoted {
+	seg := &syntax.DblQuoted{Parts: parts}
+	if len(parts) > 0 {
+		seg.Left = parts[0].Pos()
+		seg.Right = parts[len(parts)-1].End()
+	}
+	return seg
+}
+
+// quotedSplitNeeded reports whether the quoted region must end after the
+// expansion at index i: the next part is source text that fish would
+// otherwise absorb into the replacement. terminatesInName says the
+// replacement ends in a variable name, so identifier characters are
+// absorbed; a following `[` is absorbed into any expansion's result.
+func quotedSplitNeeded(parts []syntax.WordPart, i int, terminatesInName bool) bool {
+	if i+1 >= len(parts) {
+		return false
+	}
+	lit, ok := parts[i+1].(*syntax.Lit)
+	if !ok || len(lit.Value) == 0 {
+		return false
+	}
+	if !sourceAdjacent(parts[i].End(), lit.Pos()) {
+		return false
+	}
+	if lit.Value[0] == '[' {
+		return true
+	}
+	return terminatesInName && isNameChar(lit.Value[0])
+}
+
+// escapeIndexBrackets escapes unescaped `[` so fish cannot read it as a
+// subscript of the preceding expansion. Idempotent.
+func escapeIndexBrackets(s string) string {
+	var b strings.Builder
+	for i := range len(s) {
+		if s[i] == '[' {
+			bs := 0
+			for j := i - 1; j >= 0 && s[j] == '\\'; j-- {
+				bs++
+			}
+			if bs%2 == 0 {
+				b.WriteByte('\\')
+			}
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
 }
 
 func (e *emitter) paramReplacements(pe *syntax.ParamExp) []syntax.WordPart {
@@ -580,7 +745,7 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 		if pe.Repl.With == nil {
 			replArg = "''"
 		} else if containsParam(pe.Repl.With) {
-			pe.Repl.With.Parts = e.spliceParts(pe.Repl.With.Parts, false)
+			pe.Repl.With.Parts = e.spliceParts(pe.Repl.With.Parts)
 			repl := e.renderWordSmart(pe.Repl.With)
 			if !strings.HasPrefix(repl, `"`) && !strings.HasPrefix(repl, "'") {
 				repl = `"` + repl + `"`
@@ -601,7 +766,7 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 		// parameter expansions; rewrite them before rendering, since the
 		// outer walk visits this node before its nested words.
 		if exp.Word != nil {
-			exp.Word.Parts = e.spliceParts(exp.Word.Parts, false)
+			exp.Word.Parts = e.spliceParts(exp.Word.Parts)
 		}
 		switch exp.Op {
 		case syntax.DefaultUnsetOrNull, syntax.DefaultUnset:
