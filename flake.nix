@@ -23,48 +23,43 @@
         pkgs.go
         pkgs.goreleaser
       ];
-
-      mkTask = pkgs: name: text:
-        pkgs.writeShellApplication {
-          inherit name text;
-          runtimeInputs = devTools pkgs;
-        };
-
-      testRunner = pkgs:
-        mkTask pkgs "bait-test" ''
-          echo "==> Running internal unit and equivalence tests..."
-          go test ./internal/bait ./cmd/bait
-        '';
-
-      e2eRunner = pkgs:
-        mkTask pkgs "bait-e2e" ''
-          echo "==> Running e2e sandbox tests..."
-          go test ./e2e
-        '';
-      fmtRunner = pkgs:
-        mkTask pkgs "bait-fmt" ''
-          echo "==> Formatting Go files..."
-          go fmt ./...
-          echo "==> Formatting Fish files..."
-          fd --extension fish --exec-batch fish_indent --write
-        '';
     in
     {
-      packages = forAllSystems (pkgs: rec {
-        bait = pkgs.buildGoModule {
-          pname = "bait";
-          version = "0.5.0";
-          src = ./.;
-          subPackages = [ "cmd/bait" ];
-          vendorHash = "sha256-CHWW6PxHK1O/UDuGkr1cM+KKC9BaK/MceF2tTrSE/iE=";
-        };
-        test = testRunner pkgs;
-        e2e = e2eRunner pkgs;
-        fmt = fmtRunner pkgs;
-        default = bait;
-      });
+      packages = forAllSystems (pkgs:
+        let
+          task = name: text:
+            pkgs.writeShellApplication {
+              inherit name text;
+              runtimeInputs = devTools pkgs;
+            };
+        in
+        rec {
+          default = pkgs.buildGoModule {
+            pname = "bait";
+            version = "0.5.0";
+            src = ./.;
+            subPackages = [ "cmd/bait" ];
+            vendorHash = "sha256-CHWW6PxHK1O/UDuGkr1cM+KKC9BaK/MceF2tTrSE/iE=";
+          };
 
-      formatter = forAllSystems (pkgs: fmtRunner pkgs);
+          test = task "test" ''
+            echo "==> Running internal unit and equivalence tests..."
+            go test ./internal/bait ./cmd/bait
+          '';
+
+          e2e = task "e2e" ''
+            echo "==> Running e2e sandbox tests..."
+            go test ./e2e
+          '';
+
+          fmt = task "fmt" ''
+            echo "==> Formatting Go files..."
+            go fmt ./...
+            echo "==> Formatting Fish files..."
+            fd --extension fish --exec-batch fish_indent --write
+          '';
+        }
+      );
 
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
