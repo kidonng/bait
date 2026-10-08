@@ -75,6 +75,27 @@ func (e *emitter) normalize(f *syntax.File) {
 					}
 				}
 			}
+		case *syntax.CmdSubst:
+			// bash defines `$(<file)` as `$(cat file)`; materialize the
+			// implicit cat so every emission path renders it.
+			if len(x.Stmts) == 1 && !stmtHasCommand(x.Stmts[0]) &&
+				len(x.Stmts[0].Redirs) == 1 &&
+				x.Stmts[0].Redirs[0].Op == syntax.RdrIn &&
+				x.Stmts[0].Redirs[0].Word != nil {
+				x.Stmts[0].Cmd = &syntax.CallExpr{Args: []*syntax.Word{litWord("cat")}}
+			}
+		case *syntax.Stmt:
+			// A statement made only of redirections behaves like `true`
+			// with those redirections in bash: files are opened or
+			// truncated and the statement succeeds. Materialize the
+			// implicit command here so all emission paths agree.
+			if len(x.Redirs) > 0 {
+				if x.Cmd == nil {
+					x.Cmd = &syntax.CallExpr{Args: []*syntax.Word{litWord("true")}}
+				} else if c, ok := x.Cmd.(*syntax.CallExpr); ok && len(c.Args) == 0 && len(c.Assigns) == 0 {
+					c.Args = []*syntax.Word{litWord("true")}
+				}
+			}
 		case *syntax.DblQuoted:
 			for _, p := range x.Parts {
 				if lit, ok := p.(*syntax.Lit); ok {
@@ -86,6 +107,20 @@ func (e *emitter) normalize(f *syntax.File) {
 	})
 	e.rewriteParams(f)
 	e.rewriteArithmetic(f)
+}
+
+// stmtHasCommand reports whether a statement has a command word or an
+// assignment. Statements made only of redirections (and empty statements)
+// return false.
+func stmtHasCommand(st *syntax.Stmt) bool {
+	switch c := st.Cmd.(type) {
+	case nil:
+		return false
+	case *syntax.CallExpr:
+		return len(c.Args) > 0 || len(c.Assigns) > 0
+	default:
+		return true
+	}
 }
 
 // rewriteParams rewrites parameter expansions that fish spells

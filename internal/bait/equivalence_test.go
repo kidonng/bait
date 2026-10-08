@@ -735,6 +735,23 @@ func TestBashFishEquivalence(t *testing.T) {
 				"done\n" +
 				"echo \"sum:$sum a:$a\"\n",
 		},
+		{
+			name: "redirect-only statement creates file",
+			src:  "rm -f out.txt\n> out.txt\ntest -f out.txt && echo file-exists\n",
+		},
+		{
+			name: "redirect-only statement in if body",
+			src:  "rm -f a.txt\nif true; then > a.txt; fi\ntest -f a.txt && echo body-file\n",
+		},
+		{
+			name: "redirect-only statement in chain",
+			src:  "rm -f b.txt\ntrue && > b.txt\ntest -f b.txt && echo chain-file\n",
+		},
+		{
+			name:  "command substitution file read",
+			files: map[string]string{"f.txt": "hi\n"},
+			src:   "y=$(< f.txt)\necho \"y=$y\"\n",
+		},
 	}
 
 	for _, tc := range tests {
