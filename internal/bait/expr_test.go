@@ -16,90 +16,99 @@ func TestArithmetic(t *testing.T) {
 		{
 			"increment",
 			"((i++))\n",
-			"{\n    set i $(math --scale=0 \"$i + 1\" 2> /dev/null || echo 0)\n    test $(math --scale=0 \"$i - 1\" 2> /dev/null || echo 0) -ne 0\n}\n",
+			"set i $(__bait_math \"$i + 1\")\n" +
+				"__bait_cmp -ne \"$i - 1\" \"0\"\n",
 		},
 		{
 			"pre-decrement",
 			"((--i))\n",
-			"{\n    set i $(math --scale=0 \"$i - 1\" 2> /dev/null || echo 0)\n    test $(math --scale=0 \"$i\" 2> /dev/null || echo 0) -ne 0\n}\n",
+			"set i $(__bait_math \"$i - 1\")\n" +
+				"test \"$i\" -ne 0\n",
 		},
 		{
 			"compound assign",
 			"((n += 2))\n",
-			"{\n    set n $(math --scale=0 \"$n + 2\" 2> /dev/null || echo 0)\n    test $(math --scale=0 \"$n\" 2> /dev/null || echo 0) -ne 0\n}\n",
+			"set n $(__bait_math \"$n + 2\")\n" +
+				"test \"$n\" -ne 0\n",
 		},
 		{
 			"assign expression",
 			"((total = a * b + 1))\n",
-			"{\n    set total $(math --scale=0 \"$a * $b + 1\" 2> /dev/null || echo 0)\n    test $(math --scale=0 \"$total\" 2> /dev/null || echo 0) -ne 0\n}\n",
+			"set total $(__bait_math \"$a * $b + 1\")\n" +
+				"test \"$total\" -ne 0\n",
 		},
 		{
 			"unary minus value",
 			"((d = -x))\n",
-			"{\n    set d $(math --scale=0 \"-$x\" 2> /dev/null || echo 0)\n    test $(math --scale=0 \"$d\" 2> /dev/null || echo 0) -ne 0\n}\n",
+			"set d $(__bait_math \"-$x\")\n" +
+				"test \"$d\" -ne 0\n",
 		},
 		{
 			"comparison becomes test",
 			"((n > 0))\n",
-			"test $(math --scale=0 \"$n\" 2> /dev/null || echo 0) -gt $(math --scale=0 \"0\" 2> /dev/null || echo 0)\n",
+			"__bait_cmp -gt \"$n\" \"0\"\n",
 		},
 		{
 			"truthiness of a variable",
 			"((count))\n",
-			"test $(math --scale=0 \"$count\" 2> /dev/null || echo 0) -ne 0\n",
+			"__bait_cmp -ne \"$count\" \"0\"\n",
 		},
 		{
 			"in-word expansion",
 			"echo $((1 + 2))\n",
-			"echo $(math --scale=0 \"1 + 2\" 2> /dev/null || echo 0)\n",
+			"echo $(__bait_math \"1 + 2\")\n",
 		},
 		{
 			"variable expansion",
 			"echo $((x * 2))\n",
-			"echo $(math --scale=0 \"$x * 2\" 2> /dev/null || echo 0)\n",
+			"echo $(__bait_math \"$x * 2\")\n",
 		},
 		{
 			"compound comma assignment",
 			"(( a = 1, b = 2 ))\n",
-			"set a $(math --scale=0 \"1\" 2> /dev/null || echo 0)\n" +
-				"{\n    set b $(math --scale=0 \"2\" 2> /dev/null || echo 0)\n" +
-				"    test $(math --scale=0 \"$b\" 2> /dev/null || echo 0) -ne 0\n}\n",
+			"set a $(__bait_math \"1\")\n" +
+				"set b $(__bait_math \"2\")\n" +
+				"test \"$b\" -ne 0\n",
 		},
 		{
 			"compound comma increment and assign",
 			"(( i++, n += 2, total = a * b ))\n",
-			"set i $(math --scale=0 \"$i + 1\" 2> /dev/null || echo 0)\n" +
-				"set n $(math --scale=0 \"$n + 2\" 2> /dev/null || echo 0)\n" +
-				"{\n    set total $(math --scale=0 \"$a * $b\" 2> /dev/null || echo 0)\n" +
-				"    test $(math --scale=0 \"$total\" 2> /dev/null || echo 0) -ne 0\n}\n",
+			"set i $(__bait_math \"$i + 1\")\n" +
+				"set n $(__bait_math \"$n + 2\")\n" +
+				"set total $(__bait_math \"$a * $b\")\n" +
+				"test \"$total\" -ne 0\n",
 		},
 		{
 			"compound comma parenthesized",
 			"(( (a = 1, b = 2), c = 3 ))\n",
-			"set a $(math --scale=0 \"1\" 2> /dev/null || echo 0)\n" +
-				"set b $(math --scale=0 \"2\" 2> /dev/null || echo 0)\n" +
-				"{\n    set c $(math --scale=0 \"3\" 2> /dev/null || echo 0)\n" +
-				"    test $(math --scale=0 \"$c\" 2> /dev/null || echo 0) -ne 0\n}\n",
+			"set a $(__bait_math \"1\")\n" +
+				"set b $(__bait_math \"2\")\n" +
+				"set c $(__bait_math \"3\")\n" +
+				"test \"$c\" -ne 0\n",
 		},
 		{
 			"compound comma in if body",
 			"if true; then\n  (( a = 1, b = 2 ))\nfi\n",
-			"if true\n    set a $(math --scale=0 \"1\" 2> /dev/null || echo 0)\n" +
-				"    {\n        set b $(math --scale=0 \"2\" 2> /dev/null || echo 0)\n" +
-				"        test $(math --scale=0 \"$b\" 2> /dev/null || echo 0) -ne 0\n    }\nend\n",
+			"if true\n" +
+				"    set a $(__bait_math \"1\")\n" +
+				"    set b $(__bait_math \"2\")\n" +
+				"    test \"$b\" -ne 0\n" +
+				"end\n",
 		},
 		{
 			"compound comma with comments",
 			"# comment before\n(( a = 1, b = 2 )) # comment after\n",
-			"# comment before\nset a $(math --scale=0 \"1\" 2> /dev/null || echo 0)\n" +
-				"{\n    set b $(math --scale=0 \"2\" 2> /dev/null || echo 0)\n" +
-				"    test $(math --scale=0 \"$b\" 2> /dev/null || echo 0) -ne 0\n} # comment after\n",
+			"# comment before\n" +
+				"set a $(__bait_math \"1\")\n" +
+				"set b $(__bait_math \"2\")\n" +
+				"test \"$b\" -ne 0 # comment after\n",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, warnings, err := Translate([]byte(tc.in))
+			// Helpers are asserted separately; pin the statement text.
+			got, warnings, err := TranslateWithOptions([]byte(tc.in), Options{NoHelpers: true})
 			if err != nil {
 				t.Fatalf("Translate(%q) error: %v", tc.in, err)
 			}
@@ -111,6 +120,33 @@ func TestArithmetic(t *testing.T) {
 					tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestArithmeticHelpers checks that arithmetic injects the coercion
+// helpers on demand and only when they are used.
+func TestArithmeticHelpers(t *testing.T) {
+	got, _, err := Translate([]byte("((n += 2))\necho $((n * 2))\n"))
+	if err != nil {
+		t.Fatalf("Translate error: %v", err)
+	}
+	out := string(got)
+	if !strings.Contains(out, "function __bait_math") {
+		t.Errorf("expected __bait_math helper, got:\n%s", out)
+	}
+	if strings.Contains(out, "function __bait_cmp") {
+		t.Errorf("__bait_cmp is unused here and should not be injected, got:\n%s", out)
+	}
+
+	got, _, err = Translate([]byte("((n > 0))\n"))
+	if err != nil {
+		t.Fatalf("Translate error: %v", err)
+	}
+	out = string(got)
+	for _, want := range []string{"function __bait_math", "function __bait_cmp"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q, got:\n%s", want, out)
+		}
 	}
 }
 

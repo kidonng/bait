@@ -422,6 +422,8 @@ func TestHelperAPI(t *testing.T) {
 		{"__bait_ostype", "function __bait_ostype"},
 		{"__bait_eval", "function __bait_eval"},
 		{"eval", "function __bait_eval"},
+		{"__bait_math", "function __bait_math"},
+		{"__bait_cmp", "function __bait_cmp"},
 	}
 
 	for _, tc := range tests {

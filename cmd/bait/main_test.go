@@ -256,7 +256,7 @@ func TestHelperNames(t *testing.T) {
 		t.Errorf("expected empty stderr, got %q", stderr.String())
 	}
 	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
-	expected := []string{"source", ".", "getopts", "hash", "unalias", "unset", "__bait_words", "__bait_exec", "__bait_ostype", "__bait_eval"}
+	expected := []string{"source", ".", "getopts", "hash", "unalias", "unset", "__bait_words", "__bait_exec", "__bait_ostype", "__bait_eval", "__bait_math", "__bait_cmp"}
 	if len(lines) != len(expected) {
 		t.Fatalf("expected %d names, got %d: %v", len(expected), len(lines), lines)
 	}

@@ -127,13 +127,13 @@ func (e *emitter) arithCommands(ac *syntax.ArithmCmd) []syntax.Command {
 		return nil
 	}
 	parts := splitCommaArithm(ac.X)
-	cmds := make([]syntax.Command, len(parts))
+	var cmds []syntax.Command
 	for i, part := range parts {
-		cmd := e.arithExpr(part, i == len(parts)-1)
-		if cmd == nil {
+		partCmds := e.arithExpr(part, i == len(parts)-1)
+		if partCmds == nil {
 			return nil
 		}
-		cmds[i] = cmd
+		cmds = append(cmds, partCmds...)
 	}
 	return cmds
 }
@@ -170,7 +170,10 @@ func splitCommaArithm(expr syntax.ArithmExpr) []syntax.ArithmExpr {
 	return []syntax.ArithmExpr{expr}
 }
 
-func (e *emitter) arithExpr(expr syntax.ArithmExpr, withStatus bool) syntax.Command {
+// arithExpr converts one arithmetic expression into the fish commands that
+// reproduce its side effects and value. withStatus is false for all but the
+// last part of a comma expression, whose status alone bash reports.
+func (e *emitter) arithExpr(expr syntax.ArithmExpr, withStatus bool) []syntax.Command {
 	for {
 		paren, ok := expr.(*syntax.ParenArithm)
 		if !ok {
@@ -194,13 +197,13 @@ func (e *emitter) arithExpr(expr syntax.ArithmExpr, withStatus bool) syntax.Comm
 		}
 		set := setCall(mangled, e.mathSubst("$"+mangled+" "+delta+" 1"))
 		if !withStatus {
-			return set
+			return []syntax.Command{set}
 		}
 		if x.Post {
 			// ((x++)) evaluates to the old value: the new value ∓ 1.
-			return e.arithStatus(set, "$"+mangled+" "+inverse+" 1")
+			return []syntax.Command{set, e.cmpCall("-ne", "$"+mangled+" "+inverse+" 1", "0")}
 		}
-		return e.arithStatus(set, "$"+mangled)
+		return []syntax.Command{set, truthyCall("$" + mangled)}
 
 	case *syntax.BinaryArithm:
 		if name, ok := bareArithName(x.X); ok && isAssignOp(x.Op) {
@@ -221,51 +224,49 @@ func (e *emitter) arithExpr(expr syntax.ArithmExpr, withStatus bool) syntax.Comm
 			}
 			set := setCall(mangled, e.mathSubst(payload))
 			if !withStatus {
-				return set
+				return []syntax.Command{set}
 			}
-			// An assignment expression evaluates to the assigned value.
-			return e.arithStatus(set, "$"+mangled)
+			// An assignment expression evaluates to the assigned value,
+			// which the set command leaves in the variable.
+			return []syntax.Command{set, truthyCall("$" + mangled)}
 		}
 		if flag, isCmp := arithTestFlags[x.Op]; isCmp {
 			lhs, lok := e.arithmText(x.X)
 			rhs, rok := e.arithmText(x.Y)
 			if lok && rok {
-				return &syntax.CallExpr{Args: []*syntax.Word{
-					litWord("test"),
-					wordOf(e.mathSubst(lhs)),
-					litWord(flag),
-					wordOf(e.mathSubst(rhs)),
-				}}
+				return []syntax.Command{e.cmpCall(flag, lhs, rhs)}
 			}
 		}
 
 	case *syntax.Word:
 		if txt, ok := e.arithmText(x); ok {
-			return &syntax.CallExpr{Args: []*syntax.Word{
-				litWord("test"),
-				wordOf(e.mathSubst(txt)),
-				litWord("-ne"),
-				litWord("0"),
-			}}
+			return []syntax.Command{e.cmpCall("-ne", txt, "0")}
 		}
 	}
 	return nil
 }
 
-// arithStatus builds `set …; test (value) -ne 0` so an arithmetic command
-// keeps bash's exit status: zero only when the expression's value is
-// nonzero. The block's status is the test's.
-func (e *emitter) arithStatus(set syntax.Command, valuePayload string) syntax.Command {
-	setStmt := &syntax.Stmt{Cmd: set}
-	testStmt := &syntax.Stmt{Cmd: &syntax.CallExpr{Args: []*syntax.Word{
+// truthyCall reports whether a value bash arithmetic left in a variable is
+// nonzero. The value is already coerced to an integer by __bait_math.
+func truthyCall(payload string) syntax.Command {
+	return &syntax.CallExpr{Args: []*syntax.Word{
 		litWord("test"),
-		wordOf(e.mathSubst(valuePayload)),
+		litWord("\"" + payload + "\""),
 		litWord("-ne"),
 		litWord("0"),
-	}}}
-	e.markSynth(setStmt)
-	e.markSynth(testStmt)
-	return &syntax.Block{Stmts: []*syntax.Stmt{setStmt, testStmt}}
+	}}
+}
+
+// cmpCall builds `__bait_cmp <op> "<lhs>" "<rhs>"`, which evaluates both
+// operands as bash arithmetic expressions before comparing them.
+func (e *emitter) cmpCall(op, lhs, rhs string) syntax.Command {
+	e.needHelper(helperCmp)
+	return &syntax.CallExpr{Args: []*syntax.Word{
+		litWord("__bait_cmp"),
+		litWord(op),
+		litWord("\"" + lhs + "\""),
+		litWord("\"" + rhs + "\""),
+	}}
 }
 
 func wordOf(parts ...syntax.WordPart) *syntax.Word {
@@ -324,21 +325,11 @@ func bareArithName(n syntax.ArithmExpr) (string, bool) {
 	return l.Value, true
 }
 
-// mathSubst renders an arithmetic payload as a fish command substitution
-// with bash's coercion semantics: unset or non-numeric values evaluate to
-// zero instead of failing the math builtin, and the error text bash would
-// not produce is suppressed. The redirect is positioned after the command
-// word so the printer emits it in trail position.
+// mathSubst renders an arithmetic payload as a call to __bait_math, which
+// applies bash's coercion rules: unset and non-numeric operands are zero.
 func (e *emitter) mathSubst(payload string) syntax.WordPart {
-	math := callStmt(litWord("math"), litWord("--scale=0"), litWord("\""+payload+"\""))
-	math.Redirs = []*syntax.Redirect{{
-		OpPos: syntax.NewPos(2, 1, 2),
-		Op:    syntax.RdrOut,
-		N:     &syntax.Lit{ValuePos: syntax.NewPos(2, 1, 2), Value: "2"},
-		Word:  litWord("/dev/null"),
-	}}
-	fallback := callStmt(litWord("echo"), litWord("0"))
-	return e.synthCmdSubst(binCmd(syntax.OrStmt, math, fallback))
+	e.needHelper(helperMath)
+	return substPart("__bait_math", "\""+payload+"\"")
 }
 
 func setCall(name string, value syntax.WordPart) syntax.Command {
