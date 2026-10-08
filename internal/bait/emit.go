@@ -478,17 +478,23 @@ func (e *emitter) simple(s *syntax.Stmt) {
 		if len(c.Assigns) == 0 && len(c.Args) > 0 {
 			if _, ok := singleBareParam(c.Args[0]); ok {
 				e.needHelper(helperExec)
+				// Negation applies to the helper call, not inside the
+				// dynamic command word: `! __bait_exec $cmd`.
+				renderStmt := s
+				prefix := ""
+				if s.Negated {
+					cp := *s
+					cp.Negated = false
+					renderStmt = &cp
+					prefix = "! "
+				}
 				if hasLeadingRedir(s) || (e.inSubshell && hasHighFDTargetRedir(s.Redirs)) {
 					sc := e.prepareStmt(s)
-					line := e.render(s.Cmd)
-					if s.Negated {
-						line = "! " + line
-					}
-					line += e.tails(s)
-					e.printLineWithTrailing("__bait_exec "+line, sc.trailing)
+					line := e.render(renderStmt.Cmd) + e.tails(s)
+					e.printLineWithTrailing(prefix+"__bait_exec "+line, sc.trailing)
 					return
 				}
-				e.lines("__bait_exec " + e.render(s))
+				e.lines(prefix + "__bait_exec " + e.render(renderStmt))
 				return
 			}
 		}

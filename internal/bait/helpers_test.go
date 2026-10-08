@@ -684,6 +684,21 @@ func TestLeadingRedirectionWithDynamicCommand(t *testing.T) {
 	}
 }
 
+func TestNegatedDynamicCommand(t *testing.T) {
+	src := "if ! $cmd; then echo fail; fi\n"
+	got, _, err := Translate([]byte(src))
+	if err != nil {
+		t.Fatalf("Translate failed: %v", err)
+	}
+	gotStr := string(got)
+	if !strings.Contains(gotStr, "! __bait_exec $cmd") {
+		t.Errorf("expected negation on the helper call, got:\n%s", gotStr)
+	}
+	if strings.Contains(gotStr, "__bait_exec !") {
+		t.Errorf("negation leaked into the dynamic command word, got:\n%s", gotStr)
+	}
+}
+
 func TestDynamicExecDoesNotEmitBaitWords(t *testing.T) {
 	src := "cmd=\"echo hi\"\n$cmd\n"
 	got, _, err := Translate([]byte(src))

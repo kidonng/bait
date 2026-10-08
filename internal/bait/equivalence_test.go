@@ -849,6 +849,14 @@ func TestBashFishEquivalence(t *testing.T) {
 			name: "embedded brace sequence",
 			src:  "echo x{1..3}y\n",
 		},
+		{
+			name: "negated dynamic command",
+			src:  "cmd=\"false\"\nif ! $cmd; then echo negated; fi\ncmd=\"true\"\nif ! $cmd; then echo wrong; fi\n",
+		},
+		{
+			name: "negated positional command in function",
+			src:  "f() {\n  if ! \"$@\"; then echo fail; fi\n}\nf false\nf true\n",
+		},
 	}
 
 	for _, tc := range tests {
