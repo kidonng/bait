@@ -837,6 +837,18 @@ func TestBashFishEquivalence(t *testing.T) {
 			name: "expression comparison",
 			src:  "i=2\nif ((i * 2 == 4)); then echo eq; fi\nif ((i + 1 > 10)); then echo big; else echo small; fi\n",
 		},
+		{
+			name: "brace sequence in for loop",
+			src:  "for i in {1..3}; do echo \"i=$i\"; done\n",
+		},
+		{
+			name: "descending brace sequence",
+			src:  "echo {3..1}\n",
+		},
+		{
+			name: "embedded brace sequence",
+			src:  "echo x{1..3}y\n",
+		},
 	}
 
 	for _, tc := range tests {

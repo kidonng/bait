@@ -251,6 +251,26 @@ func TestCompoundStatements(t *testing.T) {
 				"true | cat\n",
 		},
 		{
+			"numeric brace sequence",
+			"echo {1..3}\n",
+			"echo $(seq 1 3)\n",
+		},
+		{
+			"brace sequence with step",
+			"echo {1..9..2}\n",
+			"echo $(seq 1 2 9)\n",
+		},
+		{
+			"descending brace sequence",
+			"echo {3..1}\n",
+			"echo $(seq 3 1)\n",
+		},
+		{
+			"embedded brace sequence",
+			"echo x{1..3}y\n",
+			"echo x$(seq 1 3)y\n",
+		},
+		{
 			"function definition with or operator",
 			"f() { echo a; } || echo b\n",
 			"function f\n" +
@@ -424,6 +444,26 @@ func TestWarnings(t *testing.T) {
 			"let passthrough",
 			"let a=1+2\n",
 			"let statement",
+		},
+		{
+			"indirect expansion",
+			"echo ${!x}\n",
+			"no fish equivalent",
+		},
+		{
+			"indexed length expansion",
+			"arr=(a b)\necho ${#arr[0]}\n",
+			"no fish equivalent",
+		},
+		{
+			"mapfile builtin",
+			"mapfile -t arr < /dev/null\n",
+			"mapfile",
+		},
+		{
+			"letter brace sequence",
+			"echo {a..c}\n",
+			"brace sequence",
 		},
 		{
 			"subshell inside command substitution",

@@ -32,13 +32,17 @@ func isFishBuiltin(name string) bool {
 // whose fish counterpart differs fatally). They are emitted verbatim
 // with a warning: silent passthrough would only fail at runtime.
 var bashOnlyBuiltins = map[string]string{
-	"let":     "use 'math' instead",
-	"shopt":   "fish has no shell options",
-	"caller":  "use 'status print-stack-trace' instead",
-	"compgen": "use 'complete' instead",
-	"compopt": "use 'complete' instead",
-	"enable":  "fish does not support enabling/disabling builtins",
-	"fc":      "use 'history' instead",
+	"let":       "use 'math' instead",
+	"shopt":     "fish has no shell options",
+	"caller":    "use 'status print-stack-trace' instead",
+	"compgen":   "use 'complete' instead",
+	"compopt":   "use 'complete' instead",
+	"enable":    "fish does not support enabling/disabling builtins",
+	"fc":        "use 'history' instead",
+	"mapfile":   "fish has no array-from-file builtin",
+	"readarray": "fish has no array-from-file builtin",
+	"times":     "fish has no shell-times builtin",
+	"logout":    "fish has no login-shell builtin",
 }
 
 func (e *emitter) warnBashOnlyBuiltin(s *syntax.Stmt, c *syntax.CallExpr) {

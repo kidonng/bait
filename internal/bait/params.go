@@ -13,6 +13,7 @@ import (
 // removal, fish-side parameter rewrites, and arithmetic translation.
 func (e *emitter) normalize(f *syntax.File) {
 	e.escapeLiteralDollars(f)
+	e.expandBraceSequences(f)
 	e.analyzeVariables(f)
 	syntax.Walk(f, func(n syntax.Node) bool {
 		switch x := n.(type) {
@@ -360,6 +361,165 @@ func quotedSplitNeeded(parts []syntax.WordPart, i int, terminatesInName bool) bo
 	return terminatesInName && isNameChar(lit.Value[0])
 }
 
+// expandBraceSequences rewrites numeric bash brace sequences (`{1..3}`,
+// `{1..9..2}`, `{3..1}`) into fish `seq` command substitutions, which
+// produce the same word list. Heredoc bodies, quoted literals and
+// parameter expansions are never touched: bash does not brace-expand
+// there. Sequences fish cannot express (letter ranges, zero-padded
+// bounds, mismatched step signs) are left in place with a warning.
+func (e *emitter) expandBraceSequences(f *syntax.File) {
+	syntax.Walk(f, func(n syntax.Node) bool {
+		switch x := n.(type) {
+		case *syntax.Redirect:
+			return x.Hdoc == nil
+		case *syntax.ParamExp:
+			return false
+		case *syntax.DblQuoted, *syntax.SglQuoted:
+			return false
+		case *syntax.Word:
+			x.Parts = e.braceSeqParts(x.Parts)
+			return true
+		}
+		return true
+	})
+}
+
+func (e *emitter) braceSeqParts(parts []syntax.WordPart) []syntax.WordPart {
+	out := make([]syntax.WordPart, 0, len(parts))
+	changed := false
+	for _, part := range parts {
+		lit, ok := part.(*syntax.Lit)
+		if !ok {
+			out = append(out, part)
+			continue
+		}
+		expanded, ok := e.braceLitParts(lit)
+		if !ok {
+			out = append(out, lit)
+			continue
+		}
+		out = append(out, expanded...)
+		changed = true
+	}
+	if !changed {
+		return parts
+	}
+	return out
+}
+
+// braceLitParts splits one literal on numeric brace sequences. ok is false
+// when nothing was translated; unsupported sequences are warned about and
+// kept literal.
+func (e *emitter) braceLitParts(lit *syntax.Lit) ([]syntax.WordPart, bool) {
+	val := lit.Value
+	if !strings.Contains(val, "{") || !strings.Contains(val, "..") {
+		return nil, false
+	}
+	var out []syntax.WordPart
+	var cur strings.Builder
+	changed := false
+	for i := 0; i < len(val); {
+		if val[i] != '{' {
+			cur.WriteByte(val[i])
+			i++
+			continue
+		}
+		closeIdx := strings.IndexByte(val[i:], '}')
+		if closeIdx < 0 {
+			cur.WriteByte(val[i])
+			i++
+			continue
+		}
+		closeIdx += i
+		inner := val[i+1 : closeIdx]
+		if !strings.Contains(inner, "..") {
+			cur.WriteString(val[i : closeIdx+1])
+			i = closeIdx + 1
+			continue
+		}
+		args, ok := braceSequenceArgs(inner)
+		if !ok {
+			e.warn(lit.Pos(), "brace sequence %s cannot be translated; fish seq cannot express it", val[i:closeIdx+1])
+			cur.WriteString(val[i : closeIdx+1])
+			i = closeIdx + 1
+			continue
+		}
+		if cur.Len() > 0 {
+			out = append(out, litPart(cur.String()))
+			cur.Reset()
+		}
+		out = append(out, substPart(append([]string{"seq"}, args...)...))
+		changed = true
+		i = closeIdx + 1
+	}
+	if !changed {
+		return nil, false
+	}
+	if cur.Len() > 0 {
+		out = append(out, litPart(cur.String()))
+	}
+	return out, true
+}
+
+// braceSequenceArgs converts the interior of a numeric brace sequence
+// (`1..3`, `1..9..2`, `3..1`) into fish `seq` arguments. ok is false for
+// content seq cannot reproduce: letter ranges, zero-padded bounds,
+// mismatched step signs, and zero steps.
+func braceSequenceArgs(inner string) ([]string, bool) {
+	fields := strings.Split(inner, "..")
+	if len(fields) != 2 && len(fields) != 3 {
+		return nil, false
+	}
+	nums := make([]int64, 0, len(fields))
+	for _, f := range fields {
+		if !plainInt(f) {
+			return nil, false
+		}
+		n, err := strconv.ParseInt(f, 10, 64)
+		if err != nil {
+			return nil, false
+		}
+		nums = append(nums, n)
+	}
+	start, end := nums[0], nums[1]
+	if len(nums) == 2 {
+		return []string{strconv.FormatInt(start, 10), strconv.FormatInt(end, 10)}, true
+	}
+	step := nums[2]
+	if step == 0 || (end < start) != (step < 0) {
+		return nil, false
+	}
+	return []string{
+		strconv.FormatInt(start, 10),
+		strconv.FormatInt(step, 10),
+		strconv.FormatInt(end, 10),
+	}, true
+}
+
+// plainInt reports whether s is a plain decimal integer whose printed form
+// matches the value (no zero padding, which bash would preserve).
+func plainInt(s string) bool {
+	if s == "" {
+		return false
+	}
+	body := s
+	if body[0] == '-' || body[0] == '+' {
+		body = body[1:]
+	}
+	if body == "" {
+		return false
+	}
+	if len(body) > 1 && body[0] == '0' {
+		return false
+	}
+	for i := range len(body) {
+		if body[i] < '0' || body[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // escapeIndexBrackets escapes unescaped `[` so fish cannot read it as a
 // subscript of the preceding expansion. Idempotent.
 func escapeIndexBrackets(s string) string {
@@ -389,8 +549,12 @@ func (e *emitter) paramReplacements(pe *syntax.ParamExp) []syntax.WordPart {
 			e.warn(pe.Pos(), "$%s inside a larger word or expression is left untranslated", name)
 			return []syntax.WordPart{pe}
 		}
+		before := len(e.warnings)
 		if parts, ok := e.operatorExpansion(pe); ok {
 			return parts
+		}
+		if len(e.warnings) == before {
+			e.warn(pe.Pos(), "parameter expansion %s has no fish equivalent; left untranslated", e.render(pe))
 		}
 		return []syntax.WordPart{pe}
 	}
