@@ -1254,6 +1254,18 @@ func TestBashFishEquivalence(t *testing.T) {
 			name: "backquoted body with a trailing comment",
 			src:  "x=`set -- a b; echo \"[$1]\" # note`\necho \"x=$x\"\n",
 		},
+		{
+			// A descriptor the script opens with an expanded path: the
+			// loop reopens the path captured at exec time.
+			name:        "exec descriptor loop with an argument path",
+			wantWarning: true,
+			args:        []string{"data.txt"},
+			files:       map[string]string{"data.txt": "one\ntwo\nthree\n"},
+			src: "exec 3< \"$1\"\n" +
+				"while read -u 3 line; do\n" +
+				"\techo \"got:$line\"\n" +
+				"done\n",
+		},
 	}
 
 	for _, tc := range tests {

@@ -456,7 +456,7 @@ func TestExecRedirectionRewrite(t *testing.T) {
 		want     string
 		wantWarn bool
 	}{
-		{"descriptor redirection", "exec 3< data.txt\n", "true 3< data.txt\n", true},
+		{"descriptor redirection", "exec 3< data.txt\n", "set --global __bait_fd_3 data.txt\ntrue 3< data.txt\n", true},
 		{"stdin redirection", "exec < data.txt\n", "true < data.txt\n", true},
 		{"no command", "exec\n", "true\n", true},
 		{"exec with a command", "exec echo hi\n", "exec echo hi\n", false},
@@ -1086,21 +1086,20 @@ func TestReservedNameCollisionWarns(t *testing.T) {
 	}
 }
 
-// TestLoopFDStaticPathOnly pins that only a fully static exec path is
-// replayed at the loop: a word with expansions would be re-evaluated when
-// the loop starts rather than when the exec ran, and the loop would read a
-// different file.
-func TestLoopFDStaticPathOnly(t *testing.T) {
-	src := "exec 3< \"log.$?\"\nwhile read -u 3 l; do :; done\n"
+// TestLoopFDCapturedPath pins that a loop reading a descriptor the script
+// opened is redirected to the path captured at exec time, so an expanded
+// word is not re-evaluated when the loop starts and quoting survives.
+func TestLoopFDCapturedPath(t *testing.T) {
+	src := "exec 3< \"$1\"\nwhile read -u 3 l; do :; done\n"
 	got, _, err := Translate([]byte(src))
 	if err != nil {
 		t.Fatalf("Translate error: %v", err)
 	}
-	if strings.Contains(string(got), "end < ") {
-		t.Errorf("dynamic exec path was replayed at the loop:\n%s", got)
+	if !strings.Contains(string(got), "set --global __bait_fd_3 \"$argv[1]\"") {
+		t.Errorf("exec path was not captured:\n%s", got)
 	}
-	if !strings.Contains(string(got), "/dev/fd/3") {
-		t.Errorf("expected the visible /dev/fd fallback:\n%s", got)
+	if !strings.Contains(string(got), "end < $__bait_fd_3") {
+		t.Errorf("loop does not reopen the captured path:\n%s", got)
 	}
 }
 

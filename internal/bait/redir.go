@@ -274,21 +274,23 @@ func (e *emitter) normalizeExecCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 	}
 	c.Args[0] = litWord("true")
 	e.execRewrites[s] = true
-	// Remember input descriptors the script opens itself: a loop that reads
-	// one can be redirected to the file instead, since fish cannot hold the
-	// descriptor open. Only a fully static path qualifies — a word with
-	// expansions would be re-evaluated when the loop starts, not when the
-	// exec ran, and the loop would read a different file.
+	// Remember the input descriptors the script opens itself: a loop that
+	// reads one reopens the path the exec captured, since fish cannot hold
+	// the descriptor open. A close (`N<&-`) forgets the descriptor again.
 	for _, r := range s.Redirs {
-		if r.Op != syntax.RdrIn || r.N == nil || r.Word == nil {
+		if r.N == nil {
 			continue
 		}
-		path, ok := staticWordValue(r.Word)
-		if !ok {
+		n, err := strconv.Atoi(r.N.Value)
+		if err != nil || n <= 2 {
 			continue
 		}
-		if n, err := strconv.Atoi(r.N.Value); err == nil && n > 2 {
-			e.execFdPaths[n] = path
+		if lit, ok := isBareLit(r.Word); ok && lit == "&-" {
+			delete(e.execFds, n)
+			continue
+		}
+		if r.Op == syntax.RdrIn && r.Word != nil {
+			e.execFds[n] = true
 		}
 	}
 	if len(s.Redirs) == 0 {
@@ -304,7 +306,7 @@ func (e *emitter) normalizeExecCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 // bash's shared offset survives; the loop body then reads the file on
 // standard input, which the warning names.
 func (e *emitter) normalizeLoopFD(s *syntax.Stmt, w *syntax.WhileClause) {
-	if len(e.execFdPaths) == 0 || len(w.Cond) != 1 {
+	if len(e.execFds) == 0 || len(w.Cond) != 1 {
 		return
 	}
 	cond := w.Cond[0]
@@ -313,16 +315,43 @@ func (e *emitter) normalizeLoopFD(s *syntax.Stmt, w *syntax.WhileClause) {
 		return
 	}
 	fd, ok := readFDOption(c.Args)
-	if !ok {
-		return
-	}
-	path, ok := e.execFdPaths[fd]
-	if !ok {
+	if !ok || !e.execFds[fd] {
 		return
 	}
 	e.skipFDReads[cond] = true
-	s.Redirs = append(s.Redirs, &syntax.Redirect{Op: syntax.RdrIn, OpPos: s.Pos(), Word: litWord(path)})
-	e.warn(c.Args[0].Pos(), "fish cannot hold descriptor %d open; the loop reads its file directly, so the loop body's standard input differs from bash's and a second loop over the same descriptor restarts at the beginning", fd)
+	s.Redirs = append(s.Redirs, &syntax.Redirect{
+		Op:    syntax.RdrIn,
+		OpPos: s.Pos(),
+		Word:  &syntax.Word{Parts: []syntax.WordPart{namedParam(fdVarName(fd))}},
+	})
+	e.warn(c.Args[0].Pos(), "fish cannot hold descriptor %d open; the loop reopens the path the exec captured, so the loop body's standard input differs from bash's and a second loop over the same descriptor restarts at the beginning", fd)
+}
+
+// fdVarName is the global variable holding the path an exec opened a
+// descriptor from.
+func fdVarName(fd int) string {
+	return "__bait_fd_" + strconv.Itoa(fd)
+}
+
+// emitExecRewrite renders a redirection-only exec. The file-open side
+// effects stay, and every descriptor above 2 is captured in a global path
+// variable, so a loop that reads one can reopen the file the exec actually
+// named instead of the /dev/fd device fish cannot keep open.
+func (e *emitter) emitExecRewrite(s *syntax.Stmt, c *syntax.CallExpr) {
+	for _, r := range s.Redirs {
+		if r.Op != syntax.RdrIn || r.N == nil || r.Word == nil {
+			continue
+		}
+		n, err := strconv.Atoi(r.N.Value)
+		if err != nil || n <= 2 {
+			continue
+		}
+		if lit, ok := isBareLit(r.Word); ok && lit == "&-" {
+			continue
+		}
+		e.lines("set --global " + fdVarName(n) + " " + e.renderWordSmart(r.Word))
+	}
+	e.lines(e.render(s))
 }
 
 // readFDOption returns the descriptor a read's -u option names, for the

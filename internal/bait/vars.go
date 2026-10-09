@@ -330,8 +330,21 @@ func (e *emitter) analyzeVariables(f *syntax.File) {
 		if c, ok := n.(*syntax.CallExpr); ok && len(c.Args) > 0 &&
 			(isLitWord(c.Args[0], "unset") || isLitWord(c.Args[0], "read")) {
 			// These builtins name their variables as plain words, which
-			// the parameter walk never sees.
+			// the parameter walk never sees. unset -f names a function.
+			funcMode := false
 			for _, a := range c.Args[1:] {
+				if lit, ok := isBareLit(a); ok {
+					if lit == "-f" {
+						funcMode = true
+						continue
+					}
+					if strings.HasPrefix(lit, "-") {
+						continue
+					}
+				}
+				if funcMode {
+					continue
+				}
 				if lit, ok := staticWordValue(a); ok {
 					e.noteName(lit, a.Pos())
 				}

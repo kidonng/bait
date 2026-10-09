@@ -39,7 +39,7 @@ type emitter struct {
 	execRewrites      map[*syntax.Stmt]bool
 	unsetShadows      map[*syntax.CallExpr]bool
 	usedNames         map[string]syntax.Pos
-	execFdPaths       map[int]string
+	execFds           map[int]bool
 	skipFDReads       map[*syntax.Stmt]bool
 	needIFS           bool
 	lastLine          uint
@@ -94,7 +94,7 @@ func newEmitter() *emitter {
 		execRewrites:      make(map[*syntax.Stmt]bool),
 		unsetShadows:      make(map[*syntax.CallExpr]bool),
 		usedNames:         make(map[string]syntax.Pos),
-		execFdPaths:       make(map[int]string),
+		execFds:           make(map[int]bool),
 		skipFDReads:       make(map[*syntax.Stmt]bool),
 	}
 }
@@ -457,6 +457,10 @@ func (e *emitter) simple(s *syntax.Stmt) {
 	if c, ok := s.Cmd.(*syntax.CallExpr); ok {
 		if e.unsetShadows[c] {
 			e.emitUnsetShadow(s, c)
+			return
+		}
+		if e.execRewrites[s] {
+			e.emitExecRewrite(s, c)
 			return
 		}
 		if operand, negated, ok := matchTestDashV(c); ok {
