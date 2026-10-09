@@ -1,9 +1,3 @@
-// Package bait translates bash scripts into fish scripts.
-//
-// The translation strategy is minimal-diff: constructs that are already
-// valid fish are emitted verbatim ("passthrough"), keyword-level
-// differences are rewritten mechanically, and constructs without a fish
-// equivalent are passed through unchanged while a Warning is reported.
 package bait
 
 import (

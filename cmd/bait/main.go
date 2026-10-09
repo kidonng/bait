@@ -1,14 +1,3 @@
-// Command bait translates bash scripts into fish scripts.
-//
-// Usage:
-//
-//	bait [flags] [file]
-//	bait helper <name>
-//	bait helper list
-//
-// With no file argument, bait reads from stdin and writes the fish
-// translation to stdout. Constructs without a fish equivalent are
-// passed through unchanged and reported as warnings on stderr.
 package main
 
 import (
