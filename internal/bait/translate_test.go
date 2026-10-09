@@ -501,6 +501,16 @@ func TestWarnings(t *testing.T) {
 			"shift with a negative count fails in bash",
 		},
 		{
+			"hash table query warning",
+			"hash -t ls\n",
+			"hash -t prints a hashed path",
+		},
+		{
+			"bare hash warning",
+			"hash\n",
+			"hash without arguments prints bash's command hash table",
+		},
+		{
 			"associative array literal warning",
 			"m=([k]=v)\n",
 			"sparse or associative array literal cannot be translated",

@@ -2,7 +2,7 @@ function __bait_exec
     if test (count $argv) -eq 0
         return 0
     end
-    set --local words (string match --regex --all '\S+' -- "$argv[1]")
+    set --local words (__bait_words "$argv[1]")
     if test (count $words) -gt 0
         if test "$words[1]" = command
             command $words[2..-1] $argv[2..-1]

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -491,6 +492,9 @@ func TestHelperAPI(t *testing.T) {
 		{"eval", "function __bait_eval"},
 		{"__bait_math", "function __bait_math"},
 		{"__bait_cmp", "function __bait_cmp"},
+		{"__bait_cmp", "function __bait_math"},
+		{"__bait_exec", "function __bait_words"},
+		{".", "function source"},
 	}
 
 	for _, tc := range tests {
@@ -517,13 +521,91 @@ func TestHelperAPI(t *testing.T) {
 	}
 }
 
+// runFishHelper runs a fish script made of a helper's code plus body.
+func runFishHelper(t *testing.T, helper, body string) string {
+	t.Helper()
+	if _, err := exec.LookPath("fish"); err != nil {
+		t.Skip("fish not installed")
+	}
+	code, err := Helper(helper)
+	if err != nil {
+		t.Fatalf("Helper(%q): %v", helper, err)
+	}
+	cmd := exec.Command("fish", "-c", code+"\n"+body)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("fish failed: %v, output: %s", err, string(out))
+	}
+	return string(out)
+}
+
+// TestUnsetReservedNames pins that unsetting a bash name fish reserves
+// erases the mangled variable, and that unsetting an undefined name stays
+// a successful no-op exactly as bash leaves it.
+func TestUnsetReservedNames(t *testing.T) {
+	for raw, mangled := range fishReservedVars {
+		t.Run(raw, func(t *testing.T) {
+			body := fmt.Sprintf("set --global %s 1\nunset %s\nset -q %s; and echo still; or echo erased\n",
+				mangled, raw, mangled)
+			out := runFishHelper(t, "unset", body)
+			if strings.TrimSpace(out) != "erased" {
+				t.Errorf("unset %s: got %q, want the mangled %s erased", raw, out, mangled)
+			}
+		})
+	}
+
+	out := runFishHelper(t, "unset", "unset never_defined_here\necho \"rc=$status\"\n")
+	if strings.TrimSpace(out) != "rc=0" {
+		t.Errorf("unset of an undefined name: got %q, want rc=0", out)
+	}
+}
+
+// TestUnaliasAll pins that unalias -a removes every alias, which bash
+// does and a per-name loop cannot.
+func TestUnaliasAll(t *testing.T) {
+	body := "alias foo='echo hi'\nalias bar='echo bye'\nunalias -a\nfunctions -q foo; or echo foo-gone\nfunctions -q bar; or echo bar-gone\n"
+	out := runFishHelper(t, "unalias", body)
+	if strings.TrimSpace(out) != "foo-gone\nbar-gone" {
+		t.Errorf("unalias -a: got %q, want both aliases gone", out)
+	}
+}
+
+// TestGetoptsTermination pins bash's end-of-options contract: the option
+// name becomes "?" and OPTARG is unset.
+func TestGetoptsTermination(t *testing.T) {
+	body := "while getopts \"a\" opt -a; echo \"opt=$opt\"; end\n" +
+		"echo \"after opt=$opt\"\nset -q OPTARG; and echo \"OPTARG set\"; or echo \"OPTARG unset\"\n"
+	out := runFishHelper(t, "getopts", body)
+	want := "opt=a\nafter opt=?\nOPTARG unset"
+	if strings.TrimSpace(out) != want {
+		t.Errorf("getopts termination: got %q, want %q", strings.TrimSpace(out), want)
+	}
+}
+
+// TestOSTypeMatchesKernelRelease pins that OSTYPE carries the full kernel
+// release bash reports, not just its major version.
+func TestOSTypeMatchesKernelRelease(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("darwin-only kernel release format")
+	}
+	rel, err := exec.Command("uname", "-r").Output()
+	if err != nil {
+		t.Fatalf("uname -r: %v", err)
+	}
+	want := "darwin" + strings.ToLower(strings.TrimSpace(string(rel)))
+	out := runFishHelper(t, "__bait_ostype", "__bait_ostype\n")
+	if strings.TrimSpace(out) != want {
+		t.Errorf("OSTYPE: got %q, want %q", strings.TrimSpace(out), want)
+	}
+}
+
 func TestBaitExecDoesNotEvalMetacharacters(t *testing.T) {
 	if _, err := exec.LookPath("fish"); err != nil {
 		t.Skip("fish not installed")
 	}
 	dir := t.TempDir()
 	outFile := filepath.Join(dir, "should_not_exist")
-	fishScript := fmt.Sprintf("%s\n__bait_exec \"printf [%%s] a | b > %s\"\n", baitExecHelper, outFile)
+	fishScript := fmt.Sprintf("%s\n__bait_exec \"printf [%%s] a | b > %s\"\n", execHelperCode(t), outFile)
 
 	cmd := exec.Command("fish", "-c", fishScript)
 	out, err := cmd.CombinedOutput()
@@ -768,33 +850,23 @@ func TestNegatedDynamicCommand(t *testing.T) {
 	}
 }
 
-func TestDynamicExecDoesNotEmitBaitWords(t *testing.T) {
-	src := "cmd=\"echo hi\"\n$cmd\n"
-	got, _, err := Translate([]byte(src))
+// TestDynamicExecSplitsOnIFS pins that a dynamic command word splits the
+// way bash splits it: on IFS, not on whitespace alone.
+func TestDynamicExecSplitsOnIFS(t *testing.T) {
+	if _, err := exec.LookPath("fish"); err != nil {
+		t.Skip("fish not installed")
+	}
+	got, _, err := Translate([]byte("IFS=,\ncmd=\"echo,hi\"\n$cmd\n"))
 	if err != nil {
 		t.Fatalf("Translate failed: %v", err)
 	}
-	gotStr := string(got)
-	if !strings.Contains(gotStr, "function __bait_exec") {
-		t.Errorf("expected __bait_exec helper, got:\n%s", gotStr)
-	}
-	if strings.Contains(gotStr, "__bait_words") {
-		t.Errorf("expected no __bait_words helper emitted, got:\n%s", gotStr)
-	}
-}
-
-func TestDynamicExecInlineDoesNotEmitBaitWords(t *testing.T) {
-	src := "true && $cmd foo\n"
-	got, _, err := Translate([]byte(src))
+	cmd := exec.Command("fish", "-c", string(got))
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("Translate failed: %v", err)
+		t.Fatalf("fish failed: %v, output: %s", err, string(out))
 	}
-	gotStr := string(got)
-	if !strings.Contains(gotStr, "__bait_exec") {
-		t.Errorf("expected __bait_exec, got:\n%s", gotStr)
-	}
-	if strings.Contains(gotStr, "__bait_words") {
-		t.Errorf("expected no __bait_words helper emitted, got:\n%s", gotStr)
+	if strings.TrimSpace(string(out)) != "hi" {
+		t.Errorf("expected IFS-split execution of `echo,hi`, got: %q", string(out))
 	}
 }
 
@@ -804,7 +876,7 @@ func TestBaitExecCommandAndBuiltin(t *testing.T) {
 	}
 
 	t.Run("dispatches_command_prefix", func(t *testing.T) {
-		fishScript := fmt.Sprintf("%s\n__bait_exec \"command echo\" \"hello from command\"\n", baitExecHelper)
+		fishScript := fmt.Sprintf("%s\n__bait_exec \"command echo\" \"hello from command\"\n", execHelperCode(t))
 		cmd := exec.Command("fish", "-c", fishScript)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -816,7 +888,7 @@ func TestBaitExecCommandAndBuiltin(t *testing.T) {
 	})
 
 	t.Run("dispatches_builtin_prefix", func(t *testing.T) {
-		fishScript := fmt.Sprintf("%s\n__bait_exec \"builtin echo\" \"hello from builtin\"\n", baitExecHelper)
+		fishScript := fmt.Sprintf("%s\n__bait_exec \"builtin echo\" \"hello from builtin\"\n", execHelperCode(t))
 		cmd := exec.Command("fish", "-c", fishScript)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -826,6 +898,16 @@ func TestBaitExecCommandAndBuiltin(t *testing.T) {
 			t.Errorf("expected 'hello from builtin', got: %q", string(out))
 		}
 	})
+}
+
+// execHelperCode returns the __bait_exec helper with the helpers it calls.
+func execHelperCode(t *testing.T) string {
+	t.Helper()
+	code, err := Helper("__bait_exec")
+	if err != nil {
+		t.Fatalf("Helper(__bait_exec): %v", err)
+	}
+	return code
 }
 
 func TestBackslashCommand(t *testing.T) {

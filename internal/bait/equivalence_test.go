@@ -1108,6 +1108,12 @@ func TestBashFishEquivalence(t *testing.T) {
 			allowWarnings: true,
 			src:           "read -N 2 w <<< \"abcd\"\necho \"w=[$w]\"\n",
 		},
+		{
+			// With IFS=",", bash does not split "echo hi" on its space, so
+			// it looks for a command with that whole name.
+			name: "dynamic command does not split on whitespace when IFS excludes it",
+			src:  "IFS=,\ncmd=\"echo hi\"\n$cmd 2>/dev/null\n",
+		},
 	}
 
 	for _, tc := range tests {

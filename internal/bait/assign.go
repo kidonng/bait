@@ -14,7 +14,11 @@ import (
 // literals flatten into list values; constant indices shift by one.
 func (e *emitter) assignStmt(s *syntax.Stmt, c *syntax.CallExpr) {
 	scope := ""
-	if e.inFunction {
+	if e.inSubshell {
+		// bash runs a command substitution or subshell in a subshell of
+		// its own, so its assignments never reach the enclosing scope.
+		scope = "--local"
+	} else if e.inFunction {
 		scope = "--global"
 	}
 	var lines []string

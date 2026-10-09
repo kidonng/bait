@@ -14,8 +14,8 @@ function __bait_ostype --no-scope-shadowing
                 set --global __bait_ostype_val linux-gnu
             end
         case darwin
-            set --local rel (uname -r | string replace --regex '\..*' '')
-            set --global __bait_ostype_val "darwin$rel"
+            # bash reports the full kernel release, lowercased.
+            set --global __bait_ostype_val "darwin"(uname -r | string lower)
         case freebsd
             set --local rel (uname -r | string lower)
             set --global __bait_ostype_val "freebsd$rel"

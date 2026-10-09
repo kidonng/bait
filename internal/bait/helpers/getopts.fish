@@ -18,15 +18,23 @@ function getopts --no-scope-shadowing
         set --global __bait_optpos 2
     end
 
+    # At the end of the options bash leaves the name at "?" and unsets
+    # OPTARG.
     if test "$OPTIND" -gt (count $__bait_args)
+        set $__bait_varname "?"
+        set --erase OPTARG
         return 1
     end
     set --local __bait_current $__bait_args[$OPTIND]
     if test (string length -- "$__bait_current") -lt 2; or test (string sub --start=1 --length=1 -- "$__bait_current") != -
+        set $__bait_varname "?"
+        set --erase OPTARG
         return 1
     end
     if test "$__bait_current" = --
         set --global OPTIND (math $OPTIND + 1)
+        set $__bait_varname "?"
+        set --erase OPTARG
         return 1
     end
 
@@ -54,11 +62,13 @@ function getopts --no-scope-shadowing
     set --local __bait_escaped_opt (string escape --style=regex -- "$__bait_opt")
     set --local __bait_match (string match --regex --index -- "$__bait_escaped_opt:?" "$__bait_clean_opts")
     if test -z "$__bait_match"
-        set OPTARG "$__bait_opt"
-        set $__bait_varname "?"
-        if test $__bait_colon_mode -eq 0
+        if test $__bait_colon_mode -eq 1
+            set OPTARG "$__bait_opt"
+        else
+            set --erase OPTARG
             echo "getopts: illegal option -- $__bait_opt" >&2
         end
+        set $__bait_varname "?"
         return 0
     end
 
@@ -74,10 +84,11 @@ function getopts --no-scope-shadowing
             set --global OPTIND (math $OPTIND + 1)
             set --global __bait_optpos 2
         else
-            set OPTARG "$__bait_opt"
             if test $__bait_colon_mode -eq 1
+                set OPTARG "$__bait_opt"
                 set $__bait_varname ":"
             else
+                set --erase OPTARG
                 set $__bait_varname "?"
                 echo "getopts: option requires an argument -- $__bait_opt" >&2
             end

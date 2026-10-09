@@ -209,6 +209,14 @@ func (e *emitter) helperDispatch(c *syntax.CallExpr) {
 		e.needHelper(helperGetopts)
 	case isLitWord(c.Args[0], "hash"):
 		e.needHelper(helperHash)
+		if len(c.Args) == 1 {
+			e.warn(c.Args[0].Pos(), "hash without arguments prints bash's command hash table; fish has none")
+		}
+		for _, a := range c.Args[1:] {
+			if lit, ok := isBareLit(a); ok && strings.HasPrefix(lit, "-") && strings.ContainsRune(lit, 't') {
+				e.warn(a.Pos(), "hash -t prints a hashed path; fish has no command hash table")
+			}
+		}
 	case isLitWord(c.Args[0], "unalias"):
 		e.needHelper(helperUnalias)
 	case isLitWord(c.Args[0], "source"):

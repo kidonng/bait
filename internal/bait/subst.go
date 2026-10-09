@@ -177,12 +177,44 @@ func (e *emitter) cmdSubstText(cs *syntax.CmdSubst) (string, bool) {
 	if text == "" {
 		return "", true
 	}
+	if cmdSubstAssigns(cs.Stmts) {
+		// bash scopes assignments to the substitution's subshell; the
+		// block keeps fish's --local sets from outliving it.
+		text = "begin\n" + text + "\nend"
+	}
 	pad := strings.Repeat(indentUnit, e.depth)
 	lines := strings.Split(text, "\n")
 	for i := 1; i < len(lines); i++ {
 		lines[i] = pad + lines[i]
 	}
 	return "$(" + strings.Join(lines, "\n") + ")", true
+}
+
+// cmdSubstAssigns reports whether a command substitution's body assigns a
+// variable anywhere bash's subshell would scope to the substitution. A
+// nested substitution or function body is its own scope and is skipped.
+func cmdSubstAssigns(stmts []*syntax.Stmt) bool {
+	found := false
+	var walk func(syntax.Node) bool
+	walk = func(n syntax.Node) bool {
+		if found {
+			return false
+		}
+		switch x := n.(type) {
+		case *syntax.CmdSubst, *syntax.FuncDecl:
+			return false
+		case *syntax.CallExpr:
+			if len(x.Assigns) > 0 {
+				found = true
+				return false
+			}
+		}
+		return true
+	}
+	for _, st := range stmts {
+		syntax.Walk(st, walk)
+	}
+	return found
 }
 
 // procSubstText renders a process substitution <( ... ) as ( ... | psub ).

@@ -3,6 +3,7 @@ package bait
 import (
 	_ "embed"
 	"fmt"
+	"strings"
 )
 
 //go:embed helpers/__bait_words.fish
@@ -79,46 +80,64 @@ var allHelpers = []helperInfo{
 	{kind: helperCmp, code: baitCmpHelper},
 }
 
+// helperDeps lists the helpers a helper's own code calls: emitting or
+// printing a helper must include everything it depends on.
+var helperDeps = map[helperKind][]helperKind{
+	helperDot:  {helperSource},
+	helperCmp:  {helperMath},
+	helperExec: {helperWords},
+}
+
 func (e *emitter) needHelper(h helperKind) {
 	e.neededHelpers[h] = true
-	if h == helperDot {
-		e.neededHelpers[helperSource] = true
-	}
-	if h == helperCmp {
-		e.neededHelpers[helperMath] = true
+	for _, dep := range helperDeps[h] {
+		e.needHelper(dep)
 	}
 }
 
-// Helper returns the fish script content of the named runtime helper.
+// helperKindByName maps the names the CLI and tests use to helper kinds.
+var helperKindByName = map[string]helperKind{
+	"source":        helperSource,
+	".":             helperDot,
+	"getopts":       helperGetopts,
+	"hash":          helperHash,
+	"unalias":       helperUnalias,
+	"unset":         helperUnset,
+	"__bait_words":  helperWords,
+	"__bait_exec":   helperExec,
+	"eval":          helperEval,
+	"__bait_eval":   helperEval,
+	"__bait_ostype": helperOSType,
+	"__bait_math":   helperMath,
+	"__bait_cmp":    helperCmp,
+}
+
+func helperCode(k helperKind) string {
+	for _, h := range allHelpers {
+		if h.kind == k {
+			return h.code
+		}
+	}
+	return ""
+}
+
+// Helper returns the fish script content of the named runtime helper,
+// followed by the helpers it depends on.
 func Helper(name string) (string, error) {
-	switch name {
-	case "source":
-		return baitSourceHelper, nil
-	case ".":
-		return baitDotHelper, nil
-	case "getopts":
-		return baitGetoptsHelper, nil
-	case "hash":
-		return baitHashHelper, nil
-	case "unalias":
-		return baitUnaliasHelper, nil
-	case "unset":
-		return baitUnsetHelper, nil
-	case "__bait_words":
-		return baitWordsHelper, nil
-	case "__bait_exec":
-		return baitExecHelper, nil
-	case "eval", "__bait_eval":
-		return baitEvalHelper, nil
-	case "__bait_ostype":
-		return baitOSTypeHelper, nil
-	case "__bait_math":
-		return baitMathHelper, nil
-	case "__bait_cmp":
-		return baitCmpHelper, nil
-	default:
+	kind, ok := helperKindByName[name]
+	if !ok {
 		return "", fmt.Errorf("unknown helper %q", name)
 	}
+	var b strings.Builder
+	var write func(helperKind)
+	write = func(k helperKind) {
+		b.WriteString(helperCode(k))
+		for _, dep := range helperDeps[k] {
+			write(dep)
+		}
+	}
+	write(kind)
+	return b.String(), nil
 }
 
 // Helpers returns the canonical names of available runtime helpers.
