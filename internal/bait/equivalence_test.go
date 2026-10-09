@@ -1236,6 +1236,18 @@ func TestBashFishEquivalence(t *testing.T) {
 				"foo \\\n" +
 				"EOF\n",
 		},
+		{
+			// fish cannot hold a descriptor open, but a loop that reads
+			// one the script opened itself can redirect its file instead,
+			// so bash's shared offset survives.
+			name:        "exec descriptor read in a loop",
+			wantWarning: true,
+			files:       map[string]string{"data.txt": "one\ntwo\nthree\n"},
+			src: "exec 3< data.txt\n" +
+				"while read -u 3 line; do\n" +
+				"\techo \"got:$line\"\n" +
+				"done\n",
+		},
 	}
 
 	for _, tc := range tests {

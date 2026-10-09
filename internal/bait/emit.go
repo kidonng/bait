@@ -38,6 +38,9 @@ type emitter struct {
 	pairedFDRedirs    map[*syntax.Redirect]bool
 	execRewrites      map[*syntax.Stmt]bool
 	unsetShadows      map[*syntax.CallExpr]bool
+	usedNames         map[string]syntax.Pos
+	execFdPaths       map[int]*syntax.Word
+	skipFDReads       map[*syntax.Stmt]bool
 	needIFS           bool
 	lastLine          uint
 }
@@ -90,6 +93,9 @@ func newEmitter() *emitter {
 		synthSets:         make(map[*syntax.CallExpr]bool),
 		execRewrites:      make(map[*syntax.Stmt]bool),
 		unsetShadows:      make(map[*syntax.CallExpr]bool),
+		usedNames:         make(map[string]syntax.Pos),
+		execFdPaths:       make(map[int]*syntax.Word),
+		skipFDReads:       make(map[*syntax.Stmt]bool),
 	}
 }
 

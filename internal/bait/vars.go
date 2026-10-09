@@ -2,6 +2,7 @@ package bait
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
@@ -301,6 +302,7 @@ func (e *emitter) analyzeVariables(f *syntax.File) {
 				if a.Name == nil {
 					continue
 				}
+				e.noteName(a.Name.Value, a.Name.Pos())
 				if a.Array != nil {
 					e.knownLists[mangleVarName(a.Name.Value)] = true
 				}
@@ -308,10 +310,17 @@ func (e *emitter) analyzeVariables(f *syntax.File) {
 		}
 		if d, ok := n.(*syntax.DeclClause); ok {
 			for _, a := range d.Args {
-				if a.Name != nil && a.Array != nil {
+				if a.Name == nil {
+					continue
+				}
+				e.noteName(a.Name.Value, a.Name.Pos())
+				if a.Array != nil {
 					e.knownLists[mangleVarName(a.Name.Value)] = true
 				}
 			}
+		}
+		if pe, ok := n.(*syntax.ParamExp); ok && pe.Param != nil {
+			e.noteName(pe.Param.Value, pe.Pos())
 		}
 		return true
 	})
@@ -336,6 +345,40 @@ func (e *emitter) analyzeVariables(f *syntax.File) {
 		if !changed {
 			break
 		}
+	}
+
+	// fish has one variable behind bash's reserved name and its mangled
+	// form; a script that uses both cannot be told apart, so warn.
+	names := make([]string, 0, len(fishReservedVars))
+	for name := range fishReservedVars {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		pos, used := e.usedNames[name]
+		if !used {
+			continue
+		}
+		mangled := fishReservedVars[name]
+		mpos, usedMangled := e.usedNames[mangled]
+		if !usedMangled {
+			continue
+		}
+		if mpos.Line() < pos.Line() || (mpos.Line() == pos.Line() && mpos.Col() < pos.Col()) {
+			pos = mpos
+		}
+		e.warn(pos, "bash's %s and this script's %s both become fish's %s; the two are indistinguishable in the translation", name, mangled, mangled)
+	}
+}
+
+// noteName records the first source position a bash variable name is used
+// at, for the reserved-name collision check.
+func (e *emitter) noteName(name string, pos syntax.Pos) {
+	if name == "" {
+		return
+	}
+	if _, ok := e.usedNames[name]; !ok {
+		e.usedNames[name] = pos
 	}
 }
 

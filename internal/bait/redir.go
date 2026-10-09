@@ -274,11 +274,76 @@ func (e *emitter) normalizeExecCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 	}
 	c.Args[0] = litWord("true")
 	e.execRewrites[s] = true
+	// Remember input descriptors the script opens itself: a loop that reads
+	// one can be redirected to the file instead, since fish cannot hold the
+	// descriptor open.
+	for _, r := range s.Redirs {
+		if r.Op != syntax.RdrIn || r.N == nil || r.Word == nil {
+			continue
+		}
+		if n, err := strconv.Atoi(r.N.Value); err == nil && n > 2 {
+			e.execFdPaths[n] = r.Word
+		}
+	}
 	if len(s.Redirs) == 0 {
 		e.warn(s.Pos(), "exec with no command is a no-op in bash; it is emitted as true")
 		return
 	}
 	e.warn(s.Pos(), "fish cannot redirect the shell itself; the redirections apply to this statement only, so later uses of those streams or descriptors diverge")
+}
+
+// normalizeLoopFD redirects a loop whose condition reads a descriptor the
+// script opened itself. fish cannot hold descriptors above 2 open, but a
+// redirection on the loop block gives every iteration the same open file, so
+// bash's shared offset survives; the loop body then reads the file on
+// standard input, which the warning names.
+func (e *emitter) normalizeLoopFD(s *syntax.Stmt, w *syntax.WhileClause) {
+	if len(e.execFdPaths) == 0 || len(w.Cond) != 1 {
+		return
+	}
+	cond := w.Cond[0]
+	c, ok := cond.Cmd.(*syntax.CallExpr)
+	if !ok || len(c.Args) == 0 || !isLitWord(c.Args[0], "read") {
+		return
+	}
+	fd, ok := readFDOption(c.Args)
+	if !ok {
+		return
+	}
+	path, ok := e.execFdPaths[fd]
+	if !ok {
+		return
+	}
+	e.skipFDReads[cond] = true
+	s.Redirs = append(s.Redirs, &syntax.Redirect{Op: syntax.RdrIn, Word: path})
+	e.warn(c.Args[0].Pos(), "fish cannot hold descriptor %d open; the loop reads its file directly, so the loop body's standard input differs from bash's and a second loop over the same descriptor restarts at the beginning", fd)
+}
+
+// readFDOption returns the descriptor a read's -u option names, for the
+// plain -u N and -uN spellings.
+func readFDOption(args []*syntax.Word) (int, bool) {
+	for i := 1; i < len(args); i++ {
+		lit, ok := isBareLit(args[i])
+		if !ok || !strings.HasPrefix(lit, "-") || strings.HasPrefix(lit, "--") {
+			continue
+		}
+		idx := strings.IndexByte(lit, 'u')
+		if idx < 0 {
+			continue
+		}
+		text := ""
+		if idx+1 < len(lit) {
+			text = lit[idx+1:]
+		} else if i+1 < len(args) {
+			text, _ = isBareLit(args[i+1])
+		}
+		n, err := strconv.Atoi(text)
+		if err != nil {
+			return 0, false
+		}
+		return n, true
+	}
+	return 0, false
 }
 
 // readOptionTakesArg reports whether a bash read option consumes an
@@ -395,6 +460,11 @@ func (e *emitter) normalizeReadCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 					filtered = append(filtered, litWord(name))
 				}
 			case 'u':
+				if s != nil && e.skipFDReads[s] {
+					// The enclosing loop redirects its file instead; the
+					// loop warning covers the divergence.
+					break
+				}
 				// fish's -u is --unexport, and its read does not read from
 				// an inherited descriptor, so point the input at the
 				// descriptor's device instead.

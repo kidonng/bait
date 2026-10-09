@@ -122,6 +122,9 @@ func (e *emitter) normalize(f *syntax.File) {
 				e.normalizeReadCmd(x, c)
 				e.normalizeExecCmd(x, c)
 			}
+			if w, ok := x.Cmd.(*syntax.WhileClause); ok {
+				e.normalizeLoopFD(x, w)
+			}
 		case *syntax.DblQuoted:
 			for _, p := range x.Parts {
 				if lit, ok := p.(*syntax.Lit); ok {
@@ -220,9 +223,6 @@ func (e *emitter) helperDispatch(c *syntax.CallExpr) {
 		// pipelines, C-style loops) keep the bare call, and fish has no
 		// unset of its own.
 		e.needHelper(helperUnset)
-		return
-	}
-	if len(c.Assigns) != 0 {
 		return
 	}
 	switch {

@@ -1053,3 +1053,35 @@ func TestHereDocRepairWarningPosition(t *testing.T) {
 		t.Fatalf("no repair warning; got %v", warnings)
 	}
 }
+
+// TestReservedNameCollisionWarns pins the warning when a script uses a bash
+// name fish reserves together with the mangled name the translator maps it
+// to: fish has one variable behind both.
+func TestReservedNameCollisionWarns(t *testing.T) {
+	_, warnings, err := Translate([]byte("_version=(1 2)\necho $version\n"))
+	if err != nil {
+		t.Fatalf("Translate error: %v", err)
+	}
+	found := false
+	for _, w := range warnings {
+		if strings.Contains(w.Text, "indistinguishable") {
+			found = true
+			if w.Line <= 0 || w.Col <= 0 {
+				t.Errorf("warning %v has invalid position", w)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("no collision warning; got %v", warnings)
+	}
+
+	_, warnings, err = Translate([]byte("_version=(1 2)\necho $_version\n"))
+	if err != nil {
+		t.Fatalf("Translate error: %v", err)
+	}
+	for _, w := range warnings {
+		if strings.Contains(w.Text, "indistinguishable") {
+			t.Errorf("unexpected collision warning: %v", w)
+		}
+	}
+}

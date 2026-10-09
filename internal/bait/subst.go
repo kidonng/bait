@@ -157,9 +157,6 @@ func (e *emitter) renderWordFish(w *syntax.Word) (string, bool) {
 // cmdSubstText renders a command substitution as $( ... ) with the body
 // emitted through the statement translator.
 func (e *emitter) cmdSubstText(cs *syntax.CmdSubst) (string, bool) {
-	if cs.Backquotes {
-		return "", false
-	}
 	sub := e.newSubEmitter()
 	sub.inSubshell = true
 	for _, st := range cs.Stmts {
