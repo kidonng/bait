@@ -1017,3 +1017,39 @@ func TestIFSNormalization(t *testing.T) {
 		t.Errorf("a script that never reads IFS should not get the preamble:\n%s", got)
 	}
 }
+
+// TestUnsetHelperInVerbatimSubstitutions pins that a prefix-assigned unset
+// registers the helper even when its body is printed verbatim (backquotes,
+// here-document pipelines, C-style loops): fish has no unset of its own.
+func TestUnsetHelperInVerbatimSubstitutions(t *testing.T) {
+	got, _, err := Translate([]byte("x=`X=1 unset v; echo hi`\n"))
+	if err != nil {
+		t.Fatalf("Translate error: %v", err)
+	}
+	if !strings.Contains(string(got), "function unset") {
+		t.Errorf("translation does not register the unset helper:\n%s", got)
+	}
+}
+
+// TestHereDocRepairWarningPosition pins that the repair warning names the
+// here-document that was repaired rather than an earlier one that reuses
+// its delimiter.
+func TestHereDocRepairWarningPosition(t *testing.T) {
+	src := "cat <<EOF\nok\nEOF\ncat <<EOF\nfoo \\\nEOF\n"
+	_, warnings, err := Translate([]byte(src))
+	if err != nil {
+		t.Fatalf("Translate error: %v", err)
+	}
+	found := false
+	for _, w := range warnings {
+		if strings.Contains(w.Text, "delimited by end-of-file") {
+			found = true
+			if w.Line != 4 {
+				t.Errorf("repair warning points at line %d, want 4", w.Line)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no repair warning; got %v", warnings)
+	}
+}

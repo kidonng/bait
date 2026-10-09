@@ -211,7 +211,18 @@ func (e *emitter) rewriteParams(f *syntax.File) {
 // call expression during normalize, so statements, conditions, and chain
 // leaves all resolve helpers through the same decision.
 func (e *emitter) helperDispatch(c *syntax.CallExpr) {
-	if len(c.Args) == 0 || len(c.Assigns) != 0 {
+	if len(c.Args) == 0 {
+		return
+	}
+	if isLitWord(c.Args[0], "unset") {
+		// Registered even when the call is shadowed or carries a prefix
+		// assignment: bodies printed verbatim (backquotes, here-document
+		// pipelines, C-style loops) keep the bare call, and fish has no
+		// unset of its own.
+		e.needHelper(helperUnset)
+		return
+	}
+	if len(c.Assigns) != 0 {
 		return
 	}
 	switch {
@@ -233,11 +244,6 @@ func (e *emitter) helperDispatch(c *syntax.CallExpr) {
 		e.needHelper(helperSource)
 	case isLitWord(c.Args[0], "."):
 		e.needHelper(helperDot)
-	case isLitWord(c.Args[0], "unset"):
-		// Registered even when the call is shadowed: bodies printed
-		// verbatim (backquotes, here-document pipelines, C-style loops)
-		// keep the bare call, and fish has no unset of its own.
-		e.needHelper(helperUnset)
 	}
 }
 

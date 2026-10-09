@@ -520,6 +520,40 @@ func staticWordValue(w *syntax.Word) (string, bool) {
 	return b.String(), true
 }
 
+// heredocDelimiterValue returns a here-document delimiter as the parser
+// reports it in errors: backslashes in unquoted literal parts are removed,
+// while quoted parts keep their value.
+func heredocDelimiterValue(w *syntax.Word) (string, bool) {
+	var b strings.Builder
+	for _, p := range w.Parts {
+		switch x := p.(type) {
+		case *syntax.Lit:
+			for i := 0; i < len(x.Value); i++ {
+				if x.Value[i] == '\\' && i+1 < len(x.Value) {
+					i++
+				}
+				b.WriteByte(x.Value[i])
+			}
+		case *syntax.SglQuoted:
+			b.WriteString(x.Value)
+		case *syntax.DblQuoted:
+			for _, q := range x.Parts {
+				lit, ok := q.(*syntax.Lit)
+				if !ok {
+					return "", false
+				}
+				b.WriteString(lit.Value)
+			}
+		default:
+			return "", false
+		}
+	}
+	if b.Len() == 0 {
+		return "", false
+	}
+	return b.String(), true
+}
+
 func isLitWord(w *syntax.Word, val string) bool {
 	if len(w.Parts) != 1 {
 		return false

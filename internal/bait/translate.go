@@ -81,11 +81,11 @@ func TranslateWithOptions(src []byte, opts Options) ([]byte, []Warning, error) {
 		}
 		w := Warning{Text: fmt.Sprintf("here-document %s is delimited by end-of-file; the rest of the input is its body, matching bash's warning", strings.Join(repaired, ", "))}
 		syntax.Walk(file, func(n syntax.Node) bool {
-			if w.Line != 0 {
-				return false
-			}
 			if r, ok := n.(*syntax.Redirect); ok && (r.Op == syntax.Hdoc || r.Op == syntax.DashHdoc) && r.Word != nil {
-				if lit, ok := staticWordValue(r.Word); ok && delims[lit] {
+				if lit, ok := heredocDelimiterValue(r.Word); ok && delims[lit] {
+					// The repair appends its terminator at end of input, so
+					// the repaired here-document is the last one in source
+					// order carrying that delimiter.
 					w.Line, w.Col = int(r.Pos().Line()), int(r.Pos().Col())
 				}
 			}
