@@ -212,7 +212,11 @@ const (
 // consulted by for items, case subjects, assignment values, redirect
 // targets, and argument injection.
 func (e *emitter) listPolicy(name string) listKind {
-	if e.knownLists[name] {
+	// knownLists is keyed by the fish name a bash variable lands on, and
+	// callers pass either the bash name or an already resolved one, so the
+	// lookup mangles first: a reserved bash name (version -> _version)
+	// must still find its entry.
+	if e.knownLists[mangleVarName(name)] {
 		return listBashArray
 	}
 	if isFishListEnvVar(name) {
@@ -298,14 +302,14 @@ func (e *emitter) analyzeVariables(f *syntax.File) {
 					continue
 				}
 				if a.Array != nil {
-					e.knownLists[a.Name.Value] = true
+					e.knownLists[mangleVarName(a.Name.Value)] = true
 				}
 			}
 		}
 		if d, ok := n.(*syntax.DeclClause); ok {
 			for _, a := range d.Args {
 				if a.Name != nil && a.Array != nil {
-					e.knownLists[a.Name.Value] = true
+					e.knownLists[mangleVarName(a.Name.Value)] = true
 				}
 			}
 		}
@@ -318,7 +322,7 @@ func (e *emitter) analyzeVariables(f *syntax.File) {
 		syntax.Walk(f, func(n syntax.Node) bool {
 			if c, ok := n.(*syntax.CallExpr); ok {
 				for _, a := range c.Assigns {
-					if a.Name == nil || e.knownLists[a.Name.Value] {
+					if a.Name == nil || e.knownLists[mangleVarName(a.Name.Value)] {
 						continue
 					}
 					if !e.multiWordScalars[a.Name.Value] && isMultiWordAssign(a, e.multiWordScalars) {

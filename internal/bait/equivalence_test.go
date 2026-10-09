@@ -1190,6 +1190,52 @@ func TestBashFishEquivalence(t *testing.T) {
 			name: "unset PIPESTATUS is a silent no-op",
 			src:  "unset PIPESTATUS\necho \"rc=$?\"\n",
 		},
+		{
+			// A bash array behind a reserved name must find its list
+			// policy through the mangled fish name: $version is element 0.
+			name: "reserved-name array expands as element zero",
+			src: "version=(1 2)\n" +
+				"echo $version\n",
+		},
+		{
+			// A duplicate subscript inflates the element count, so the
+			// hole detection must count distinct indices: index 1 is a
+			// filled hole and the translation warns about it.
+			name:        "duplicate subscripts keep the gap warning",
+			wantWarning: true,
+			src: "arr=([0]=a [0]=b [2]=c)\n" +
+				"echo \"0=${arr[0]} 1=${arr[1]} 2=${arr[2]}\"\n",
+		},
+		{
+			// bash applies quote removal to a read target, so a quoted
+			// reserved name is mangled and pinned to the global scope.
+			name:  "quoted reserved read target is mangled",
+			files: map[string]string{"data.txt": "hi\n"},
+			src: "f() { read \"version\" < data.txt; }\n" +
+				"f\n" +
+				"echo \"v=$version\"\n",
+		},
+		{
+			// fish cannot erase a variable for one block only, so an
+			// unset inside a command substitution empties a block-local
+			// shadow instead of erasing the caller's variable.
+			name:        "unset in a substitution preserves the caller",
+			wantWarning: true,
+			src: "x=outer\n" +
+				"y=$(unset x; echo \"in=${x:-unset}\")\n" +
+				"echo \"out=$x y=$y\"\n",
+		},
+		{
+			// mvdan rejects a here-document whose terminator is swallowed
+			// by a backslash continuation; bash warns and takes the rest
+			// of the input as the body, and the translation matches.
+			name:        "here-document swallowed by a continuation",
+			wantWarning: true,
+			src: "exec 2>/dev/null\n" +
+				"cat <<EOF\n" +
+				"foo \\\n" +
+				"EOF\n",
+		},
 	}
 
 	for _, tc := range tests {

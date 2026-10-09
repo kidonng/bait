@@ -207,15 +207,20 @@ func (e *emitter) arrayElemArgs(a *syntax.ArrayExpr, pos syntax.Pos) (string, bo
 		return b.String(), true
 	}
 	last := 0
+	seen := make(map[int]bool, len(indices))
 	for _, idx := range indices {
 		if idx > last {
 			last = idx
 		}
+		seen[idx] = true
 	}
-	if last+1 > len(texts)+maxArrayFill {
+	// Duplicate subscripts collapse, so the fill is bounded by the number
+	// of distinct indices, not the element count: [0]=a [0]=b [2]=c has a
+	// hole at 1 even though three elements reach index 2.
+	if last+1 > len(seen)+maxArrayFill {
 		return "", false
 	}
-	if last+1 > len(texts) {
+	if last+1 > len(seen) {
 		e.warn(pos, "array literal has a gap; the holes are filled with empty elements, so the element count differs from bash")
 	}
 	filled := make([]string, last+1)

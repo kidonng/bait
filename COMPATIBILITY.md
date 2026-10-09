@@ -76,7 +76,7 @@ The following constructs are currently untranslated by `bait` or lack direct Fis
 | `( … )` | `{ … }` | Anonymous command block (emits warning: subshell isolation is lost) |
 | `cmd &`, `} &` | `cmd &`, `} &` | Background execution (background function calls emit a warning) |
 | `<(cmd)` | `(cmd \| psub)` | Process substitution via Fish `psub` |
-| `<< EOF`, `<<- EOF` | `printf '%s\n' '...' \| cmd` | Here-document pipeline; the body is reproduced byte for byte (backslashes, literal `$`, `<<-` tab stripping, trailing blank lines). A command with more than one here-document has no single-pipeline equivalent and is emitted verbatim with a warning. |
+| `<< EOF`, `<<- EOF` | `printf '%s\n' '...' \| cmd` | Here-document pipeline; the body is reproduced byte for byte (backslashes, literal `$`, `<<-` tab stripping, trailing blank lines). A command with more than one here-document has no single-pipeline equivalent and is emitted verbatim with a warning. A terminator swallowed by a backslash continuation (bash warns about an end-of-file delimiter) is parsed the way bash reads it, with the same warning. |
 | `{1..3}`, `{1..9..2}`, `{3..1}` | `$(seq 1 3)`, `$(seq 1 2 9)`, `$(seq 3 -1 1)` | Numeric brace sequences become `seq` calls; a descending range carries an explicit step so both GNU and BSD `seq` count down like bash |
 | `>&2 cmd`, `>out cmd` | `cmd >& 2`, `cmd >out` | Leading redirections are normalized to statement tails to match Fish syntax |
 | `#!/bin/bash`, `#!/usr/bin/env bash`, `sh`, `ash`, `dash` | `#!/usr/bin/env fish` | Shebang rewritten; interpreter flags dropped |
@@ -113,6 +113,7 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 | `arr=(a b c)` | `set arr a b c` | Native Fish list |
 | `local arr=(a b)`, `declare -a arr=(a b)` | `set --function arr a b`, `set arr a b` | Declaration clauses render array literals like assignments |
 | `arr=([0]=a [2]=c)` | `set arr a "" c` | Numeric subscripts are emulated by filling holes with empty strings (bounded; larger gaps are emitted verbatim), which keeps index reads aligned; the fill is warned about |
+| `version=(1 2)`, `echo $version` | `set _version 1 2`, `echo "$_version[1]"` | Reserved names are mangled before the array policy applies, so an unquoted reference still expands as element 0 like bash's |
 | `arr[2]=val` | `set arr[3] val` | Array index shifted +1 (Fish is 1-based) |
 | `arr+=(val)` | `set --append arr val` | Appends element to list |
 | `X="$X more words"`, `X="$X $(cmd)"` | `set X "$X more words"`, `set X "$X $(cmd)"` | Scalar string concatenation |
@@ -120,12 +121,13 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 | `set -- a b`, `set - a b`, `set a b` | `set argv a b` | Positional parameter assignment |
 | `set --` | `set argv` | Clears positional parameters |
 | `shift`, `shift N` | `test (count $argv) -ge N; and set --erase argv[1..N]` | Erases only when enough positionals exist, so an over-large count fails with bash's status and leaves them alone; a negative literal count fails with a warning |
-| `unset x`, `unset -v x y`, `unset -f func`, `unset 'arr[0]'` | `unset x`, `unset -v x y`, `unset -f func`, `unset 'arr[0]'` | Supported via an on-demand runtime helper |
-| `read -r line`, `read _`, `read status`, `read pipestatus` | `read line`, `read _unused`, `read _status`, `read _pipestatus` | Drops `-r` (default in Fish); automatically mangles variable names conflicting with Fish read-only variables (e.g. `_` $\to$ `_unused`, `status` $\to$ `_status`) |
+| `unset x`, `unset -v x y`, `unset -f func`, `unset 'arr[0]'` | `unset x`, `unset -v x y`, `unset -f func`, `unset 'arr[0]'` | Supported via an on-demand runtime helper. Inside a command substitution the erasure cannot be scoped in fish, so a single plain variable name is emptied with a block-local shadow (warned: the caller's value survives, but set-ness tests still see the name as set) and anything else is skipped with a warning, keeping the caller's variable intact |
+| `read -r line`, `read _`, `read status`, `read pipestatus` | `read line`, `read _unused`, `read _status`, `read _pipestatus` | Drops `-r` (default in Fish); automatically mangles variable names conflicting with Fish read-only variables (e.g. `_` $\to$ `_unused`, `status` $\to$ `_status`). A fully quoted literal target such as `read "status"` undergoes bash's quote removal first, so it is mangled and scope-pinned like a bare one |
 | `read -p PROMPT x`, `read -a arr`, `read -n N x` | `read -P PROMPT x`, `read --list arr`, `read -n N x` | Options are parsed with bash's cluster rule (an argument-taking option consumes the rest of the cluster or the next word). `-p` maps to fish's literal-prompt flag, `-a` to list mode, `-N` to `-n` with a warning, `-t`/`-i`/`-e` are dropped (the first two with a warning), and `-u FD` becomes an input redirection to `/dev/fd/FD` with a warning because fish's `-u` means `--unexport` |
 | `read x` (inside function, no local) | `read --global x` | bash assigns the global variable unless a local of that name exists; fish's read would create a function-scoped one |
 | `set` (bare), `set -` | *(dropped with warning)* | Prints shell state / trace flags in Bash; dropped in Fish |
 | `set -e`, `set -u`, `set +x`, `set -o ...` | *(dropped with warning)* | Fish has no shell option flags |
+| `exec 3< file`, `exec < file`, bare `exec` | `true 3< file`, `true < file`, `true` | bash applies the redirections to the shell itself; fish's `exec` takes only a command (bare `exec` runs its manual page) and cannot hold descriptors above 2, so the statement keeps the redirections' file-open side effects and warns that the shell's streams and descriptors are unchanged |
 | `eval "..."` | `__bait_eval "..."` | Supported via an on-demand runtime helper translating Bash code on-the-fly (requires `bait` in PATH; falls back to passthrough with warning when `--no-helpers` is specified) |
 | `hash cmd`, `hash cmd1 cmd2`, `hash -r` | `hash cmd`, `hash cmd1 cmd2`, `hash -r` | Supported via an on-demand runtime helper; `hash -t` and bare `hash`, which print bash's hash table, warn |
 | `unalias foo`, `unalias "$1"`, `unalias -a` | `unalias foo`, `unalias "$argv[1]"`, `unalias -a` | Supported via an on-demand runtime helper |

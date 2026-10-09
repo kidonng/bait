@@ -36,6 +36,8 @@ type emitter struct {
 	synthSets         map[*syntax.CallExpr]bool
 	readTargets       map[*syntax.CallExpr][]string
 	pairedFDRedirs    map[*syntax.Redirect]bool
+	execRewrites      map[*syntax.Stmt]bool
+	unsetShadows      map[*syntax.CallExpr]bool
 	needIFS           bool
 	lastLine          uint
 }
@@ -56,6 +58,8 @@ func (e *emitter) newSubEmitter() *emitter {
 	sub.arrayAllWords = e.arrayAllWords
 	sub.synthSets = e.synthSets
 	sub.readTargets = e.readTargets
+	sub.execRewrites = e.execRewrites
+	sub.unsetShadows = e.unsetShadows
 	sub.pairedFDRedirs = e.pairedFDRedirs
 	sub.commandPrefixVars = e.commandPrefixVars
 	sub.knownFuncs = e.knownFuncs
@@ -84,6 +88,8 @@ func newEmitter() *emitter {
 		synthStmts:        make(map[*syntax.Stmt]bool),
 		arrayAllWords:     make(map[*syntax.Word]bool),
 		synthSets:         make(map[*syntax.CallExpr]bool),
+		execRewrites:      make(map[*syntax.Stmt]bool),
+		unsetShadows:      make(map[*syntax.CallExpr]bool),
 	}
 }
 
@@ -443,6 +449,10 @@ func (e *emitter) lines(s string) {
 // fish.
 func (e *emitter) simple(s *syntax.Stmt) {
 	if c, ok := s.Cmd.(*syntax.CallExpr); ok {
+		if e.unsetShadows[c] {
+			e.emitUnsetShadow(s, c)
+			return
+		}
 		if operand, negated, ok := matchTestDashV(c); ok {
 			sc := e.prepareStmt(s)
 			line := e.renderTestDashV(operand, negated)
@@ -514,6 +524,40 @@ func (e *emitter) simple(s *syntax.Stmt) {
 		}
 	}
 	e.lines(e.render(s))
+}
+
+// emitUnsetShadow renders an unset inside a substitution body. fish cannot
+// erase a variable for one block only, so the caller's variable is preserved
+// by emptying a block-local shadow instead: reads match bash (the name is
+// empty), while set-ness tests still see the name as set. Function erasure,
+// array elements, and dynamic names cannot be shadowed and are skipped so the
+// caller's state stays intact.
+func (e *emitter) emitUnsetShadow(s *syntax.Stmt, c *syntax.CallExpr) {
+	names, rest := unsetShadowable(c)
+	sc := e.prepareStmt(s)
+	var parts []string
+	for _, name := range names {
+		parts = append(parts, "set --local "+mangleVarName(name))
+	}
+	if len(parts) == 0 {
+		parts = append(parts, "true")
+	}
+	line := strings.Join(parts, "; ")
+	if s.Negated {
+		line = "! " + line
+	}
+	line += e.tails(s)
+	if len(names) > 0 {
+		msg := "unset inside a command substitution is emulated with a block-local empty variable; the caller's value is preserved, but set-ness tests still see the name as set"
+		if e.depth > 0 {
+			msg = "unset inside a nested block of a command substitution is only shadowed until the block ends; reads after it see the caller's value"
+		}
+		e.warn(c.Pos(), "%s", msg)
+	}
+	if rest {
+		e.warn(c.Pos(), "unset of a function, an array element, or a dynamic name inside a command substitution cannot be scoped in fish; it is skipped so the caller's state is preserved")
+	}
+	e.printLineWithTrailing(line, sc.trailing)
 }
 
 func hasLeadingRedir(s *syntax.Stmt) bool {

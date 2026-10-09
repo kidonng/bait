@@ -103,6 +103,9 @@ func (e *emitter) normalize(f *syntax.File) {
 				x.Stmts[0].Redirs[0].Word != nil {
 				x.Stmts[0].Cmd = &syntax.CallExpr{Args: []*syntax.Word{litWord("cat")}}
 			}
+			e.markSubstitutionUnserts(x.Stmts)
+		case *syntax.ProcSubst:
+			e.markSubstitutionUnserts(x.Stmts)
 		case *syntax.Stmt:
 			// A statement made only of redirections behaves like `true`
 			// with those redirections in bash: files are opened or
@@ -117,6 +120,7 @@ func (e *emitter) normalize(f *syntax.File) {
 			}
 			if c, ok := x.Cmd.(*syntax.CallExpr); ok {
 				e.normalizeReadCmd(x, c)
+				e.normalizeExecCmd(x, c)
 			}
 		case *syntax.DblQuoted:
 			for _, p := range x.Parts {
@@ -230,8 +234,75 @@ func (e *emitter) helperDispatch(c *syntax.CallExpr) {
 	case isLitWord(c.Args[0], "."):
 		e.needHelper(helperDot)
 	case isLitWord(c.Args[0], "unset"):
-		e.needHelper(helperUnset)
+		if !e.unsetShadows[c] {
+			e.needHelper(helperUnset)
+		}
 	}
+}
+
+// markSubstitutionUnserts marks variable unsets inside a substitution body so
+// emission can shadow them instead of erasing the caller's variable. A nested
+// substitution or function body is its own scope and is skipped.
+func (e *emitter) markSubstitutionUnserts(stmts []*syntax.Stmt) {
+	var walk func(n syntax.Node) bool
+	walk = func(n syntax.Node) bool {
+		switch n.(type) {
+		case *syntax.CmdSubst, *syntax.ProcSubst, *syntax.FuncDecl:
+			return false
+		}
+		if c, ok := n.(*syntax.CallExpr); ok && len(c.Args) > 0 && isLitWord(c.Args[0], "unset") {
+			if names, rest := unsetShadowable(c); len(names) > 0 || rest {
+				e.unsetShadows[c] = true
+			}
+		}
+		return true
+	}
+	for _, st := range stmts {
+		syntax.Walk(st, walk)
+	}
+}
+
+// unsetShadowable splits an unset call's arguments: names are the plain
+// variable names a block-local shadow can cover, and rest reports whether any
+// argument (function mode, an array element, or a dynamic word) cannot be
+// shadowed at all.
+func unsetShadowable(c *syntax.CallExpr) (names []string, rest bool) {
+	modeFunc := false
+	inOptions := true
+	for i, w := range c.Args {
+		if i == 0 {
+			continue
+		}
+		if inOptions {
+			if lit, ok := isBareLit(w); ok {
+				switch lit {
+				case "--":
+					inOptions = false
+					continue
+				case "-f":
+					modeFunc = true
+					continue
+				case "-v", "-n":
+					continue
+				}
+				if strings.HasPrefix(lit, "-") {
+					continue
+				}
+			}
+			inOptions = false
+		}
+		if modeFunc {
+			rest = true
+			continue
+		}
+		name, ok := staticWordValue(w)
+		if !ok || !syntax.ValidName(name) {
+			rest = true
+			continue
+		}
+		names = append(names, name)
+	}
+	return names, rest
 }
 
 // statusDashText renders the $- emulation for contexts that need text

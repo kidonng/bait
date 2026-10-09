@@ -414,10 +414,19 @@ func TestReadTargetRewrites(t *testing.T) {
 			want: "read -P \"Enter: \" \"$v\"\n",
 		},
 		{
-			// A quoted literal is a target word, so REPLY is not appended.
+			// A quoted literal is a target word, so REPLY is not
+			// appended, and quote removal makes it a name like any
+			// other.
 			name: "quoted target suppresses REPLY",
 			in:   "read \"name\"\n",
-			want: "read \"name\"\n",
+			want: "read name\n",
+		},
+		{
+			// bash's quote removal applies to the target, so a quoted
+			// reserved name is mangled and scope-pinned like a bare one.
+			name: "quoted reserved target is mangled",
+			in:   "read \"version\"\n",
+			want: "read _version\n",
 		},
 	}
 	for _, tc := range tests {
@@ -431,6 +440,41 @@ func TestReadTargetRewrites(t *testing.T) {
 			}
 			if string(got) != tc.want {
 				t.Errorf("read mismatch\n in:   %q\n got:  %q\n want: %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestExecRedirectionRewrite pins the safe emission of a redirection-only
+// exec: fish's exec takes only a command (with none it runs its manual page)
+// and cannot hold descriptors above 2, so the statement becomes true with the
+// redirections and the caller is warned that the shell itself is unchanged.
+func TestExecRedirectionRewrite(t *testing.T) {
+	tests := []struct {
+		name     string
+		in       string
+		want     string
+		wantWarn bool
+	}{
+		{"descriptor redirection", "exec 3< data.txt\n", "true 3< data.txt\n", true},
+		{"stdin redirection", "exec < data.txt\n", "true < data.txt\n", true},
+		{"no command", "exec\n", "true\n", true},
+		{"exec with a command", "exec echo hi\n", "exec echo hi\n", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, warnings, err := Translate([]byte(tc.in))
+			if err != nil {
+				t.Fatalf("Translate(%q) error: %v", tc.in, err)
+			}
+			if tc.wantWarn && len(warnings) == 0 {
+				t.Errorf("expected a warning for %q", tc.in)
+			}
+			if !tc.wantWarn && len(warnings) != 0 {
+				t.Errorf("unexpected warnings for %q: %v", tc.in, warnings)
+			}
+			if string(got) != tc.want {
+				t.Errorf("exec mismatch\n in:   %q\n got:  %q\n want: %q", tc.in, got, tc.want)
 			}
 		})
 	}
@@ -608,6 +652,26 @@ func TestWarnings(t *testing.T) {
 			"read -d with a single target diverges",
 			"read -d , v < data.txt\n",
 			"read -d",
+		},
+		{
+			"exec without a command",
+			"exec\n",
+			"exec with no command",
+		},
+		{
+			"exec with only redirections",
+			"exec 3< data.txt\n",
+			"fish cannot redirect the shell itself",
+		},
+		{
+			"unset inside a command substitution",
+			"x=outer\ny=$(unset x; echo \"$x\")\n",
+			"unset inside a command substitution",
+		},
+		{
+			"unset -f inside a command substitution",
+			"y=$(unset -f f; f)\n",
+			"unset of a function, an array element, or a dynamic name",
 		},
 	}
 	for _, tc := range tests {

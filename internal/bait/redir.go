@@ -247,6 +247,9 @@ func (e *emitter) tails(s *syntax.Stmt) string {
 }
 
 func (e *emitter) checkHighFDRedir(s *syntax.Stmt, kind string) {
+	if e.execRewrites[s] {
+		return
+	}
 	for _, r := range s.Redirs {
 		if e.isPairedHighFDRedir(s, r) {
 			continue
@@ -257,6 +260,25 @@ func (e *emitter) checkHighFDRedir(s *syntax.Stmt, kind string) {
 			}
 		}
 	}
+}
+
+// normalizeExecCmd makes a redirection-only `exec` safe. bash applies the
+// redirections to the shell itself and succeeds; fish's exec takes only a
+// command (with none it runs its manual page), and fish cannot hold
+// descriptors above 2 open at all. The statement becomes `true` with the
+// same redirections, which keeps their file-open side effects, and the
+// caller is warned that the shell's streams and descriptors do not change.
+func (e *emitter) normalizeExecCmd(s *syntax.Stmt, c *syntax.CallExpr) {
+	if len(c.Args) == 0 || !isLitWord(c.Args[0], "exec") || len(c.Args) > 1 {
+		return
+	}
+	c.Args[0] = litWord("true")
+	e.execRewrites[s] = true
+	if len(s.Redirs) == 0 {
+		e.warn(s.Pos(), "exec with no command is a no-op in bash; it is emitted as true")
+		return
+	}
+	e.warn(s.Pos(), "fish cannot redirect the shell itself; the redirections apply to this statement only, so later uses of those streams or descriptors diverge")
 }
 
 // readOptionTakesArg reports whether a bash read option consumes an
@@ -295,6 +317,15 @@ func (e *emitter) normalizeReadCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 		targetWords++
 		lit, ok := isBareLit(w)
 		if !ok {
+			// bash applies quote removal to a read target, so a fully
+			// quoted literal is still a name: `read "version"` assigns
+			// version. Only a word with expansions stays dynamic.
+			if lit, ok := staticWordValue(w); ok && syntax.ValidName(lit) {
+				name := mangleVarName(lit)
+				targets = append(targets, name)
+				filtered = append(filtered, litWord(name))
+				return
+			}
 			filtered = append(filtered, w)
 			return
 		}
@@ -458,6 +489,35 @@ func isBareLit(w *syntax.Word) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// staticWordValue returns a word's value when it is fully literal — plain
+// and quoted literals with no expansions — mirroring the quote removal bash
+// performs before a word becomes a read target name.
+func staticWordValue(w *syntax.Word) (string, bool) {
+	var b strings.Builder
+	for _, p := range w.Parts {
+		switch x := p.(type) {
+		case *syntax.Lit:
+			b.WriteString(x.Value)
+		case *syntax.SglQuoted:
+			b.WriteString(x.Value)
+		case *syntax.DblQuoted:
+			for _, q := range x.Parts {
+				lit, ok := q.(*syntax.Lit)
+				if !ok {
+					return "", false
+				}
+				b.WriteString(lit.Value)
+			}
+		default:
+			return "", false
+		}
+	}
+	if b.Len() == 0 {
+		return "", false
+	}
+	return b.String(), true
 }
 
 func isLitWord(w *syntax.Word, val string) bool {

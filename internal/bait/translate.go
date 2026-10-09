@@ -9,6 +9,7 @@ package bait
 import (
 	"bytes"
 	"fmt"
+	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
 )
@@ -52,6 +53,20 @@ func TranslateWithOptions(src []byte, opts Options) ([]byte, []Warning, error) {
 		syntax.Variant(syntax.LangBash),
 	)
 	file, err := parser.Parse(bytes.NewReader(src), "")
+	var repaired []string
+	// mvdan rejects a here-document whose terminator is swallowed by a
+	// backslash-newline continuation; bash warns and takes the rest of the
+	// input as the body. Appending the delimiter the error names makes the
+	// parse match bash's reading, so the translation stays faithful.
+	for i := 0; err != nil && i < 10; i++ {
+		delim, ok := unclosedHereDocDelim(err)
+		if !ok {
+			break
+		}
+		src = appendHereDocTerminator(src, delim)
+		repaired = append(repaired, delim)
+		file, err = parser.Parse(bytes.NewReader(src), "")
+	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("parse bash: %w", err)
 	}
@@ -59,8 +74,55 @@ func TranslateWithOptions(src []byte, opts Options) ([]byte, []Warning, error) {
 	em.noHelpers = opts.NoHelpers
 	em.normalize(file)
 	em.file(file)
+	if len(repaired) > 0 {
+		w := Warning{Text: fmt.Sprintf("here-document %s is delimited by end-of-file; the rest of the input is its body, matching bash's warning", strings.Join(repaired, ", "))}
+		syntax.Walk(file, func(n syntax.Node) bool {
+			if w.Line != 0 {
+				return false
+			}
+			if r, ok := n.(*syntax.Redirect); ok && (r.Op == syntax.Hdoc || r.Op == syntax.DashHdoc) {
+				w.Line, w.Col = int(r.Pos().Line()), int(r.Pos().Col())
+			}
+			return true
+		})
+		if w.Line == 0 {
+			w.Line, w.Col = 1, 1
+		}
+		em.warnings = append(em.warnings, w)
+	}
 	if em.err != nil {
 		return nil, nil, fmt.Errorf("print fish: %w", em.err)
 	}
 	return em.buf.Bytes(), em.warnings, nil
+}
+
+// unclosedHereDocDelim extracts the delimiter from mvdan's "unclosed
+// here-document `EOF`" parse error.
+func unclosedHereDocDelim(err error) (string, bool) {
+	const marker = "unclosed here-document `"
+	msg := err.Error()
+	i := strings.Index(msg, marker)
+	if i < 0 {
+		return "", false
+	}
+	rest := msg[i+len(marker):]
+	j := strings.IndexByte(rest, '`')
+	if j <= 0 {
+		return "", false
+	}
+	delim := rest[:j]
+	if strings.ContainsAny(delim, "`\\\n") {
+		return "", false
+	}
+	return delim, true
+}
+
+// appendHereDocTerminator adds the delimiter as a final line, so the parser
+// reads the body exactly as bash does when it warns about end-of-file.
+func appendHereDocTerminator(src []byte, delim string) []byte {
+	if len(src) > 0 && src[len(src)-1] != '\n' {
+		src = append(src, '\n')
+	}
+	src = append(src, delim...)
+	return append(src, '\n')
 }

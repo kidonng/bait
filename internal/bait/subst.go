@@ -51,6 +51,11 @@ func (e *emitter) stmtNeedsRewrite(st *syntax.Stmt) bool {
 		if len(c.Args) > 0 && isLitWord(c.Args[0], "shift") {
 			return true
 		}
+		if len(c.Assigns) == 0 && len(c.Args) > 0 && isLitWord(c.Args[0], "unset") {
+			if names, rest := unsetShadowable(c); len(names) > 0 || rest {
+				return true
+			}
+		}
 		if len(c.Assigns) == 0 && len(c.Args) > 0 && (e.isSetBuiltin(c) || e.isSynthesizedSet(c)) {
 			return true
 		}
@@ -177,9 +182,9 @@ func (e *emitter) cmdSubstText(cs *syntax.CmdSubst) (string, bool) {
 	if text == "" {
 		return "", true
 	}
-	if cmdSubstAssigns(cs.Stmts) {
-		// bash scopes assignments to the substitution's subshell; the
-		// block keeps fish's --local sets from outliving it.
+	if cmdSubstAssigns(cs.Stmts) || cmdSubstUnserts(cs.Stmts) {
+		// bash scopes assignments and unsets to the substitution's
+		// subshell; the block keeps fish's --local sets from outliving it.
 		text = "begin\n" + text + "\nend"
 	}
 	pad := strings.Repeat(indentUnit, e.depth)
@@ -205,6 +210,34 @@ func cmdSubstAssigns(stmts []*syntax.Stmt) bool {
 			return false
 		case *syntax.CallExpr:
 			if len(x.Assigns) > 0 {
+				found = true
+				return false
+			}
+		}
+		return true
+	}
+	for _, st := range stmts {
+		syntax.Walk(st, walk)
+	}
+	return found
+}
+
+// cmdSubstUnserts reports whether a command substitution's body unsets a
+// variable, which emission shadows with a block-local set. A nested
+// substitution or function body is its own scope and is skipped.
+func cmdSubstUnserts(stmts []*syntax.Stmt) bool {
+	found := false
+	var walk func(syntax.Node) bool
+	walk = func(n syntax.Node) bool {
+		if found {
+			return false
+		}
+		switch n.(type) {
+		case *syntax.CmdSubst, *syntax.ProcSubst, *syntax.FuncDecl:
+			return false
+		}
+		if c, ok := n.(*syntax.CallExpr); ok && len(c.Args) > 0 && isLitWord(c.Args[0], "unset") {
+			if names, rest := unsetShadowable(c); len(names) > 0 || rest {
 				found = true
 				return false
 			}
