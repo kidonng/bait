@@ -278,20 +278,23 @@ func readOptionTakesArg(ch byte) bool {
 //  6. Mangles target names that collide with fish's reserved variables
 //     (e.g. "_" -> "_unused", "status" -> "_status"), and records them so
 //     emission can pin the scope bash would assign to.
-//  7. Appends REPLY when no target survives option parsing, matching
-//     bash's default variable, and warns when -d is given a single
+//  7. Appends REPLY when no target word survives option parsing, matching
+//     bash's default variable, and warns when -d is given at most one
 //     target, whose fish meaning diverges.
 func (e *emitter) normalizeReadCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 	if len(c.Args) == 0 || !isLitWord(c.Args[0], "read") {
 		return
 	}
 	var targets []string
-	dynamicTarget := false
+	// targetWords counts every positional target word, literal or not:
+	// bash's `read "$v"` assigns the variable the value names, which
+	// fish's `read "$v"` reproduces, so a dynamic word is a target.
+	targetWords := 0
 	filtered := []*syntax.Word{c.Args[0]}
 	addTarget := func(w *syntax.Word) {
+		targetWords++
 		lit, ok := isBareLit(w)
 		if !ok {
-			dynamicTarget = true
 			filtered = append(filtered, w)
 			return
 		}
@@ -355,6 +358,7 @@ func (e *emitter) normalizeReadCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 				if argWord != nil {
 					addTarget(argWord)
 				} else if argText != "" {
+					targetWords++
 					name := mangleVarName(argText)
 					targets = append(targets, name)
 					filtered = append(filtered, litWord(name))
@@ -391,18 +395,14 @@ func (e *emitter) normalizeReadCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 			}
 		}
 	}
-	if len(targets) == 0 {
-		if dynamicTarget {
-			e.warn(c.Args[0].Pos(), "read target is not a literal name; REPLY cannot be assigned; emitted verbatim")
-			return
-		}
+	if targetWords == 0 {
 		// bash's read with no names assigns REPLY.
 		name := mangleVarName("REPLY")
 		targets = append(targets, name)
 		filtered = append(filtered, litWord(name))
 	}
-	if delimPos.IsValid() && len(targets) == 1 {
-		e.warn(delimPos, "read -d with a single target reads the whole record in fish; bash strips the delimiter and returns the first field; the line is emitted as read")
+	if delimPos.IsValid() && targetWords <= 1 {
+		e.warn(delimPos, "read -d diverges: fish reads the whole record where bash strips the delimiter and returns the first field")
 	}
 	c.Args = filtered
 	if len(targets) > 0 {

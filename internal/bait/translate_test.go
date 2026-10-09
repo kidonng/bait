@@ -397,6 +397,45 @@ func TestShebang(t *testing.T) {
 	}
 }
 
+// TestReadTargetRewrites pins normalizeReadCmd's target handling: every
+// option rewrite survives a dynamic (non-literal) target, and a target
+// word suppresses the REPLY default without a spurious warning.
+func TestReadTargetRewrites(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			// fish's -p runs its argument as a command, so bash's -p
+			// becomes -P; a dynamic target must not discard the rewrite.
+			name: "prompt rewrite keeps a dynamic target",
+			in:   "read -p \"Enter: \" \"$v\"\n",
+			want: "read -P \"Enter: \" \"$v\"\n",
+		},
+		{
+			// A quoted literal is a target word, so REPLY is not appended.
+			name: "quoted target suppresses REPLY",
+			in:   "read \"name\"\n",
+			want: "read \"name\"\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, warnings, err := Translate([]byte(tc.in))
+			if err != nil {
+				t.Fatalf("Translate(%q) error: %v", tc.in, err)
+			}
+			if len(warnings) != 0 {
+				t.Errorf("unexpected warnings: %v", warnings)
+			}
+			if string(got) != tc.want {
+				t.Errorf("read mismatch\n in:   %q\n got:  %q\n want: %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestWarnings verifies that constructs without a fish equivalent are
 // emitted verbatim and reported.
 func TestWarnings(t *testing.T) {
