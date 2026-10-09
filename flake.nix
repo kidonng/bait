@@ -62,7 +62,7 @@
       );
 
       devShells = forAllSystems (pkgs: {
-        default = pkgs.mkShell {
+        default = pkgs.mkShellNoCC {
           packages = devTools pkgs;
         };
       });
