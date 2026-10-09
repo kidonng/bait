@@ -3,7 +3,8 @@
 // Usage:
 //
 //	bait [flags] [file]
-//	bait helper [flags] [name]
+//	bait helper <name>
+//	bait helper list
 //
 // With no file argument, bait reads from stdin and writes the fish
 // translation to stdout. Constructs without a fish equivalent are
@@ -80,44 +81,39 @@ func (e exitError) Error() string {
 	return fmt.Sprintf("exit code %d", e.code)
 }
 
-func newHelperCmd() *cobra.Command {
-	var names bool
-
-	cmd := &cobra.Command{
-		Use:   "helper [name]",
-		Short: "print the content of a runtime helper",
-		Long:  "Print the content of a runtime helper, or list all available helper names.",
-		Args: func(cmd *cobra.Command, args []string) error {
-			if names {
-				if len(args) > 0 {
-					return errors.New("too many arguments for --names")
-				}
-				return nil
-			}
-			if len(args) == 0 {
-				return errors.New("missing helper name")
-			}
-			if len(args) > 1 {
-				return errors.New("too many arguments for helper command")
-			}
-			return nil
-		},
+func newHelperListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "list all available helper names",
+		Args:  cobra.NoArgs,
 		PreRun: func(cmd *cobra.Command, args []string) {
 			cmd.SilenceUsage = true
 			cmd.SilenceErrors = true
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if names {
-				for _, h := range bait.Helpers() {
-					fmt.Fprintln(cmd.OutOrStdout(), h)
-				}
-				return nil
+			for _, h := range bait.Helpers() {
+				fmt.Fprintln(cmd.OutOrStdout(), h)
 			}
+			return nil
+		},
+	}
+}
 
+func newHelperCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "helper <name>",
+		Short: "print the content of a runtime helper",
+		Long:  "Print the content of a runtime helper.",
+		Args:  cobra.ExactArgs(1),
+		PreRun: func(cmd *cobra.Command, args []string) {
+			cmd.SilenceUsage = true
+			cmd.SilenceErrors = true
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			code, err := bait.Helper(name)
 			if err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "error: unknown helper %q\n", name)
+				fmt.Fprintf(cmd.ErrOrStderr(), "error: %v\n", err)
 				return exitError{code: 1}
 			}
 
@@ -129,7 +125,7 @@ func newHelperCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().BoolVar(&names, "names", false, "list all available helper names")
+	cmd.AddCommand(newHelperListCmd())
 
 	return cmd
 }

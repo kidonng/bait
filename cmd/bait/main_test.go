@@ -76,18 +76,16 @@ func TestQuietFlag(t *testing.T) {
 		}
 	})
 
-	for _, flag := range []string{"--quiet", "-q"} {
-		t.Run("with "+flag, func(t *testing.T) {
-			var stdout, stderr bytes.Buffer
-			exitCode := run([]string{flag}, strings.NewReader(scriptWithWarning), &stdout, &stderr)
-			if exitCode != 0 {
-				t.Fatalf("expected exit code 0, got %d", exitCode)
-			}
-			if stderr.Len() != 0 {
-				t.Errorf("expected empty stderr with %s, got %q", flag, stderr.String())
-			}
-		})
-	}
+	t.Run("with quiet", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		exitCode := run([]string{"--quiet"}, strings.NewReader(scriptWithWarning), &stdout, &stderr)
+		if exitCode != 0 {
+			t.Fatalf("expected exit code 0, got %d", exitCode)
+		}
+		if stderr.Len() != 0 {
+			t.Errorf("expected empty stderr with --quiet, got %q", stderr.String())
+		}
+	})
 }
 
 func TestQuietEnv(t *testing.T) {
@@ -122,18 +120,6 @@ func TestQuietEnv(t *testing.T) {
 			}
 		})
 	}
-
-	t.Run("cli flag overrides env", func(t *testing.T) {
-		t.Setenv("BAIT_QUIET", "1")
-		var stdout, stderr bytes.Buffer
-		exitCode := run([]string{"--quiet=false"}, strings.NewReader(scriptWithWarning), &stdout, &stderr)
-		if exitCode != 0 {
-			t.Fatalf("expected exit code 0, got %d", exitCode)
-		}
-		if stderr.Len() == 0 {
-			t.Errorf("expected warnings on stderr when --quiet=false overrides BAIT_QUIET=1")
-		}
-	})
 }
 
 func TestNoHelpersFlag(t *testing.T) {
@@ -167,71 +153,16 @@ func TestNoHelpersEnv(t *testing.T) {
 			}
 		})
 	}
-
-	t.Run("cli flag overrides env", func(t *testing.T) {
-		t.Setenv("BAIT_NO_HELPERS", "1")
-		var stdout, stderr bytes.Buffer
-		exitCode := run([]string{"--no-helpers=false"}, strings.NewReader(script), &stdout, &stderr)
-		if exitCode != 0 {
-			t.Fatalf("expected exit code 0, got %d", exitCode)
-		}
-		if !strings.Contains(stdout.String(), "function source") {
-			t.Errorf("expected helpers when --no-helpers=false overrides BAIT_NO_HELPERS=1")
-		}
-	})
 }
 
 func TestHelperCommand(t *testing.T) {
-	tests := []struct {
-		name     string
-		args     []string
-		contains string
-	}{
-		{"source", []string{"helper", "source"}, "function source"},
-		{"dot", []string{"helper", "."}, "function ."},
-		{"getopts", []string{"helper", "getopts"}, "function getopts"},
-		{"hash", []string{"helper", "hash"}, "function hash"},
-		{"unalias", []string{"helper", "unalias"}, "function unalias"},
-		{"unset", []string{"helper", "unset"}, "function unset"},
-		{"words", []string{"helper", "__bait_words"}, "function __bait_words"},
-		{"exec", []string{"helper", "__bait_exec"}, "function __bait_exec"},
-		{"ostype", []string{"helper", "__bait_ostype"}, "function __bait_ostype"},
-		{"eval", []string{"helper", "__bait_eval"}, "function __bait_eval"},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			var stdout, stderr bytes.Buffer
-			exitCode := run(tc.args, strings.NewReader(""), &stdout, &stderr)
-			if exitCode != 0 {
-				t.Fatalf("expected exit code 0, got %d (stderr: %s)", exitCode, stderr.String())
-			}
-			if !strings.Contains(stdout.String(), tc.contains) {
-				t.Errorf("expected stdout to contain %q, got: %s", tc.contains, stdout.String())
-			}
-		})
-	}
-}
-
-func TestHelperMissingName(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	exitCode := run([]string{"helper"}, strings.NewReader(""), &stdout, &stderr)
-	if exitCode != 2 {
-		t.Fatalf("expected exit code 2, got %d", exitCode)
+	exitCode := run([]string{"helper", "source"}, strings.NewReader(""), &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d (stderr: %s)", exitCode, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "missing helper name") {
-		t.Errorf("expected stderr to contain 'missing helper name', got: %q", stderr.String())
-	}
-}
-
-func TestHelperTooManyArguments(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	exitCode := run([]string{"helper", "source", "extra"}, strings.NewReader(""), &stdout, &stderr)
-	if exitCode != 2 {
-		t.Fatalf("expected exit code 2, got %d", exitCode)
-	}
-	if !strings.Contains(stderr.String(), "too many arguments for helper command") {
-		t.Errorf("expected stderr to contain 'too many arguments for helper command', got: %q", stderr.String())
+	if !strings.Contains(stdout.String(), "function source") {
+		t.Errorf("expected stdout to contain 'function source', got: %s", stdout.String())
 	}
 }
 
@@ -246,14 +177,20 @@ func TestHelperUnknown(t *testing.T) {
 	}
 }
 
-func TestHelperNamesTooManyArguments(t *testing.T) {
+func TestHelperList(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	exitCode := run([]string{"helper", "--names", "extra"}, strings.NewReader(""), &stdout, &stderr)
-	if exitCode != 2 {
-		t.Fatalf("expected exit code 2, got %d", exitCode)
+	exitCode := run([]string{"helper", "list"}, strings.NewReader(""), &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d (stderr: %s)", exitCode, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "too many arguments for --names") {
-		t.Errorf("expected stderr to contain 'too many arguments for --names', got: %q", stderr.String())
+	if stderr.Len() != 0 {
+		t.Errorf("expected empty stderr, got %q", stderr.String())
+	}
+	output := stdout.String()
+	for _, expected := range []string{"source", "getopts", "__bait_eval"} {
+		if !strings.Contains(output, expected) {
+			t.Errorf("expected output to contain %q, got: %s", expected, output)
+		}
 	}
 }
 

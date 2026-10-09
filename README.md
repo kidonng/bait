@@ -76,7 +76,7 @@ bait helper . > ~/.config/fish/functions/..fish
 Load all helpers:
 
 ```fish
-for helper in (bait helper --names)
+for helper in (bait helper list)
     bait helper $helper > ~/.config/fish/functions/$helper.fish
 end
 ```
