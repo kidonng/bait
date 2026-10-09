@@ -154,7 +154,7 @@ func (e *emitter) renderBinaryTest(b *syntax.BinaryTest) string {
 		xWord, _ := b.X.(*syntax.Word)
 		yWord, _ := b.Y.(*syntax.Word)
 		target := e.renderWordSmart(xWord)
-		if hasUnquotedWildcard(yWord) {
+		if !fullyQuoted(yWord) {
 			pat := e.renderPatternLiteral(yWord)
 			return fmt.Sprintf("string match --quiet -- %s %s", pat, target)
 		}
@@ -164,7 +164,7 @@ func (e *emitter) renderBinaryTest(b *syntax.BinaryTest) string {
 		xWord, _ := b.X.(*syntax.Word)
 		yWord, _ := b.Y.(*syntax.Word)
 		target := e.renderWordSmart(xWord)
-		if hasUnquotedWildcard(yWord) {
+		if !fullyQuoted(yWord) {
 			pat := e.renderPatternLiteral(yWord)
 			return fmt.Sprintf("! string match --quiet -- %s %s", pat, target)
 		}
@@ -179,6 +179,23 @@ func (e *emitter) renderBinaryTest(b *syntax.BinaryTest) string {
 	default:
 		return fmt.Sprintf("test %s %s %s", e.renderTestOperand(b.X), opStr, e.renderTestOperand(b.Y))
 	}
+}
+
+// fullyQuoted reports whether a word is entirely quoted, which is what makes
+// bash's == a literal comparison; any unquoted part (including an expansion)
+// makes the right-hand side a pattern.
+func fullyQuoted(w *syntax.Word) bool {
+	if w == nil || len(w.Parts) == 0 {
+		return false
+	}
+	for _, p := range w.Parts {
+		switch p.(type) {
+		case *syntax.SglQuoted, *syntax.DblQuoted:
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func (e *emitter) renderTestOperand(expr syntax.TestExpr) string {

@@ -2,6 +2,7 @@ package bait
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
@@ -355,7 +356,11 @@ func (e *emitter) caseClauseAsIf(s *syntax.Stmt, cl *syntax.CaseClause, tail str
 		}
 		var conds []string
 		for _, p := range item.Patterns {
-			re, _ := globToRegex(e.render(p), false)
+			re, ok := patternPartsRegex(p)
+			if !ok {
+				e.warn(p.Pos(), "pattern mixes an expansion with a bracket class; the expanded value is matched as a literal")
+				re, _ = globToRegex(e.render(p), false)
+			}
 			conds = append(conds, fmt.Sprintf("string match --regex --quiet -- %s %s", fishSingleQuote("^"+re+"$"), target))
 		}
 		cond := strings.Join(conds, "; or ")
@@ -623,25 +628,19 @@ func (e *emitter) renderCasePattern(p *syntax.Word) string {
 		needsQuoting = true
 	}
 
-	if !needsQuoting {
-		var sb strings.Builder
-		for _, tok := range tokens {
-			sb.WriteString(tok.val)
+	// fish's switch matches wildcards even in quoted patterns, so a quoted
+	// or backslash-escaped wildcard must be escaped for the matcher itself.
+	var sb strings.Builder
+	for _, tok := range tokens {
+		if tok.isQuoted && strings.ContainsAny(tok.val, `*?[\`) {
+			sb.WriteByte('\\')
 		}
+		sb.WriteString(tok.val)
+	}
+	if !needsQuoting {
 		return sb.String()
 	}
-
-	var sb strings.Builder
-	sb.WriteByte('\'')
-	for _, tok := range tokens {
-		if tok.val == "'" {
-			sb.WriteString(`\'`)
-		} else {
-			sb.WriteString(tok.val)
-		}
-	}
-	sb.WriteByte('\'')
-	return sb.String()
+	return "'" + strings.ReplaceAll(sb.String(), "'", `\'`) + "'"
 }
 
 func casePatternString(p *syntax.Word) (string, bool) {
@@ -665,4 +664,38 @@ func casePatternString(p *syntax.Word) (string, bool) {
 		}
 	}
 	return sb.String(), true
+}
+
+// patternPartsRegex converts a case pattern into a regex source built from
+// the AST: wildcards are active only where bash leaves them unquoted, quoted
+// text is literal, and an expansion makes the pattern dynamic — bash matches
+// the expanded value as a pattern, which a regex fixed at translation time
+// cannot express, so ok is false.
+func patternPartsRegex(w *syntax.Word) (string, bool) {
+	if w == nil {
+		return "", false
+	}
+	var b strings.Builder
+	for _, part := range w.Parts {
+		switch pt := part.(type) {
+		case *syntax.Lit:
+			re, _ := globToRegex(pt.Value, false)
+			b.WriteString(re)
+		case *syntax.SglQuoted:
+			b.WriteString(regexp.QuoteMeta(pt.Value))
+		case *syntax.DblQuoted:
+			for _, qp := range pt.Parts {
+				lit, ok := qp.(*syntax.Lit)
+				if !ok {
+					return "", false
+				}
+				// normalize escapes the literal dollar for fish; the
+				// pattern needs the character bash would see.
+				b.WriteString(regexp.QuoteMeta(strings.ReplaceAll(lit.Value, `\$`, `$`)))
+			}
+		default:
+			return "", false
+		}
+	}
+	return b.String(), true
 }

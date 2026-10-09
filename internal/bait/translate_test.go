@@ -163,7 +163,7 @@ func TestCompoundStatements(t *testing.T) {
 			"switch $(uname)\n" +
 				"case Linux\n" +
 				"    echo tux\n" +
-				"case Darwin '*BSD'\n" +
+				"case Darwin '\\*BSD'\n" +
 				"    echo bsd\n" +
 				"case '*'\n" +
 				"    echo other\n" +

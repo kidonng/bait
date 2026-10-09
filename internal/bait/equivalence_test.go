@@ -916,6 +916,41 @@ func TestBashFishEquivalence(t *testing.T) {
 				"for i in $arr; do echo \"i=$i\"; done\n" +
 				"for j in \"${arr[@]}\"; do echo \"j=$j\"; done\n",
 		},
+		{
+			// A quoted wildcard is literal in bash; fish's switch would
+			// match it as a wildcard, so the escape must survive.
+			name: "quoted wildcard case pattern",
+			src: "v=abc\n" +
+				"case $v in\n" +
+				"\t\"a*\") echo literal;;\n" +
+				"\t*) echo other;;\n" +
+				"esac\n" +
+				"case \"a*\" in\n" +
+				"\t\"a*\") echo quoted-literal;;\n" +
+				"\t*) echo quoted-other;;\n" +
+				"esac\n",
+		},
+		{
+			// A quoted bracket class matches its own text; an unquoted one
+			// is a character class.
+			name: "quoted bracket class case pattern",
+			src: "v=\"[a-z]\"\n" +
+				"case \"$v\" in\n" +
+				"\t[0-9]) echo digit;;\n" +
+				"\t\"[a-z]\") echo lit;;\n" +
+				"\t*) echo other;;\n" +
+				"esac\n",
+		},
+		{
+			// An unquoted expansion on the right of == is a pattern; a
+			// quoted one is a literal comparison.
+			name: "double bracket pattern from expansion",
+			src: "x=abc\n" +
+				"y=\"a*\"\n" +
+				"if [[ $x == $y ]]; then echo m; fi\n" +
+				"if [[ $x == \"$y\" ]]; then echo quoted-m; else echo quoted-no; fi\n" +
+				"if [[ $x != $y ]]; then echo diff; else echo same; fi\n",
+		},
 	}
 
 	for _, tc := range tests {
