@@ -29,7 +29,7 @@ https://github.com/user-attachments/assets/d23f56dc-42a6-425b-9de0-432306c8ec47
 - [GitHub](https://github.com/kidonng/bait/releases/latest)
 
     ```sh
-    mkdir -p ~/.local/bin && curl --location "https://github.com/kidonng/bait/releases/latest/download/bait_$(uname -s)_$(uname -m).tar.gz" | tar -xz -C ~/.local/bin bait
+    mkdir -p ~/.local/bin && curl --location "https://github.com/kidonng/bait/releases/latest/download/bait_$(uname -s)_$(uname -m | sed 's/aarch64/arm64/').tar.gz" | tar -xz -C ~/.local/bin bait
     ```
 
 - [Nix](https://nixos.org/)
@@ -56,6 +56,9 @@ curl script.sh | bait | source
 
 # Suppress warnings on stderr (or BAIT_QUIET=1)
 bait --quiet install.sh > install.fish
+
+# Disable colored warnings (or NO_COLOR=1)
+NO_COLOR=1 bait install.sh > install.fish
 
 # Prevent helper injection (or BAIT_NO_HELPERS=1)
 bait --no-helpers install.sh > install.fish

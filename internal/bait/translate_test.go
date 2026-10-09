@@ -511,6 +511,16 @@ func TestWarnings(t *testing.T) {
 			"hash without arguments prints bash's command hash table",
 		},
 		{
+			"nameref declaration warning",
+			"declare -n ref=x\n",
+			"namerefs have no fish equivalent",
+		},
+		{
+			"export of an emulated name warning",
+			"export HOSTNAME=myhost\n",
+			"maps to fish's hostname",
+		},
+		{
 			"associative array literal warning",
 			"m=([k]=v)\n",
 			"sparse or associative array literal cannot be translated",

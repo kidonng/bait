@@ -26,7 +26,7 @@
 
 4. **Hermetic Development & Differential Testing**
    - All tools and shell versions are hermetically pinned via `flake.nix`.
-   - **Differential Equivalence (`internal/bait`)**: Validate translations by executing original scripts under GNU Bash and translated outputs under Fish concurrently, asserting identical stdout, stderr, and exit status.
+   - **Differential Equivalence (`internal/bait`)**: Validate translations by executing original scripts under GNU Bash and translated outputs under Fish sequentially, asserting identical stdout, stderr, and exit status.
    - **Sandbox E2E Suite (`e2e`)**: Continuously verify against complex real-world scripts in isolated environments.
 
 ## Maintenance Rules

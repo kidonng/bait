@@ -8,11 +8,11 @@
 
 **Tech Stack:** Go (1.23+), mvdan.cc/sh/v3 (POSIX/Bash AST parser), Fish Shell (4.0+).
 
-**Spec:** `docs/superpowers/specs/2026-09-05-native-brace-command-blocks-design.md`
+**Spec:** `.superpowers/specs/2026-09-05-native-brace-command-blocks-design.md`
 
 ## Global Constraints
 
-- Minimum target Fish version is Fish 4.0.0+.
+- Minimum target Fish version is Fish 4.0.0+ (the verified minimum for `{ ... }` blocks is 4.1.0; see the 2026-10-09 remediation plan).
 - All block emissions (`{ ... }`) must preserve proper indenting, comments, redirections, and backgrounding without syntax errors under Fish 4.
 - Subshell isolation loss warning is preserved with updated text: `subshell isolation is lost: (...) translated to a { ... } block`.
 - Zero runtime helper overhead for basic blocks; clean passthrough of braces.

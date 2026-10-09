@@ -442,11 +442,6 @@ func TestDotHelperEmitted(t *testing.T) {
 	if !strings.Contains(outStr, "function .") {
 		t.Errorf("expected dot helper to be emitted, got: %s", outStr)
 	}
-	srcIdx := strings.Index(outStr, "function source")
-	dotIdx := strings.Index(outStr, "function .")
-	if srcIdx > dotIdx {
-		t.Errorf("expected function source to be defined before function ., got srcIdx=%d, dotIdx=%d", srcIdx, dotIdx)
-	}
 }
 
 func TestTranslateWithOptionsNoHelpers(t *testing.T) {

@@ -355,7 +355,7 @@ func (e *emitter) declClause(s *syntax.Stmt, d *syntax.DeclClause) {
 						val = e.renderWordSmart(a.Value)
 					}
 				}
-				args = append(args, fmt.Sprintf("%s=%s", e.varName(a.Name.Value), val))
+				args = append(args, fmt.Sprintf("%s=%s", e.bindName(a.Name.Pos(), a.Name.Value), val))
 			}
 		}
 		sc := e.prepareStmt(s)
@@ -373,6 +373,11 @@ func (e *emitter) declClause(s *syntax.Stmt, d *syntax.DeclClause) {
 	}
 	if e.hasAssocFlag(d.Args) {
 		e.warn(s.Position, "associative arrays have no fish equivalent; emitted verbatim")
+		e.printf("%s", e.render(s))
+		return
+	}
+	if e.hasNamerefFlag(d.Args) {
+		e.warn(s.Position, "namerefs have no fish equivalent; emitted verbatim")
 		e.printf("%s", e.render(s))
 		return
 	}
@@ -451,6 +456,18 @@ func (e *emitter) hasAssocFlag(args []*syntax.Assign) bool {
 		if a.Naked {
 			txt := e.argText(a)
 			if strings.HasPrefix(txt, "-") && strings.ContainsRune(txt[1:], 'A') {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (e *emitter) hasNamerefFlag(args []*syntax.Assign) bool {
+	for _, a := range args {
+		if a.Naked {
+			txt := e.argText(a)
+			if strings.HasPrefix(txt, "-") && strings.ContainsRune(txt[1:], 'n') {
 				return true
 			}
 		}

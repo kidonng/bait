@@ -78,9 +78,9 @@ func TestParameterExpansions(t *testing.T) {
 			"echo $(status current-command)\n",
 		},
 		{
-			"BASH_VERSION maps to echo 5.2.0",
+			"BASH_VERSION maps to the emulated version constant",
 			"echo $BASH_VERSION \"${BASH_VERSION}\"\n",
-			"echo $(echo 5.2.0) \"$(echo 5.2.0)\"\n",
+			"echo $(echo " + bashEmulatedVersion + ") \"$(echo " + bashEmulatedVersion + ")\"\n",
 		},
 		{
 			"DIRSTACK maps to dirstack",
