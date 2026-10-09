@@ -496,6 +496,16 @@ func TestWarnings(t *testing.T) {
 			"multiple here-documents on a single command cannot be translated",
 		},
 		{
+			"associative array literal warning",
+			"m=([k]=v)\n",
+			"sparse or associative array literal cannot be translated",
+		},
+		{
+			"associative declaration warning",
+			"declare -A m\n",
+			"associative arrays have no fish equivalent",
+		},
+		{
 			"high FD redirect on block",
 			"{ echo hi; } 3>log\n",
 			"redirection to file descriptor 3 on block is not supported in fish",

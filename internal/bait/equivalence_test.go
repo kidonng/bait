@@ -1017,6 +1017,26 @@ func TestBashFishEquivalence(t *testing.T) {
 			name: "here-string with literal dollar",
 			src:  "cat <<< a$\n",
 		},
+		{
+			// `local arr=(a b)` must keep its elements, not collapse.
+			name: "function-local array literal",
+			src: "f() {\n" +
+				"\tlocal arr=(a b)\n" +
+				"\techo \"local:${arr[0]}${arr[1]}\"\n" +
+				"}\n" +
+				"f\n",
+		},
+		{
+			name: "declare array literal",
+			src:  "declare -a d=(x y)\necho \"decl:${d[0]}${d[1]}\"\n",
+		},
+		{
+			// Sparse literals are emulated by filling holes, so index reads
+			// stay aligned; the fill is warned about.
+			name:          "sparse array literal fills holes",
+			allowWarnings: true,
+			src:           "arr=([0]=a [2]=c)\necho \"sparse:${arr[1]}|${arr[2]}\"\n",
+		},
 	}
 
 	for _, tc := range tests {

@@ -44,13 +44,13 @@ func (e *emitter) assignStmt(s *syntax.Stmt, c *syntax.CallExpr) {
 			return
 
 		case a.Append:
-			if a.Array == nil {
-				e.warn(s.Position, "non-array append cannot be translated; emitted verbatim")
+			if a.Array == nil || hasExplicitIndex(a.Array) {
+				e.warn(s.Position, "non-array or subscripted append cannot be translated; emitted verbatim")
 				e.lines(e.render(s))
 				return
 			}
-			lines = append(lines, fmt.Sprintf("set %s--append %s%s", scopePrefix(curScope), name,
-				e.arrayElemArgs(a.Array)))
+			args, _ := e.arrayElemArgs(a.Array)
+			lines = append(lines, fmt.Sprintf("set %s--append %s%s", scopePrefix(curScope), name, args))
 
 		case a.Index != nil:
 			tok, ok := e.arrayIndex(a.Index)
@@ -63,8 +63,13 @@ func (e *emitter) assignStmt(s *syntax.Stmt, c *syntax.CallExpr) {
 				e.assignValue(a)))
 
 		case a.Array != nil:
-			lines = append(lines, fmt.Sprintf("set %s%s%s", scopePrefix(curScope), name,
-				e.arrayElemArgs(a.Array)))
+			args, ok := e.arrayElemArgs(a.Array)
+			if !ok {
+				e.warn(s.Position, "sparse or associative array literal cannot be translated; emitted verbatim")
+				e.lines(e.render(s))
+				return
+			}
+			lines = append(lines, fmt.Sprintf("set %s%s%s", scopePrefix(curScope), name, args))
 
 		default:
 			lines = append(lines, setLineText(curScope, name, e.assignValue(a)))
@@ -133,23 +138,84 @@ func scopePrefix(scope string) string {
 	return scope + " "
 }
 
-// arrayElemArgs renders array literal elements as set arguments, quoting
-// empty elements so they survive as list items.
-func (e *emitter) arrayElemArgs(a *syntax.ArrayExpr) string {
-	var b strings.Builder
+// maxArrayFill bounds how many empty elements a sparse array literal may
+// grow when its holes are filled; a larger gap is not representable.
+const maxArrayFill = 1024
+
+// hasExplicitIndex reports whether any element of an array literal carries
+// a subscript.
+func hasExplicitIndex(a *syntax.ArrayExpr) bool {
 	for _, el := range a.Elems {
+		if el.Index != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// arrayElemArgs renders array literal elements as set arguments, quoting
+// empty elements so they survive as list items. A literal with explicit
+// subscripts is emulated by filling the holes with empty strings, which
+// keeps index reads aligned; an associative subscript or a hole too large
+// to fill cannot be represented, and ok reports false.
+func (e *emitter) arrayElemArgs(a *syntax.ArrayExpr) (string, bool) {
+	texts := make([]string, 0, len(a.Elems))
+	indices := make([]int, 0, len(a.Elems))
+	explicit := false
+	for i, el := range a.Elems {
+		text := `""`
+		if el.Value != nil {
+			text = e.render(el.Value)
+			if text == "" {
+				text = `""`
+			}
+		}
+		idx := i
+		if el.Index != nil {
+			tok, ok := e.indexToken(el.Index)
+			if !ok || !isDigits(tok) {
+				return "", false
+			}
+			n, err := strconv.Atoi(tok)
+			if err != nil {
+				return "", false
+			}
+			idx = n
+			explicit = true
+		}
+		texts = append(texts, text)
+		indices = append(indices, idx)
+	}
+	if !explicit {
+		var b strings.Builder
+		for _, s := range texts {
+			b.WriteByte(' ')
+			b.WriteString(s)
+		}
+		return b.String(), true
+	}
+	last := 0
+	for _, idx := range indices {
+		if idx > last {
+			last = idx
+		}
+	}
+	if last+1 > len(texts)+maxArrayFill {
+		return "", false
+	}
+	filled := make([]string, last+1)
+	for i := range filled {
+		filled[i] = `""`
+	}
+	for i, idx := range indices {
+		filled[idx] = texts[i]
+	}
+	var b strings.Builder
+	for _, s := range filled {
 		b.WriteByte(' ')
-		if el.Value == nil {
-			b.WriteString(`""`)
-			continue
-		}
-		s := e.render(el.Value)
-		if s == "" {
-			s = `""`
-		}
 		b.WriteString(s)
 	}
-	return b.String()
+	return b.String(), true
 }
 
 // indexToken extracts a raw bash subscript token without shifting: "@"/"*",
@@ -301,6 +367,11 @@ func (e *emitter) declClause(s *syntax.Stmt, d *syntax.DeclClause) {
 		e.printf("%s", e.render(s))
 		return
 	}
+	if e.hasAssocFlag(d.Args) {
+		e.warn(s.Position, "associative arrays have no fish equivalent; emitted verbatim")
+		e.printf("%s", e.render(s))
+		return
+	}
 	scope := ""
 	switch d.Variant.Value {
 	case "local":
@@ -340,7 +411,22 @@ func (e *emitter) declClause(s *syntax.Stmt, d *syntax.DeclClause) {
 				}
 				continue
 			}
-			lines = append(lines, setLineText(scope, name, e.assignValue(a)))
+			switch {
+			case a.Array != nil:
+				args, ok := e.arrayElemArgs(a.Array)
+				if !ok {
+					e.warn(s.Position, "sparse or associative array literal cannot be translated; emitted verbatim")
+					e.printf("%s", e.render(s))
+					return
+				}
+				lines = append(lines, fmt.Sprintf("set %s%s%s", scopePrefix(scope), name, args))
+			case a.Index != nil || a.Append:
+				e.warn(s.Position, "subscripted declaration cannot be translated; emitted verbatim")
+				e.printf("%s", e.render(s))
+				return
+			default:
+				lines = append(lines, setLineText(scope, name, e.assignValue(a)))
+			}
 		}
 	}
 	sc := e.prepareStmt(s)
@@ -351,6 +437,18 @@ func (e *emitter) hasGlobalFlag(args []*syntax.Assign) bool {
 	for _, a := range args {
 		if a.Naked && e.argText(a) == "-g" {
 			return true
+		}
+	}
+	return false
+}
+
+func (e *emitter) hasAssocFlag(args []*syntax.Assign) bool {
+	for _, a := range args {
+		if a.Naked {
+			txt := e.argText(a)
+			if strings.HasPrefix(txt, "-") && strings.ContainsRune(txt[1:], 'A') {
+				return true
+			}
 		}
 	}
 	return false
