@@ -271,12 +271,19 @@ func (e *emitter) caseClause(s *syntax.Stmt, cl *syntax.CaseClause) {
 		}
 	}
 	if wTxt == "" {
-		wTxt = e.render(cl.Word)
+		// Nested constructs (command substitutions, groups) must go through
+		// the shared renderer, not the raw printer.
+		wTxt = e.renderWordSmart(cl.Word)
 		if isDollarDash(cl.Word) {
 			e.warn(cl.Word.Pos(), "$- has no fish equivalent; fish uses status subcommands (e.g. status is-interactive)")
 			wTxt = e.statusDashText()
 		}
-		if containsUnquotedFishListVar(wTxt) && !strings.HasPrefix(wTxt, `"`) && !strings.HasPrefix(wTxt, "'") {
+		switch {
+		case strings.HasPrefix(wTxt, "$("):
+			// A substitution can yield nothing, and fish's switch rejects
+			// an empty subject.
+			wTxt = quoteRef(wTxt)
+		case containsUnquotedFishListVar(wTxt) && !strings.HasPrefix(wTxt, `"`) && !strings.HasPrefix(wTxt, "'"):
 			wTxt = `"` + wTxt + `"`
 		}
 	}
@@ -343,6 +350,10 @@ func (e *emitter) caseClauseAsIf(s *syntax.Stmt, cl *syntax.CaseClause, tail str
 
 	first := true
 	for i, item := range cl.Items {
+		for _, c := range item.Comments {
+			e.newline(c.Pos())
+			e.comment(c)
+		}
 		if !first && i == len(cl.Items)-1 && len(item.Patterns) == 1 && isCatchAll(item.Patterns[0]) {
 			e.newline(item.Pos())
 			e.printf("else")

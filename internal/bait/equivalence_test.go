@@ -958,6 +958,15 @@ func TestBashFishEquivalence(t *testing.T) {
 			name: "IFS compares equal to bash's default",
 			src:  "DEFAULT_IFS=\" \t\n\"\nif [ \"$IFS\" != \"$DEFAULT_IFS\" ]; then echo differ; else echo same; fi\n",
 		},
+		{
+			// The subject is a command substitution, which must render
+			// through the shared statement translator and stay one word.
+			name: "case subject from a nested construct",
+			src: "case $(if true; then echo a; fi) in\n" +
+				"\ta) echo yes;;\n" +
+				"\t*) echo no;;\n" +
+				"esac\n",
+		},
 	}
 
 	for _, tc := range tests {

@@ -160,7 +160,7 @@ func TestCompoundStatements(t *testing.T) {
 				"\t\techo other\n" +
 				"\t\t;;\n" +
 				"esac\n",
-			"switch $(uname)\n" +
+			"switch \"$(uname)\"\n" +
 				"case Linux\n" +
 				"    echo tux\n" +
 				"case Darwin '\\*BSD'\n" +
@@ -228,7 +228,7 @@ func TestCompoundStatements(t *testing.T) {
 				"\t\techo xtrace\n" +
 				"\t\t;;\n" +
 				"esac\n",
-			"switch $(status is-interactive && echo i || echo '')\n" +
+			"switch \"$(status is-interactive && echo i || echo '')\"\n" +
 				"case '*x*'\n" +
 				"    echo xtrace\n" +
 				"end\n",
@@ -715,6 +715,22 @@ func TestCommentPreservation(t *testing.T) {
 				"case a\n" +
 				"    echo match-a\n" +
 				"end # trailing case\n",
+		},
+		{
+			name: "bracket class case comments",
+			in: "v=5\n" +
+				"case $v in\n" +
+				"    # digit comment\n" +
+				"    [0-9]) echo digit;;\n" +
+				"    *) echo other;;\n" +
+				"esac\n",
+			want: "set v 5\n" +
+				"# digit comment\n" +
+				"if string match --regex --quiet -- '^[0-9]$' \"$v\"\n" +
+				"    echo digit\n" +
+				"else\n" +
+				"    echo other\n" +
+				"end\n",
 		},
 		{
 			name: "shift and unset comments",
