@@ -126,19 +126,29 @@ func stmtHasTargetFD(st *syntax.Stmt, target int) bool {
 	return found
 }
 
-func (e *emitter) isPairedHighFDRedir(s *syntax.Stmt, r *syntax.Redirect) bool {
+// pairedHighFDFd reports the descriptor of a `N>&1` redirection, bash's
+// way of reopening a descriptor that a command substitution will capture.
+func pairedHighFDFd(r *syntax.Redirect) (int, bool) {
 	if r.Op != syntax.DplOut || r.N == nil {
-		return false
+		return 0, false
 	}
 	fd, err := strconv.Atoi(r.N.Value)
 	if err != nil || fd <= 2 {
-		return false
+		return 0, false
 	}
 	if r.Word == nil || len(r.Word.Parts) != 1 {
-		return false
+		return 0, false
 	}
 	lit, ok := r.Word.Parts[0].(*syntax.Lit)
 	if !ok || lit.Value != "1" {
+		return 0, false
+	}
+	return fd, true
+}
+
+func (e *emitter) isPairedHighFDRedir(s *syntax.Stmt, r *syntax.Redirect) bool {
+	fd, ok := pairedHighFDFd(r)
+	if !ok {
 		return false
 	}
 	found := false
@@ -156,6 +166,48 @@ func (e *emitter) isPairedHighFDRedir(s *syntax.Stmt, r *syntax.Redirect) bool {
 	return found
 }
 
+// markPairedFDRedirs records the redirections inside a command
+// substitution that an enclosing `N>&1` reopens. They are the only ones
+// redirect can map to stderr, since fish cannot reach a higher descriptor
+// from a substitution.
+func (e *emitter) markPairedFDRedirs(s *syntax.Stmt) {
+	for _, r := range s.Redirs {
+		fd, ok := pairedHighFDFd(r)
+		if !ok || !e.isPairedHighFDRedir(s, r) {
+			continue
+		}
+		if e.pairedFDRedirs == nil {
+			e.pairedFDRedirs = make(map[*syntax.Redirect]bool)
+		}
+		syntax.Walk(s.Cmd, func(n syntax.Node) bool {
+			if cs, ok := n.(*syntax.CmdSubst); ok {
+				for _, st := range cs.Stmts {
+					markTargetFDRedirs(st, fd, e.pairedFDRedirs)
+				}
+			}
+			return true
+		})
+	}
+}
+
+// markTargetFDRedirs records every redirection in st's subtree that
+// points at fd.
+func markTargetFDRedirs(st *syntax.Stmt, fd int, mark map[*syntax.Redirect]bool) {
+	if st == nil {
+		return
+	}
+	syntax.Walk(st, func(n syntax.Node) bool {
+		if s, ok := n.(*syntax.Stmt); ok {
+			for _, r := range s.Redirs {
+				if target, ok := isHighFDTarget(r); ok && target == fd {
+					mark[r] = true
+				}
+			}
+		}
+		return true
+	})
+}
+
 // redirect renders a single redirection manually: the mvdan printer
 // cannot print a bare *Redirect node.
 func (e *emitter) redirect(r *syntax.Redirect) string {
@@ -165,9 +217,14 @@ func (e *emitter) redirect(r *syntax.Redirect) string {
 	}
 	s += r.Op.String()
 	word := e.renderWordSmart(r.Word)
-	if e.inSubshell && r.Op == syntax.DplOut {
-		if _, ok := isHighFDTarget(r); ok {
+	if fd, ok := isHighFDTarget(r); ok && r.Op == syntax.DplOut && e.inSubshell {
+		// Inside a command substitution fish has no descriptor above 2,
+		// so the only faithful mapping is the paired idiom's stderr, and
+		// only when the enclosing statement opened that descriptor.
+		if e.pairedFDRedirs[r] {
 			word = "2"
+		} else {
+			e.warn(r.Pos(), "redirection to file descriptor %d inside a command substitution has no fish equivalent; emitted verbatim", fd)
 		}
 	}
 	return s + " " + word

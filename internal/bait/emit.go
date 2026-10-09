@@ -35,6 +35,7 @@ type emitter struct {
 	arrayAllWords     map[*syntax.Word]bool
 	synthSets         map[*syntax.CallExpr]bool
 	readTargets       map[*syntax.CallExpr][]string
+	pairedFDRedirs    map[*syntax.Redirect]bool
 	needIFS           bool
 	lastLine          uint
 }
@@ -55,6 +56,7 @@ func (e *emitter) newSubEmitter() *emitter {
 	sub.arrayAllWords = e.arrayAllWords
 	sub.synthSets = e.synthSets
 	sub.readTargets = e.readTargets
+	sub.pairedFDRedirs = e.pairedFDRedirs
 	sub.commandPrefixVars = e.commandPrefixVars
 	sub.knownFuncs = e.knownFuncs
 	return sub
@@ -349,6 +351,7 @@ func (e *emitter) file(f *syntax.File) {
 }
 
 func (e *emitter) stmt(s *syntax.Stmt) {
+	e.markPairedFDRedirs(s)
 	if s.Background {
 		switch cmd := s.Cmd.(type) {
 		case *syntax.FuncDecl:

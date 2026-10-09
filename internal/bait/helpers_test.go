@@ -818,6 +818,23 @@ func TestHighFDRedirectionInSubshell(t *testing.T) {
 			t.Errorf("expected warning for unpaired high-FD redirection on block")
 		}
 	})
+	t.Run("unpaired_substitution_high_fd_warns_and_stays", func(t *testing.T) {
+		src := "x=$(cmd 1>&4)\n"
+		got, warnings, err := Translate([]byte(src))
+		if err != nil {
+			t.Fatalf("Translate failed: %v", err)
+		}
+		if len(warnings) == 0 {
+			t.Errorf("expected a warning for an unpaired descriptor inside a substitution")
+		}
+		gotStr := string(got)
+		if strings.Contains(gotStr, "1>& 2") || strings.Contains(gotStr, "1>&2") {
+			t.Errorf("unpaired 1>&4 must not be silently mapped to stderr, got:\n%s", gotStr)
+		}
+		if !strings.Contains(gotStr, "1>& 4") && !strings.Contains(gotStr, "1>&4") {
+			t.Errorf("expected the redirection to stay verbatim, got:\n%s", gotStr)
+		}
+	})
 }
 
 func TestLeadingRedirectionWithDynamicCommand(t *testing.T) {
