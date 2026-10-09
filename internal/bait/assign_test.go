@@ -190,24 +190,27 @@ func TestListValuedEnvVars(t *testing.T) {
 		contains string
 	}{
 		{
-			name: "for loop over PATH untouched",
+			// bash word-splits the colon-joined value into one word; fish's
+			// list is the split form, so the reference joins it back and
+			// __bait_words performs the IFS split bash would.
+			name: "for loop over PATH joins before splitting",
 			in:   "for p in $PATH; do echo $p; done\n",
-			want: "for p in $PATH\n    echo $p\nend\n",
+			want: "for p in (__bait_words \"$PATH\")\n    echo $p\nend\n",
 		},
 		{
-			name: "for loop over CDPATH untouched",
+			name: "for loop over CDPATH joins before splitting",
 			in:   "for p in $CDPATH; do echo $p; done\n",
-			want: "for p in $CDPATH\n    echo $p\nend\n",
+			want: "for p in (__bait_words \"$CDPATH\")\n    echo $p\nend\n",
 		},
 		{
-			name: "for loop over MANPATH untouched",
+			name: "for loop over MANPATH joins before splitting",
 			in:   "for p in $MANPATH; do echo $p; done\n",
-			want: "for p in $MANPATH\n    echo $p\nend\n",
+			want: "for p in (__bait_words \"$MANPATH\")\n    echo $p\nend\n",
 		},
 		{
-			name: "for loop over custom PATH suffix variable untouched",
+			name: "for loop over custom PATH suffix variable joins before splitting",
 			in:   "for p in $PKG_CONFIG_PATH; do echo $p; done\n",
-			want: "for p in $PKG_CONFIG_PATH\n    echo $p\nend\n",
+			want: "for p in (__bait_words \"$PKG_CONFIG_PATH\")\n    echo $p\nend\n",
 		},
 		{
 			name:     "for loop over non-PATH variable wrapped in bait_words",
@@ -230,14 +233,16 @@ func TestListValuedEnvVars(t *testing.T) {
 			want: "switch \"$PKG_CONFIG_PATH\"\ncase '*'\n    echo match\nend\n",
 		},
 		{
-			name: "switch on non-PATH variable unquoted",
+			// An unset subject would expand to no arguments, which fish's
+			// switch rejects, so scalar subjects are quoted too.
+			name: "switch on non-PATH variable quoted",
 			in:   "case $DIR_LIST in *) echo match;; esac\n",
-			want: "switch $DIR_LIST\ncase '*'\n    echo match\nend\n",
+			want: "switch \"$DIR_LIST\"\ncase '*'\n    echo match\nend\n",
 		},
 		{
-			name: "for loop over LANGUAGE untouched",
+			name: "for loop over LANGUAGE joins before splitting",
 			in:   "for l in $LANGUAGE; do echo $l; done\n",
-			want: "for l in $LANGUAGE\n    echo $l\nend\n",
+			want: "for l in (__bait_words \"$LANGUAGE\")\n    echo $l\nend\n",
 		},
 		{
 			name: "switch on LANGUAGE quoted",
@@ -247,7 +252,8 @@ func TestListValuedEnvVars(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, warnings, err := Translate([]byte(tc.in))
+			// Helper preambles are asserted elsewhere; pin the statements.
+			got, warnings, err := TranslateWithOptions([]byte(tc.in), Options{NoHelpers: true})
 			if err != nil {
 				t.Fatalf("Translate(%q) error: %v", tc.in, err)
 			}
@@ -262,6 +268,32 @@ func TestListValuedEnvVars(t *testing.T) {
 					tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestRedirectTargetSplitting(t *testing.T) {
+	got, warnings, err := Translate([]byte("f=\"a b\"\necho hi > $f\n"))
+	if err != nil {
+		t.Fatalf("Translate error: %v", err)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0].Text, "redirect target") {
+		t.Errorf("expected an ambiguous-redirect warning, got %v", warnings)
+	}
+	if !strings.Contains(string(got), "> (__bait_words $f)") {
+		t.Errorf("expected the target to be split like bash's ambiguous redirect, got:\n%s", got)
+	}
+
+	// A quoted target never splits in bash, so it keeps its single file
+	// name and needs no warning.
+	got, warnings, err = Translate([]byte("f=\"a b\"\necho hi > \"$f\"\n"))
+	if err != nil {
+		t.Fatalf("Translate error: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("unexpected warnings: %v", warnings)
+	}
+	if !strings.Contains(string(got), "> $f") {
+		t.Errorf("expected a single-target redirect, got:\n%s", got)
 	}
 }
 

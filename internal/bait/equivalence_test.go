@@ -887,6 +887,35 @@ func TestBashFishEquivalence(t *testing.T) {
 			name: "UID arithmetic comparison",
 			src:  "((UID == 0))\necho \"uid0=$?\"\n",
 		},
+		{
+			// fish splits *PATH names on ':' into a list; bash keeps the
+			// colon-joined string and splits only on IFS characters.
+			name: "for loop over colon-split environment variable",
+			env:  []string{"MY_PATH=a:b:c"},
+			src:  "for i in $MY_PATH; do echo \"i=$i\"; done\n",
+		},
+		{
+			name: "assignment of a colon-split environment variable",
+			env:  []string{"MY_PATH=a:b:c"},
+			src:  "x=$MY_PATH\ny=\"$MY_PATH\"\necho \"x=$x y=$y\"\n",
+		},
+		{
+			name: "argument passes a colon-split environment variable whole",
+			env:  []string{"MY_PATH=a:b:c"},
+			src:  "printf '[%s]\\n' $MY_PATH\nprintf '[%s]\\n' \"$MY_PATH\"\n",
+		},
+		{
+			// A bare bash array expands to element 0; "${arr[@]}" expands
+			// to every element, one word each.
+			name: "case and for over a bash array",
+			src: "arr=(a b)\n" +
+				"case $arr in\n" +
+				"\ta) echo one;;\n" +
+				"\t*) echo other;;\n" +
+				"esac\n" +
+				"for i in $arr; do echo \"i=$i\"; done\n" +
+				"for j in \"${arr[@]}\"; do echo \"j=$j\"; done\n",
+		},
 	}
 
 	for _, tc := range tests {

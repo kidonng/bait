@@ -62,19 +62,35 @@ func (e *emitter) normalize(f *syntax.File) {
 			}
 			normalizeReadCmd(x)
 			for i := 1; i < len(x.Args); i++ {
-				if pe, ok := singleBareParam(x.Args[i]); ok && pe.Param != nil {
-					name := pe.Param.Value
-					if e.multiWordScalars[name] && !e.knownLists[name] &&
-						name != "@" && name != "*" && name != "argv" &&
-						!isFishListEnvVar(name) {
-						e.needHelper(helperWords)
-						x.Args[i] = &syntax.Word{
-							Parts: []syntax.WordPart{
-								substPart("__bait_words", "$"+e.varName(name)),
-							},
-						}
-					}
+				if e.arrayAllWords[x.Args[i]] {
+					// "${arr[@]}" already passes every element as its own
+					// argument; the normalized reference is the list.
+					continue
 				}
+				pe, quoted, ok := bareParamOf(x.Args[i])
+				if !ok {
+					continue
+				}
+				name := pe.Param.Value
+				if name == "@" || name == "*" || name == "argv" {
+					continue
+				}
+				// A quoted word never word-splits in bash; an unquoted
+				// multi-word scalar does, and __bait_words is IFS-aware.
+				multi := e.multiWordScalars[name] && !quoted
+				if !multi && e.listPolicy(name) == listScalar {
+					// A scalar reference already passes exactly one value.
+					continue
+				}
+				ref, ok := e.paramValueRef(pe)
+				if !ok {
+					continue
+				}
+				if multi {
+					e.needHelper(helperWords)
+					ref = "(__bait_words " + ref + ")"
+				}
+				x.Args[i] = litWord(ref)
 			}
 		case *syntax.CmdSubst:
 			// bash defines `$(<file)` as `$(cat file)`; materialize the
@@ -167,13 +183,51 @@ func (e *emitter) rewriteParams(f *syntax.File) {
 					whole = []syntax.WordPart{&syntax.DblQuoted{Parts: whole}}
 				}
 				node.Parts = whole
+				e.arrayAllWords[node] = true
 				return true
 			}
 			node.Parts = e.spliceParts(node.Parts)
 			return true
+		case *syntax.Redirect:
+			if node.Op != syntax.DplOut {
+				e.rewriteRedirectTarget(node)
+			}
+			return true
 		}
 		return true
 	})
+}
+
+// rewriteRedirectTarget applies the shared list policy to a redirection
+// target at normalize time, so every emission path (the printer for simple
+// commands, tails for structural ones) sees the same word: a colon-split
+// name stays joined, a bash array contributes element 0, and a
+// dataflow-known multi-word scalar is split so fish fails like bash's
+// ambiguous redirect instead of creating a differently named file.
+func (e *emitter) rewriteRedirectTarget(r *syntax.Redirect) {
+	if e.arrayAllWords[r.Word] {
+		// "${arr[@]}" is several words in bash; fish rejects a
+		// multi-element target, which matches bash's failure.
+		return
+	}
+	pe, quoted, ok := bareParamOf(r.Word)
+	if !ok {
+		return
+	}
+	ref, ok := e.paramValueRef(pe)
+	if !ok {
+		return
+	}
+	switch {
+	case r.Op == syntax.WordHdoc:
+		// A herestring is a single string: quoting keeps a list joined.
+		ref = quoteRef(ref)
+	case !quoted && e.multiWordScalars[pe.Param.Value]:
+		e.warn(r.Pos(), "bash rejects a redirect target that splits into several words (%s); emitted with word splitting", pe.Param.Value)
+		ref = "(__bait_words " + ref + ")"
+		e.needHelper(helperWords)
+	}
+	r.Word = litWord(ref)
 }
 
 func isNameChar(r byte) bool {

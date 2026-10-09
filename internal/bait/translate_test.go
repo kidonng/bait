@@ -711,7 +711,7 @@ func TestCommentPreservation(t *testing.T) {
 				"        ;;\n" +
 				"esac # trailing case\n",
 			want: "# before case\n" +
-				"switch $x\n" +
+				"switch \"$x\"\n" +
 				"case a\n" +
 				"    echo match-a\n" +
 				"end # trailing case\n",

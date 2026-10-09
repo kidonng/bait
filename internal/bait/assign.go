@@ -228,11 +228,15 @@ func (e *emitter) assignValue(a *syntax.Assign) string {
 	if a.Value == nil {
 		return `""`
 	}
-	if len(a.Value.Parts) == 1 {
-		if q, ok := a.Value.Parts[0].(*syntax.DblQuoted); ok && len(q.Parts) == 1 {
-			if pe, ok := q.Parts[0].(*syntax.ParamExp); ok && bareParam(pe) && pe.Param != nil {
-				return "$" + pe.Param.Value
-			}
+	// bash assigns the expansion without word splitting, so a colon-split
+	// environment variable stays joined and a bash array contributes
+	// element 0. "${arr[@]}" joins every element, like a quoted list.
+	if ref, ok := e.arrayAllRef(a.Value, true); ok {
+		return ref
+	}
+	if pe, _, ok := bareParamOf(a.Value); ok {
+		if ref, ok := e.paramValueRef(pe); ok {
+			return ref
 		}
 	}
 	if r := e.renderWordSmart(a.Value); r != "" {

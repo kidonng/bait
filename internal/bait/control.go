@@ -140,12 +140,19 @@ func (e *emitter) forClause(s *syntax.Stmt, f *syntax.ForClause) {
 				items[i] = "$argv"
 				continue
 			}
-			if isFishListEnvVar(name) || e.knownLists[name] {
-				items[i] = "$" + e.varName(name)
+			if ref, ok := e.arrayAllRef(w, false); ok {
+				// "${arr[@]}" iterates every element without splitting.
+				items[i] = ref
 				continue
 			}
-			name = e.varName(name)
-			items[i] = "(__bait_words $" + name + ")"
+			// bash word-splits a bare expansion in a for list; __bait_words
+			// is IFS-aware, and the value reference keeps colon-split names
+			// joined and bash arrays at element 0.
+			ref, ok := e.paramValueRef(pe)
+			if !ok {
+				ref = "$" + e.varName(name)
+			}
+			items[i] = "(__bait_words " + ref + ")"
 			e.needHelper(helperWords)
 			continue
 		}
@@ -251,13 +258,26 @@ func (e *emitter) caseClause(s *syntax.Stmt, cl *syntax.CaseClause) {
 		e.caseClauseAsIf(s, cl, tail, sc.trailing)
 		return
 	}
-	wTxt := e.render(cl.Word)
-	if isDollarDash(cl.Word) {
-		e.warn(cl.Word.Pos(), "$- has no fish equivalent; fish uses status subcommands (e.g. status is-interactive)")
-		wTxt = "$(status is-interactive && echo i || echo '')"
+	var wTxt string
+	if ref, ok := e.arrayAllRef(cl.Word, true); ok {
+		wTxt = ref
 	}
-	if containsUnquotedFishListVar(wTxt) && !strings.HasPrefix(wTxt, `"`) && !strings.HasPrefix(wTxt, "'") {
-		wTxt = `"` + wTxt + `"`
+	if wTxt == "" {
+		if pe, _, ok := bareParamOf(cl.Word); ok && pe.Param.Value != "-" {
+			if ref, ok := e.paramValueRef(pe); ok {
+				wTxt = quoteRef(ref)
+			}
+		}
+	}
+	if wTxt == "" {
+		wTxt = e.render(cl.Word)
+		if isDollarDash(cl.Word) {
+			e.warn(cl.Word.Pos(), "$- has no fish equivalent; fish uses status subcommands (e.g. status is-interactive)")
+			wTxt = "$(status is-interactive && echo i || echo '')"
+		}
+		if containsUnquotedFishListVar(wTxt) && !strings.HasPrefix(wTxt, `"`) && !strings.HasPrefix(wTxt, "'") {
+			wTxt = `"` + wTxt + `"`
+		}
 	}
 	e.printf("switch %s", wTxt)
 	e.advanceLine(cl.Pos().Line())
@@ -301,13 +321,23 @@ func (e *emitter) caseClauseAsIf(s *syntax.Stmt, cl *syntax.CaseClause, tail str
 		}
 		return true
 	})
-	target := e.renderWordSmart(cl.Word)
-	if !strings.HasPrefix(target, `"`) && !strings.HasPrefix(target, `'`) {
-		target = `"` + target + `"`
+	target := ""
+	if ref, ok := e.arrayAllRef(cl.Word, true); ok {
+		target = ref
+	} else if pe, _, ok := bareParamOf(cl.Word); ok && pe.Param.Value != "-" {
+		if ref, ok := e.paramValueRef(pe); ok {
+			target = quoteRef(ref)
+		}
 	}
-	if hasCmdSubst {
-		e.printf("set --local __bait_case_target %s", target)
-		target = "$__bait_case_target"
+	if target == "" {
+		target = e.renderWordSmart(cl.Word)
+		if !strings.HasPrefix(target, `"`) && !strings.HasPrefix(target, `'`) {
+			target = `"` + target + `"`
+		}
+		if hasCmdSubst {
+			e.printf("set --local __bait_case_target %s", target)
+			target = "$__bait_case_target"
+		}
 	}
 
 	first := true

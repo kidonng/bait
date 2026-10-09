@@ -32,6 +32,7 @@ type emitter struct {
 	commandPrefixVars map[string]bool
 	knownFuncs        map[string]bool
 	synthStmts        map[*syntax.Stmt]bool
+	arrayAllWords     map[*syntax.Word]bool
 	lastLine          uint
 }
 
@@ -48,6 +49,7 @@ func (e *emitter) newSubEmitter() *emitter {
 	}
 	sub.knownLists = e.knownLists
 	sub.synthStmts = e.synthStmts
+	sub.arrayAllWords = e.arrayAllWords
 	sub.multiWordScalars = e.multiWordScalars
 	sub.commandPrefixVars = e.commandPrefixVars
 	sub.knownFuncs = e.knownFuncs
@@ -74,6 +76,7 @@ func newEmitter() *emitter {
 		commandPrefixVars: make(map[string]bool),
 		knownFuncs:        make(map[string]bool),
 		synthStmts:        make(map[*syntax.Stmt]bool),
+		arrayAllWords:     make(map[*syntax.Word]bool),
 	}
 }
 

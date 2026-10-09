@@ -169,6 +169,105 @@ func (e *emitter) paramTargetRef(t paramTarget) *syntax.Word {
 	return dq(namedParam(t.name))
 }
 
+// listKind classifies how a bash variable's value maps onto fish's list
+// semantics.
+type listKind int
+
+const (
+	// listScalar: fish stores the value as a single element.
+	listScalar listKind = iota
+	// listFishListEnv: fish splits the name on ':' when it is imported and
+	// joins it back on ':' when the reference is quoted.
+	listFishListEnv
+	// listBashArray: a bash array tracked by the dataflow pass; fish stores
+	// it as a 1-based list, so bash's element 0 is fish's [1].
+	listBashArray
+)
+
+// listPolicy reports how a bash variable expands. It is the single policy
+// consulted by for items, case subjects, assignment values, redirect
+// targets, and argument injection.
+func (e *emitter) listPolicy(name string) listKind {
+	if e.knownLists[name] {
+		return listBashArray
+	}
+	if isFishListEnvVar(name) {
+		return listFishListEnv
+	}
+	return listScalar
+}
+
+// bareParamOf returns the parameter a word expands to, unwrapping one level
+// of double quotes: `$v` and `"$v"` expand to the same value, and quoted
+// reports which form it was (quoting suppresses bash word splitting).
+func bareParamOf(w *syntax.Word) (pe *syntax.ParamExp, quoted, ok bool) {
+	if w == nil || len(w.Parts) != 1 {
+		return nil, false, false
+	}
+	part := w.Parts[0]
+	if q, isQ := part.(*syntax.DblQuoted); isQ {
+		if len(q.Parts) != 1 {
+			return nil, false, false
+		}
+		part, quoted = q.Parts[0], true
+	}
+	pe, ok = part.(*syntax.ParamExp)
+	if !ok || !bareParam(pe) || pe.Param == nil {
+		return nil, false, false
+	}
+	return pe, quoted, true
+}
+
+// paramValueRef renders a bare parameter as a fish reference that yields
+// exactly one value: bash arrays contribute element 0 and colon-split
+// environment variables are quoted so fish joins them on ':' again. Callers
+// that need bash's word splitting wrap the result in __bait_words.
+//
+// The name has already been through rewriteParams, so it is a fish name:
+// context variables were replaced with their substitutions there.
+func (e *emitter) paramValueRef(pe *syntax.ParamExp) (string, bool) {
+	if pe == nil || pe.Param == nil {
+		return "", false
+	}
+	name := pe.Param.Value
+	switch e.listPolicy(name) {
+	case listFishListEnv:
+		return `"$` + name + `"`, true
+	case listBashArray:
+		return `"$` + name + `[1]"`, true
+	}
+	return "$" + name, true
+}
+
+// arrayAllRef returns the whole-list reference for a word that
+// rewriteParams normalized from a "${arr[@]}"-style expansion, whose value
+// is every element rather than a scalar. Callers that need one value quote
+// the reference (fish joins a quoted list on spaces, like bash's IFS join).
+func (e *emitter) arrayAllRef(w *syntax.Word, quoted bool) (string, bool) {
+	if !e.arrayAllWords[w] {
+		return "", false
+	}
+	pe, _, ok := bareParamOf(w)
+	if !ok {
+		return "", false
+	}
+	ref := "$" + pe.Param.Value
+	if quoted {
+		ref = `"` + ref + `"`
+	}
+	return ref, true
+}
+
+// quoteRef makes a single-value reference a single fish argument even when
+// it expands to nothing: an unquoted reference vanishes, and fish's switch
+// rejects a subject with no arguments.
+func quoteRef(ref string) string {
+	if strings.HasPrefix(ref, `"`) {
+		return ref
+	}
+	return `"` + ref + `"`
+}
+
 func (e *emitter) analyzeVariables(f *syntax.File) {
 	syntax.Walk(f, func(n syntax.Node) bool {
 		if c, ok := n.(*syntax.CallExpr); ok {
