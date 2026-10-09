@@ -396,8 +396,18 @@ func (e *emitter) escapeLiteralDollars(f *syntax.File) {
 	walk = func(n syntax.Node) bool {
 		switch x := n.(type) {
 		case *syntax.Redirect:
-			if x.Op == syntax.Hdoc || x.Op == syntax.DashHdoc || x.Op == syntax.WordHdoc {
+			switch x.Op {
+			case syntax.Hdoc, syntax.DashHdoc:
+				// A quoted here-document body is emitted as literal text;
+				// an unquoted one is emitted double-quoted, where a
+				// literal dollar must be escaped to survive fish.
+				if x.Hdoc != nil && !isQuotedHdocWord(x.Word) {
+					syntax.Walk(x.Hdoc, walk)
+				}
 				return false
+			case syntax.WordHdoc:
+				// `<<<` words are ordinary words; walk them.
+				return true
 			}
 		case *syntax.TestClause, *syntax.CaseClause:
 			return false

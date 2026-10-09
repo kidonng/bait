@@ -967,6 +967,56 @@ func TestBashFishEquivalence(t *testing.T) {
 				"\t*) echo no;;\n" +
 				"esac\n",
 		},
+		{
+			// A quoted body is emitted as literal text: backslashes and a
+			// trailing backslash must survive fish's single-quote rules.
+			name: "quoted heredoc keeps backslashes",
+			src: "cat <<'EOF'\n" +
+				"a\\b\n" +
+				"trail\\\n" +
+				"EOF\n",
+		},
+		{
+			// Literal dollars (bare, at end of line, and escaped) must not
+			// become fish expansions or syntax errors.
+			name: "unquoted heredoc literal dollars",
+			src: "cat <<EOF\n" +
+				"bare: $ and a$\n" +
+				"escaped: \\$5\n" +
+				"EOF\n",
+		},
+		{
+			// bash keeps every newline of the body, including trailing
+			// blank lines, which printf must reproduce byte for byte.
+			name: "heredoc body with trailing blank lines",
+			src: "cat <<EOF\n" +
+				"line1\n" +
+				"\n" +
+				"\n" +
+				"EOF\n",
+		},
+		{
+			// `<<-` strips the leading tab of every body line, terminator
+			// line included.
+			name: "dash heredoc strips leading tabs",
+			src: "cat <<-EOF\n" +
+				"\thi\n" +
+				"\t\tindented\n" +
+				"\tEOF\n",
+		},
+		{
+			// A backslash before a quote is literal in bash's body but an
+			// escape in fish's double quotes.
+			name: "unquoted heredoc with quotes and backslashes",
+			src: "cat <<EOF\n" +
+				"a\\\"b\n" +
+				"win: C:\\\\dir\n" +
+				"EOF\n",
+		},
+		{
+			name: "here-string with literal dollar",
+			src:  "cat <<< a$\n",
+		},
 	}
 
 	for _, tc := range tests {

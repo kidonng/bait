@@ -325,8 +325,12 @@ func extractHdoc(redirs []*syntax.Redirect) (*syntax.Redirect, []*syntax.Redirec
 func (e *emitter) emitHdoc(s *syntax.Stmt, hdoc *syntax.Redirect, rest []*syntax.Redirect) {
 	for _, r := range rest {
 		if r.Op == syntax.Hdoc || r.Op == syntax.DashHdoc || r.Op == syntax.WordHdoc {
-			e.warn(s.Position, "multiple here-documents on a single command are not supported; only one is converted to pipeline")
-			break
+			// bash expands every here-document and connects the last one
+			// to stdin; a single pipeline cannot reproduce that, so the
+			// command is kept verbatim instead of silently dropping one.
+			e.warn(s.Position, "multiple here-documents on a single command cannot be translated; emitted verbatim")
+			e.lines(e.render(s))
+			return
 		}
 	}
 	sc := e.prepareStmt(s)
@@ -346,19 +350,12 @@ func (e *emitter) emitHdoc(s *syntax.Stmt, hdoc *syntax.Redirect, rest []*syntax
 	if hdoc.Op == syntax.WordHdoc {
 		wordText := e.render(hdoc.Word)
 		prefix = fmt.Sprintf("printf '%%s\\n' %s", wordText)
+	} else if isQuotedHdocWord(hdoc.Word) {
+		body := escapeSingleQuotedText(e.hdocBodyText(hdoc))
+		prefix = fmt.Sprintf("printf '%%s\\n' '%s'", body)
 	} else {
-		body := ""
-		if hdoc.Hdoc != nil {
-			body = e.render(hdoc.Hdoc)
-		}
-		if isQuotedHdocWord(hdoc.Word) {
-			escaped := strings.ReplaceAll(body, "'", `\'`)
-			prefix = fmt.Sprintf("printf '%%s\\n' '%s'", escaped)
-		} else {
-			body = unescapeBackticks(body)
-			escaped := strings.ReplaceAll(body, `"`, `\"`)
-			prefix = fmt.Sprintf("printf '%%s\\n' \"%s\"", escaped)
-		}
+		body := escapeHdocDblQuotedText(e.hdocBodyText(hdoc))
+		prefix = fmt.Sprintf("printf '%%s\\n' \"%s\"", body)
 	}
 
 	trailing := sc.trailing
@@ -392,4 +389,87 @@ func isQuotedHdocWord(w *syntax.Word) bool {
 		}
 	}
 	return false
+}
+
+// hdocBodyText assembles a here-document body from its AST parts: literal
+// text stays literal, expansions stay live. A `<<-` body loses the leading
+// tab of every line, and the newline before the terminator is dropped so
+// the caller's `printf '%s\n'` restores exactly bash's byte stream.
+func (e *emitter) hdocBodyText(hdoc *syntax.Redirect) string {
+	if hdoc.Hdoc == nil {
+		return ""
+	}
+	stripTabs := hdoc.Op == syntax.DashHdoc
+	atLineStart := true
+	var b strings.Builder
+	for _, p := range hdoc.Hdoc.Parts {
+		lit, ok := p.(*syntax.Lit)
+		if !ok {
+			atLineStart = false
+			b.WriteString(e.render(p))
+			continue
+		}
+		text := lit.Value
+		if stripTabs {
+			text = stripHdocTabs(text, &atLineStart)
+		} else {
+			atLineStart = strings.HasSuffix(text, "\n")
+		}
+		b.WriteString(text)
+	}
+	return strings.TrimSuffix(b.String(), "\n")
+}
+
+// stripHdocTabs removes the leading tabs bash strips from `<<-` body lines.
+// atLineStart tracks whether s begins at a line start across parts.
+func stripHdocTabs(s string, atLineStart *bool) string {
+	if strings.Contains(s, "\t") {
+		parts := strings.Split(s, "\n")
+		for i, p := range parts {
+			if i > 0 || *atLineStart {
+				parts[i] = strings.TrimLeft(p, "\t")
+			}
+		}
+		s = strings.Join(parts, "\n")
+	}
+	*atLineStart = strings.HasSuffix(s, "\n")
+	return s
+}
+
+// escapeSingleQuotedText escapes literal text for a fish single-quoted
+// string: backslash first, then the quote.
+func escapeSingleQuotedText(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	return strings.ReplaceAll(s, `'`, `\'`)
+}
+
+// escapeHdocDblQuotedText escapes literal text for a fish double-quoted
+// string so it reproduces bash's unquoted here-document escapes. Bash
+// consumes a backslash before a backtick (fish keeps it) and keeps a
+// backslash before a double quote (fish consumes it); a double quote is
+// literal in the body but special in fish. Everything else — backslash
+// before `$`, backslash, or a newline — already agrees.
+func escapeHdocDblQuotedText(s string) string {
+	if !strings.ContainsAny(s, "\\\"`") {
+		return s
+	}
+	var b strings.Builder
+	for i := range len(s) {
+		switch s[i] {
+		case '\\':
+			if i+1 < len(s) && s[i+1] == '`' {
+				continue
+			}
+			if i+1 < len(s) && s[i+1] == '"' {
+				b.WriteString(`\\`)
+				continue
+			}
+			b.WriteByte('\\')
+		case '"':
+			b.WriteString(`\"`)
+		default:
+			b.WriteByte(s[i])
+		}
+	}
+	return b.String()
 }

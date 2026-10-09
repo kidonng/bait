@@ -493,7 +493,7 @@ func TestWarnings(t *testing.T) {
 		{
 			"multiple heredocs warning",
 			"cmd <<EOF1 <<EOF2\na\nEOF1\nb\nEOF2\n",
-			"multiple here-documents on a single command are not supported",
+			"multiple here-documents on a single command cannot be translated",
 		},
 		{
 			"high FD redirect on block",
@@ -751,6 +751,19 @@ func TestCommentPreservation(t *testing.T) {
 				"EOF\n",
 			want: "# before hdoc\n" +
 				"printf '%s\\n' \"hello\" | cat # trailing hdoc\n",
+		},
+		{
+			name: "multiple heredocs stay verbatim",
+			in: "cmd <<EOF1 <<EOF2\n" +
+				"a\n" +
+				"EOF1\n" +
+				"b\n" +
+				"EOF2\n",
+			want: "cmd << EOF1 << EOF2\n" +
+				"a\n" +
+				"EOF1\n" +
+				"b\n" +
+				"EOF2\n",
 		},
 	}
 
