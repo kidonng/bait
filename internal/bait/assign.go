@@ -17,7 +17,15 @@ func (e *emitter) assignStmt(s *syntax.Stmt, c *syntax.CallExpr) {
 	if e.inSubshell {
 		// bash runs a command substitution or subshell in a subshell of
 		// its own, so its assignments never reach the enclosing scope.
-		scope = "--local"
+		// fish's --local is scoped to the innermost block, so it keeps
+		// that meaning only in the substitution's own top-level block;
+		// an assignment nested inside a block there would be gone by
+		// the time a later statement reads it.
+		if e.depth == 0 {
+			scope = "--local"
+		} else {
+			e.warn(s.Position, "assignment inside a nested block of a command substitution escapes the substitution in fish")
+		}
 	} else if e.inFunction {
 		scope = "--global"
 	}
@@ -53,7 +61,7 @@ func (e *emitter) assignStmt(s *syntax.Stmt, c *syntax.CallExpr) {
 				e.lines(e.render(s))
 				return
 			}
-			args, _ := e.arrayElemArgs(a.Array)
+			args, _ := e.arrayElemArgs(a.Array, s.Position)
 			lines = append(lines, fmt.Sprintf("set %s--append %s%s", scopePrefix(curScope), name, args))
 
 		case a.Index != nil:
@@ -67,7 +75,7 @@ func (e *emitter) assignStmt(s *syntax.Stmt, c *syntax.CallExpr) {
 				e.assignValue(a)))
 
 		case a.Array != nil:
-			args, ok := e.arrayElemArgs(a.Array)
+			args, ok := e.arrayElemArgs(a.Array, s.Position)
 			if !ok {
 				e.warn(s.Position, "sparse or associative array literal cannot be translated; emitted verbatim")
 				e.lines(e.render(s))
@@ -162,7 +170,7 @@ func hasExplicitIndex(a *syntax.ArrayExpr) bool {
 // subscripts is emulated by filling the holes with empty strings, which
 // keeps index reads aligned; an associative subscript or a hole too large
 // to fill cannot be represented, and ok reports false.
-func (e *emitter) arrayElemArgs(a *syntax.ArrayExpr) (string, bool) {
+func (e *emitter) arrayElemArgs(a *syntax.ArrayExpr, pos syntax.Pos) (string, bool) {
 	texts := make([]string, 0, len(a.Elems))
 	indices := make([]int, 0, len(a.Elems))
 	explicit := false
@@ -206,6 +214,9 @@ func (e *emitter) arrayElemArgs(a *syntax.ArrayExpr) (string, bool) {
 	}
 	if last+1 > len(texts)+maxArrayFill {
 		return "", false
+	}
+	if last+1 > len(texts) {
+		e.warn(pos, "array literal has a gap; the holes are filled with empty elements, so the element count differs from bash")
 	}
 	filled := make([]string, last+1)
 	for i := range filled {
@@ -422,7 +433,7 @@ func (e *emitter) declClause(s *syntax.Stmt, d *syntax.DeclClause) {
 			}
 			switch {
 			case a.Array != nil:
-				args, ok := e.arrayElemArgs(a.Array)
+				args, ok := e.arrayElemArgs(a.Array, s.Position)
 				if !ok {
 					e.warn(s.Position, "sparse or associative array literal cannot be translated; emitted verbatim")
 					e.printf("%s", e.render(s))
@@ -548,8 +559,14 @@ func (e *emitter) isSynthesizedSet(c *syntax.CallExpr) bool {
 func (e *emitter) shiftCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 	sc := e.prepareStmt(s)
 	tail := e.tails(s)
+	// shift renders as several fish commands; a `!` must negate the whole
+	// sequence, not just its first command.
+	prefix := ""
+	if s.Negated {
+		prefix = "! "
+	}
 	if len(c.Args) <= 1 {
-		e.printLineWithTrailing(shiftEraseLine("1")+tail, sc.trailing)
+		e.printLineWithTrailing(prefix+shiftEraseLine("1")+tail, sc.trailing)
 		return
 	}
 	arg := e.render(c.Args[1])
@@ -558,11 +575,11 @@ func (e *emitter) shiftCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 		case n < 0:
 			// bash fails with a message; fish has none for it.
 			e.warn(c.Args[1].Pos(), "shift with a negative count fails in bash; the status is kept, the message is not")
-			e.printLineWithTrailing("false"+tail, sc.trailing)
+			e.printLineWithTrailing(prefix+"false"+tail, sc.trailing)
 		case n == 0:
-			e.printLineWithTrailing("true"+tail, sc.trailing)
+			e.printLineWithTrailing(prefix+"true"+tail, sc.trailing)
 		default:
-			e.printLineWithTrailing(shiftEraseLine(arg)+tail, sc.trailing)
+			e.printLineWithTrailing(prefix+shiftEraseLine(arg)+tail, sc.trailing)
 		}
 		return
 	}
@@ -571,18 +588,20 @@ func (e *emitter) shiftCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 	// fish's test reports 1 for a failed comparison and 2 for a bad
 	// operand, which is exactly what bash's shift does for an
 	// out-of-range count and a non-numeric one.
-	e.printLineWithTrailing(fmt.Sprintf(
-		"test \"%s\" -gt 0 2>/dev/null; and test (count $argv) -ge \"%s\" 2>/dev/null; and set --erase argv[1..%s]%s",
+	e.printLineWithTrailing(prefix+fmt.Sprintf(
+		"{ test \"%s\" -gt 0 2>/dev/null; and test (count $argv) -ge \"%s\" 2>/dev/null; and set --erase argv[1..%s]; }%s",
 		unquoted, unquoted, unquoted, tail), sc.trailing)
 }
 
 // shiftEraseLine erases n positionals only when at least n exist: bash's
-// shift fails without touching them when the count exceeds $#.
+// shift fails without touching them when the count exceeds $#. The whole
+// sequence is one braced unit so that a surrounding `!`, `&&`, or `||`
+// applies to shift's status rather than to the leading `test` alone.
 func shiftEraseLine(n string) string {
 	if n == "1" {
-		return "test (count $argv) -ge 1; and set --erase argv[1]"
+		return "{ test (count $argv) -ge 1; and set --erase argv[1]; }"
 	}
-	return fmt.Sprintf("test (count $argv) -ge %s; and set --erase argv[1..%s]", n, n)
+	return fmt.Sprintf("{ test (count $argv) -ge %s; and set --erase argv[1..%s]; }", n, n)
 }
 
 func unquoteArg(arg string) string {

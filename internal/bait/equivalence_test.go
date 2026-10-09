@@ -18,12 +18,12 @@ func TestBashFishEquivalence(t *testing.T) {
 	}
 
 	tests := []struct {
-		name          string
-		env           []string
-		files         map[string]string
-		args          []string
-		allowWarnings bool
-		src           string
+		name        string
+		env         []string
+		files       map[string]string
+		args        []string
+		wantWarning bool
+		src         string
 	}{
 		{
 			name: "if elif else",
@@ -860,9 +860,9 @@ func TestBashFishEquivalence(t *testing.T) {
 			src:  "f() {\n  if ! \"$@\"; then echo fail; fi\n}\nf false\nf true\n",
 		},
 		{
-			name:          "FUNCNAME array length at top level",
-			allowWarnings: true,
-			src:           "echo \"frames:${#FUNCNAME[@]}\"\n",
+			name:        "FUNCNAME array length at top level",
+			wantWarning: true,
+			src:         "echo \"frames:${#FUNCNAME[@]}\"\n",
 		},
 		{
 			name: "prefix strip on status filename",
@@ -1034,9 +1034,9 @@ func TestBashFishEquivalence(t *testing.T) {
 		{
 			// Sparse literals are emulated by filling holes, so index reads
 			// stay aligned; the fill is warned about.
-			name:          "sparse array literal fills holes",
-			allowWarnings: true,
-			src:           "arr=([0]=a [2]=c)\necho \"sparse:${arr[1]}|${arr[2]}\"\n",
+			name:        "sparse array literal fills holes",
+			wantWarning: true,
+			src:         "arr=([0]=a [2]=c)\necho \"sparse:${arr[1]}|${arr[2]}\"\n",
 		},
 		{
 			// shift fails and leaves the positionals alone when the count
@@ -1058,9 +1058,9 @@ func TestBashFishEquivalence(t *testing.T) {
 				"f a\n",
 		},
 		{
-			name:          "shift with a negative count fails",
-			allowWarnings: true,
-			src:           "shift -1 2>/dev/null\necho \"rc=$?\"\n",
+			name:        "shift with a negative count fails",
+			wantWarning: true,
+			src:         "shift -1 2>/dev/null\necho \"rc=$?\"\n",
 		},
 		{
 			name: "shift a dynamic count",
@@ -1105,9 +1105,9 @@ func TestBashFishEquivalence(t *testing.T) {
 			src:   "read -p \"status: \" v < data.txt\necho \"v=[$v]\"\n",
 		},
 		{
-			name:          "read -N exact count",
-			allowWarnings: true,
-			src:           "read -N 2 w <<< \"abcd\"\necho \"w=[$w]\"\n",
+			name:        "read -N exact count",
+			wantWarning: true,
+			src:         "read -N 2 w <<< \"abcd\"\necho \"w=[$w]\"\n",
 		},
 		{
 			// With IFS=",", bash splits the dynamic command word on the
@@ -1120,6 +1120,75 @@ func TestBashFishEquivalence(t *testing.T) {
 			// the translator mangled the reserved name into.
 			name: "unset of reserved and undefined names",
 			src:  "version=1\nunset version\nunset never_defined\necho \"rc=$?\"\n",
+		},
+		{
+			// shift renders as several fish commands; the whole unit must
+			// preserve its status so a surrounding `||`/`&&` binds to the
+			// shift rather than to its leading test.
+			name: "shift in and-or chains",
+			src: "set -- a b\n" +
+				"true || shift\n" +
+				"echo \"n1=$#\"\n" +
+				"set -- a b\n" +
+				"false || shift\n" +
+				"echo \"n2=$#\"\n" +
+				"set --\n" +
+				"shift || echo failed\n",
+		},
+		{
+			name: "negated shift with empty argv",
+			src: "set --\n" +
+				"if ! shift; then echo NEG-OK; else echo NEG-BAD; fi\n" +
+				"set -- a b\n" +
+				"if ! shift; then echo NEG2-OK; else echo NEG2-BAD; fi\n",
+		},
+		{
+			// A reserved-name scalar such as status maps to a mangled
+			// fish name; an unquoted multi-word read must apply the
+			// mapping before splitting.
+			name: "multi-word reads of reserved-name scalars",
+			src: "status='a b'\n" +
+				"printf '[%s]\\n' $status\n" +
+				"hostname='c d'\n" +
+				"printf '[%s]\\n' $hostname\n" +
+				"version='e f'\n" +
+				"printf '[%s]\\n' $version\n",
+		},
+		{
+			// fish's --local is scoped to the innermost block, so an
+			// assignment nested in a block inside a command substitution
+			// loses its value there; it is emitted non-local instead,
+			// with a warning that it escapes the substitution.
+			name:        "assignment nested in a substitution block",
+			wantWarning: true,
+			src: "y=$( if true; then v=1; fi; echo \"v=$v\" )\n" +
+				"echo \"$y\"\n",
+		},
+		{
+			name: "negated compound test clause",
+			src: "a=x\n" +
+				"b=\n" +
+				"if ! [[ -n \"$a\" && -n \"$b\" ]]; then echo NEG-TRUE; else echo NEG-FALSE; fi\n" +
+				"b=y\n" +
+				"if ! [[ -n \"$a\" && -n \"$b\" ]]; then echo NEG2-TRUE; else echo NEG2-FALSE; fi\n",
+		},
+		{
+			// bash's read with no variable names assigns REPLY.
+			name: "bare read assigns REPLY",
+			src:  "printf 'hi\\n' | { read; echo \"REPLY=$REPLY\"; }\n",
+		},
+		{
+			// read -e has no fish form; it is dropped with a warning and
+			// the read itself still matches bash.
+			name:        "read -e drops readline with a warning",
+			wantWarning: true,
+			files:       map[string]string{"data.txt": "hi\n"},
+			src:         "read -e v < data.txt\necho \"v=[$v]\"\n",
+		},
+		{
+			// fish's pipestatus is read-only; bash's unset succeeds.
+			name: "unset PIPESTATUS is a silent no-op",
+			src:  "unset PIPESTATUS\necho \"rc=$?\"\n",
 		},
 	}
 
@@ -1138,7 +1207,11 @@ func TestBashFishEquivalence(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Translate error: %v", err)
 			}
-			if len(warnings) > 0 && !tc.allowWarnings {
+			if tc.wantWarning {
+				if len(warnings) == 0 {
+					t.Fatal("fixture should produce a translation warning, got none")
+				}
+			} else if len(warnings) > 0 {
 				t.Fatalf("fixture should translate without warnings, got %v", warnings)
 			}
 			if err := os.WriteFile(bashPath, []byte(tc.src), 0o755); err != nil {

@@ -75,13 +75,19 @@ func (e *emitter) normalize(f *syntax.File) {
 				// multi-word scalar does, and __bait_words is IFS-aware.
 				multi := e.multiWordScalars[name] && !quoted
 				if !multi && e.listPolicy(name) == listScalar {
-					// A scalar reference already passes exactly one value.
+					// A scalar reference already passes exactly one
+					// value; rewriteParams splices its name.
 					continue
 				}
-				ref, ok := e.paramValueRef(pe)
+				// This runs before rewriteParams splices names, so
+				// resolve the target here: a reserved-name scalar such
+				// as status maps to a mangled fish name that must be
+				// applied before the reference is frozen as a literal.
+				t, ok := e.resolveParamTarget(name)
 				if !ok {
 					continue
 				}
+				ref := e.paramTargetValueRef(t)
 				if multi {
 					e.needHelper(helperWords)
 					ref = "(__bait_words " + ref + ")"

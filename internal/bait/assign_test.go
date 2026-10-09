@@ -424,13 +424,14 @@ func TestShiftBuiltin(t *testing.T) {
 		in   string
 		want string
 	}{
-		{"bare shift", "shift\n", "test (count $argv) -ge 1; and set --erase argv[1]\n"},
-		{"shift 1", "shift 1\n", "test (count $argv) -ge 1; and set --erase argv[1]\n"},
-		{"shift 2", "shift 2\n", "test (count $argv) -ge 2; and set --erase argv[1..2]\n"},
-		{"shift dynamic", "shift $n\n", "test \"$n\" -gt 0 2>/dev/null; and test (count $argv) -ge \"$n\" 2>/dev/null; and set --erase argv[1..$n]\n"},
+		{"bare shift", "shift\n", "{ test (count $argv) -ge 1; and set --erase argv[1]; }\n"},
+		{"shift 1", "shift 1\n", "{ test (count $argv) -ge 1; and set --erase argv[1]; }\n"},
+		{"shift 2", "shift 2\n", "{ test (count $argv) -ge 2; and set --erase argv[1..2]; }\n"},
+		{"shift dynamic", "shift $n\n", "{ test \"$n\" -gt 0 2>/dev/null; and test (count $argv) -ge \"$n\" 2>/dev/null; and set --erase argv[1..$n]; }\n"},
 		{"shift 0 is no-op", "shift 0\n", "true\n"},
-		{"shift dynamic unquoted", "shift \"$n\"\n", "test \"$n\" -gt 0 2>/dev/null; and test (count $argv) -ge \"$n\" 2>/dev/null; and set --erase argv[1..$n]\n"},
-		{"shift dynamic in chain", "shift $n && echo done\n", "test \"$n\" -gt 0 2>/dev/null; and test (count $argv) -ge \"$n\" 2>/dev/null; and set --erase argv[1..$n] && echo done\n"},
+		{"shift dynamic unquoted", "shift \"$n\"\n", "{ test \"$n\" -gt 0 2>/dev/null; and test (count $argv) -ge \"$n\" 2>/dev/null; and set --erase argv[1..$n]; }\n"},
+		{"shift dynamic in chain", "shift $n && echo done\n", "{ test \"$n\" -gt 0 2>/dev/null; and test (count $argv) -ge \"$n\" 2>/dev/null; and set --erase argv[1..$n]; } && echo done\n"},
+		{"negated shift", "if ! shift; then echo x; fi\n", "if ! { test (count $argv) -ge 1; and set --erase argv[1]; }\n    echo x\nend\n"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

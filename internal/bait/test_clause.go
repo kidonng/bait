@@ -86,12 +86,28 @@ func (e *emitter) testClause(s *syntax.Stmt, tc *syntax.TestClause) {
 	tail := e.tails(s)
 	res := e.renderTestExpr(tc.X)
 	var line string
-	if s.Negated {
+	switch {
+	case s.Negated && isCompoundTest(tc.X):
+		// fish's `!` binds to the first command of `a && b`, so the
+		// compound must be wrapped for the negation to apply to it.
+		line = fmt.Sprintf("! { %s; }%s", res, tail)
+	case s.Negated:
 		line = fmt.Sprintf("! %s%s", res, tail)
-	} else {
+	default:
 		line = fmt.Sprintf("%s%s", res, tail)
 	}
 	e.printLineWithTrailing(line, sc.trailing)
+}
+
+// isCompoundTest reports whether a test expression is a top-level `&&` or
+// `||` combination, whose rendering is several fish commands joined by the
+// operator and therefore cannot be negated by a leading `!`.
+func isCompoundTest(expr syntax.TestExpr) bool {
+	b, ok := expr.(*syntax.BinaryTest)
+	if !ok {
+		return false
+	}
+	return b.Op == syntax.AndTest || b.Op == syntax.OrTest
 }
 
 func (e *emitter) renderTestExpr(expr syntax.TestExpr) string {

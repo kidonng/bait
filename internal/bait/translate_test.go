@@ -560,8 +560,17 @@ func TestWarnings(t *testing.T) {
 			"my_func() { echo hi; }\nmy_func &\n",
 			"fish does not support running functions in the background",
 		},
+		{
+			"read -e has no fish form",
+			"read -e v < data.txt\n",
+			"read -e",
+		},
+		{
+			"read -d with a single target diverges",
+			"read -d , v < data.txt\n",
+			"read -d",
+		},
 	}
-
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got, warnings, err := Translate([]byte(tc.in))
@@ -774,7 +783,7 @@ func TestCommentPreservation(t *testing.T) {
 				"# before unset\n" +
 				"unset myvar # trailing unset\n",
 			want: "# before shift\n" +
-				"test (count $argv) -ge 2; and set --erase argv[1..2] # trailing shift\n" +
+				"{ test (count $argv) -ge 2; and set --erase argv[1..2]; } # trailing shift\n" +
 				"# before unset\n" +
 				"unset myvar # trailing unset\n",
 		},

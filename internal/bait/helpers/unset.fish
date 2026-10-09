@@ -9,6 +9,10 @@ function unset --no-scope-shadowing --description "Erase variables or functions"
     # never touched it.
     set --local reserved _ _unused status _status version _version history _history hostname _hostname pipestatus _pipestatus status_generation _status_generation
 
+    # fish's own read-only arrays: bash's unset succeeds, but fish refuses
+    # to erase them, so the erase is a silent no-op.
+    set --local readonly pipestatus dirstack
+
     for arg in $argv
         if test $stop_opts -eq 0; and string match --quiet --regex "^-" -- "$arg"
             if test "$arg" = --
@@ -36,6 +40,9 @@ function unset --no-scope-shadowing --description "Erase variables or functions"
             if test -z "$arr_name"
                 continue
             end
+            if contains -- $arr_name $readonly
+                continue
+            end
             set --local idx_expr $m[3]
             set --local calc_idx (math --scale=0 "$idx_expr" 2>/dev/null)
             if test -n "$calc_idx"
@@ -55,6 +62,9 @@ function unset --no-scope-shadowing --description "Erase variables or functions"
 
         set --local name (__bait_reserved_name $arg $reserved)
         if test -z "$name"
+            continue
+        end
+        if contains -- $name $readonly
             continue
         end
         if set --query -- $name

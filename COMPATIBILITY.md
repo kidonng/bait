@@ -72,7 +72,7 @@ The following constructs are currently untranslated by `bait` or lack direct Fis
 | `for x in …; do … done` | `for x in … … end` | Bare `for x` iterates `$argv` |
 | `case x in p) …;; esac` | `switch x` / `case 'p'` / `end` | Wildcards and multiple patterns supported; patterns containing bracket classes (`[...]`) translate to `if`/`else if` regex blocks |
 | `f() { … }`, `function f { … }` | `function f … end` | Function definition |
-| `{ … }` | `{ … }` | Anonymous command block (native passthrough in Fish 4.0+) |
+| `{ … }` | `{ … }` | Anonymous command block (native passthrough in Fish 4.1.0+) |
 | `( … )` | `{ … }` | Anonymous command block (emits warning: subshell isolation is lost) |
 | `cmd &`, `} &` | `cmd &`, `} &` | Background execution (background function calls emit a warning) |
 | `<(cmd)` | `(cmd \| psub)` | Process substitution via Fish `psub` |

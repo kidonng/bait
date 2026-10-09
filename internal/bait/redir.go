@@ -278,15 +278,20 @@ func readOptionTakesArg(ch byte) bool {
 //  6. Mangles target names that collide with fish's reserved variables
 //     (e.g. "_" -> "_unused", "status" -> "_status"), and records them so
 //     emission can pin the scope bash would assign to.
+//  7. Appends REPLY when no target survives option parsing, matching
+//     bash's default variable, and warns when -d is given a single
+//     target, whose fish meaning diverges.
 func (e *emitter) normalizeReadCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 	if len(c.Args) == 0 || !isLitWord(c.Args[0], "read") {
 		return
 	}
 	var targets []string
+	dynamicTarget := false
 	filtered := []*syntax.Word{c.Args[0]}
 	addTarget := func(w *syntax.Word) {
 		lit, ok := isBareLit(w)
 		if !ok {
+			dynamicTarget = true
 			filtered = append(filtered, w)
 			return
 		}
@@ -294,6 +299,7 @@ func (e *emitter) normalizeReadCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 		targets = append(targets, name)
 		filtered = append(filtered, litWord(name))
 	}
+	var delimPos syntax.Pos
 	inOptions := true
 	for i := 1; i < len(c.Args); i++ {
 		w := c.Args[i]
@@ -318,8 +324,10 @@ func (e *emitter) normalizeReadCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 			ch := lit[j]
 			if !readOptionTakesArg(ch) {
 				switch ch {
-				case 'r', 'e':
-					// raw is fish's default; readline has no fish form
+				case 'r':
+					// raw is fish's default; nothing to warn about
+				case 'e':
+					e.warn(w.Pos(), "read -e (readline) has no fish equivalent; it is dropped")
 				default:
 					kept = append(kept, ch)
 				}
@@ -364,6 +372,9 @@ func (e *emitter) normalizeReadCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 			case 'i':
 				e.warn(w.Pos(), "read -i initial text has no fish equivalent; it is dropped")
 			default:
+				if ch == 'd' {
+					delimPos = w.Pos()
+				}
 				kept = append(kept, ch)
 				keepArg = true
 			}
@@ -379,6 +390,19 @@ func (e *emitter) normalizeReadCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 				filtered = append(filtered, litWord(argText))
 			}
 		}
+	}
+	if len(targets) == 0 {
+		if dynamicTarget {
+			e.warn(c.Args[0].Pos(), "read target is not a literal name; REPLY cannot be assigned; emitted verbatim")
+			return
+		}
+		// bash's read with no names assigns REPLY.
+		name := mangleVarName("REPLY")
+		targets = append(targets, name)
+		filtered = append(filtered, litWord(name))
+	}
+	if delimPos.IsValid() && len(targets) == 1 {
+		e.warn(delimPos, "read -d with a single target reads the whole record in fish; bash strips the delimiter and returns the first field; the line is emitted as read")
 	}
 	c.Args = filtered
 	if len(targets) > 0 {
