@@ -456,7 +456,7 @@ func TestExecRedirectionRewrite(t *testing.T) {
 		want     string
 		wantWarn bool
 	}{
-		{"descriptor redirection", "exec 3< data.txt\n", "set --global __bait_fd_3 data.txt\ntrue 3< data.txt\n", true},
+		{"descriptor redirection", "exec 3< data.txt\n", "set --global __bait_fd_3 data.txt\ntrue 3< $__bait_fd_3\n", true},
 		{"stdin redirection", "exec < data.txt\n", "true < data.txt\n", true},
 		{"no command", "exec\n", "true\n", true},
 		{"exec with a command", "exec echo hi\n", "exec echo hi\n", false},
@@ -1095,11 +1095,35 @@ func TestLoopFDCapturedPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Translate error: %v", err)
 	}
-	if !strings.Contains(string(got), "set --global __bait_fd_3 \"$argv[1]\"") {
-		t.Errorf("exec path was not captured:\n%s", got)
+	for _, want := range []string{
+		"set --global __bait_fd_3 \"$argv[1]\"",
+		"true 3< $__bait_fd_3",
+		"end < $__bait_fd_3",
+	} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
 	}
-	if !strings.Contains(string(got), "end < $__bait_fd_3") {
-		t.Errorf("loop does not reopen the captured path:\n%s", got)
+
+	// A chain around the exec must still capture: the loop depends on it.
+	chained := "exec 3< \"$1\" || exit 1\nwhile read -u 3 l; do :; done\n"
+	got, _, err = Translate([]byte(chained))
+	if err != nil {
+		t.Fatalf("Translate error: %v", err)
+	}
+	if !strings.Contains(string(got), "set --global __bait_fd_3 \"$argv[1]\"") {
+		t.Errorf("chained exec did not capture its path:\n%s", got)
+	}
+
+	// Closing the descriptor forgets it, so the loop falls back to the
+	// visible /dev/fd failure.
+	closed := "exec 3< \"$1\"\nexec 3<&-\nwhile read -u 3 l; do :; done\n"
+	got, _, err = Translate([]byte(closed))
+	if err != nil {
+		t.Fatalf("Translate error: %v", err)
+	}
+	if strings.Contains(string(got), "end < $__bait_fd_3") {
+		t.Errorf("closed descriptor still redirected:\n%s", got)
 	}
 }
 

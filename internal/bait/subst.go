@@ -38,6 +38,9 @@ func (e *emitter) stmtNeedsRewrite(st *syntax.Stmt) bool {
 	if st == nil || e.synthStmts[st] {
 		return false
 	}
+	if e.execRewrites[st] {
+		return true
+	}
 	if hasLeadingRedir(st) || hasHighFDTargetRedir(st.Redirs) {
 		return true
 	}

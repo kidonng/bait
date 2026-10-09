@@ -285,8 +285,11 @@ func (e *emitter) normalizeExecCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 		if err != nil || n <= 2 {
 			continue
 		}
-		if lit, ok := isBareLit(r.Word); ok && lit == "&-" {
-			delete(e.execFds, n)
+		if r.Op == syntax.DplIn {
+			// `N<&-` closes the descriptor again.
+			if lit, ok := isBareLit(r.Word); ok && lit == "-" {
+				delete(e.execFds, n)
+			}
 			continue
 		}
 		if r.Op == syntax.RdrIn && r.Word != nil {
@@ -346,10 +349,10 @@ func (e *emitter) emitExecRewrite(s *syntax.Stmt, c *syntax.CallExpr) {
 		if err != nil || n <= 2 {
 			continue
 		}
-		if lit, ok := isBareLit(r.Word); ok && lit == "&-" {
-			continue
-		}
 		e.lines("set --global " + fdVarName(n) + " " + e.renderWordSmart(r.Word))
+		// The descriptor opens from the captured value, so the word is
+		// evaluated exactly once.
+		r.Word = &syntax.Word{Parts: []syntax.WordPart{namedParam(fdVarName(n))}}
 	}
 	e.lines(e.render(s))
 }
