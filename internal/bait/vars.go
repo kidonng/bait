@@ -322,6 +322,21 @@ func (e *emitter) analyzeVariables(f *syntax.File) {
 		if pe, ok := n.(*syntax.ParamExp); ok && pe.Param != nil {
 			e.noteName(pe.Param.Value, pe.Pos())
 		}
+		if fc, ok := n.(*syntax.ForClause); ok {
+			if iter, ok := fc.Loop.(*syntax.WordIter); ok && iter.Name != nil {
+				e.noteName(iter.Name.Value, iter.Name.Pos())
+			}
+		}
+		if c, ok := n.(*syntax.CallExpr); ok && len(c.Args) > 0 &&
+			(isLitWord(c.Args[0], "unset") || isLitWord(c.Args[0], "read")) {
+			// These builtins name their variables as plain words, which
+			// the parameter walk never sees.
+			for _, a := range c.Args[1:] {
+				if lit, ok := staticWordValue(a); ok {
+					e.noteName(lit, a.Pos())
+				}
+			}
+		}
 		return true
 	})
 

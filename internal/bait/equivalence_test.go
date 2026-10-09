@@ -1248,6 +1248,12 @@ func TestBashFishEquivalence(t *testing.T) {
 				"\techo \"got:$line\"\n" +
 				"done\n",
 		},
+		{
+			// A trailing comment in a backquoted body must not swallow
+			// the closing paren: the whole file would fail to load.
+			name: "backquoted body with a trailing comment",
+			src:  "x=`set -- a b; echo \"[$1]\" # note`\necho \"x=$x\"\n",
+		},
 	}
 
 	for _, tc := range tests {

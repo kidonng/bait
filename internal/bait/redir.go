@@ -276,13 +276,19 @@ func (e *emitter) normalizeExecCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 	e.execRewrites[s] = true
 	// Remember input descriptors the script opens itself: a loop that reads
 	// one can be redirected to the file instead, since fish cannot hold the
-	// descriptor open.
+	// descriptor open. Only a fully static path qualifies — a word with
+	// expansions would be re-evaluated when the loop starts, not when the
+	// exec ran, and the loop would read a different file.
 	for _, r := range s.Redirs {
 		if r.Op != syntax.RdrIn || r.N == nil || r.Word == nil {
 			continue
 		}
+		path, ok := staticWordValue(r.Word)
+		if !ok {
+			continue
+		}
 		if n, err := strconv.Atoi(r.N.Value); err == nil && n > 2 {
-			e.execFdPaths[n] = r.Word
+			e.execFdPaths[n] = path
 		}
 	}
 	if len(s.Redirs) == 0 {
@@ -315,7 +321,7 @@ func (e *emitter) normalizeLoopFD(s *syntax.Stmt, w *syntax.WhileClause) {
 		return
 	}
 	e.skipFDReads[cond] = true
-	s.Redirs = append(s.Redirs, &syntax.Redirect{Op: syntax.RdrIn, Word: path})
+	s.Redirs = append(s.Redirs, &syntax.Redirect{Op: syntax.RdrIn, OpPos: s.Pos(), Word: litWord(path)})
 	e.warn(c.Args[0].Pos(), "fish cannot hold descriptor %d open; the loop reads its file directly, so the loop body's standard input differs from bash's and a second loop over the same descriptor restarts at the beginning", fd)
 }
 

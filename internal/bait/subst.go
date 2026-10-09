@@ -184,6 +184,11 @@ func (e *emitter) cmdSubstText(cs *syntax.CmdSubst) (string, bool) {
 		// subshell; the block keeps fish's --local sets from outliving it.
 		text = "begin\n" + text + "\nend"
 	}
+	if lines := strings.Split(text, "\n"); strings.Contains(lines[len(lines)-1], "#") {
+		// A trailing comment would swallow the closing paren; end the body
+		// with a newline instead.
+		text += "\n"
+	}
 	pad := strings.Repeat(indentUnit, e.depth)
 	lines := strings.Split(text, "\n")
 	for i := 1; i < len(lines); i++ {

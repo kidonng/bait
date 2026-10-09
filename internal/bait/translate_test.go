@@ -1085,3 +1085,39 @@ func TestReservedNameCollisionWarns(t *testing.T) {
 		}
 	}
 }
+
+// TestLoopFDStaticPathOnly pins that only a fully static exec path is
+// replayed at the loop: a word with expansions would be re-evaluated when
+// the loop starts rather than when the exec ran, and the loop would read a
+// different file.
+func TestLoopFDStaticPathOnly(t *testing.T) {
+	src := "exec 3< \"log.$?\"\nwhile read -u 3 l; do :; done\n"
+	got, _, err := Translate([]byte(src))
+	if err != nil {
+		t.Fatalf("Translate error: %v", err)
+	}
+	if strings.Contains(string(got), "end < ") {
+		t.Errorf("dynamic exec path was replayed at the loop:\n%s", got)
+	}
+	if !strings.Contains(string(got), "/dev/fd/3") {
+		t.Errorf("expected the visible /dev/fd fallback:\n%s", got)
+	}
+}
+
+// TestReservedNameCollisionInUnsetArgs pins that the collision check sees
+// names the parameter walk never visits, such as unset arguments.
+func TestReservedNameCollisionInUnsetArgs(t *testing.T) {
+	_, warnings, err := Translate([]byte("_version=1\nunset version\n"))
+	if err != nil {
+		t.Fatalf("Translate error: %v", err)
+	}
+	found := false
+	for _, w := range warnings {
+		if strings.Contains(w.Text, "indistinguishable") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no collision warning for an unset argument; got %v", warnings)
+	}
+}
