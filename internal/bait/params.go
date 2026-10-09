@@ -570,6 +570,14 @@ func braceSequenceArgs(inner string) ([]string, bool) {
 	}
 	start, end := nums[0], nums[1]
 	if len(nums) == 2 {
+		if end < start {
+			// bash counts down; GNU seq needs an explicit step to do so.
+			return []string{
+				strconv.FormatInt(start, 10),
+				"-1",
+				strconv.FormatInt(end, 10),
+			}, true
+		}
 		return []string{strconv.FormatInt(start, 10), strconv.FormatInt(end, 10)}, true
 	}
 	step := nums[2]

@@ -322,11 +322,10 @@ func (e *emitter) file(f *syntax.File) {
 	}
 
 	if e.needIFS {
-		// fish's default IFS holds the same separator characters in a
-		// different order; bash's order is what scripts read and compare.
-		e.buf.WriteString("# fish's default IFS lists the same separators in a different order;\n")
-		e.buf.WriteString("# bash scripts compare its string value, so restore bash's order.\n")
-		e.buf.WriteString("set --global IFS \" \t\n\"\n\n")
+		// fish's default IFS holds the same separators in a different
+		// order; scripts that read or compare its value need bash's.
+		e.printf("set --global IFS \" \t\n\"")
+		e.printf("")
 	}
 
 	if !e.noHelpers {

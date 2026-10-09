@@ -263,7 +263,7 @@ func TestCompoundStatements(t *testing.T) {
 		{
 			"descending brace sequence",
 			"echo {3..1}\n",
-			"echo $(seq 3 1)\n",
+			"echo $(seq 3 -1 1)\n",
 		},
 		{
 			"embedded brace sequence",

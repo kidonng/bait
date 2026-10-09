@@ -23,6 +23,7 @@ While `bait` strives for behavioral equivalence, Fish semantics differ from Bash
    - In Fish, quoting a list `"$argv"` joins all elements into a single space-separated string. Therefore, `"$@"` and `"${arr[@]}"` translate to unquoted `$argv` and `$arr` to preserve argument splitting, while `"$*"` translates to `"$argv"` to preserve single joined string semantics.
 3. **Command Substitution Splitting**:
    - Fish splits command substitutions `$(cmd)` on newlines only, whereas Bash splits on all whitespace characters (POSIX `$IFS`).
+   - Fish's default `IFS` holds the same separator characters in a different order than Bash's. Scripts that read or compare `IFS` get `set --global IFS " \t\n"` restored at the top of the translation, so the string value matches Bash's default.
 4. **Globbing Behavior**:
    - In Fish, unmatched globs abort the command (equivalent to Bash's `failglob`).
    - The `?` character is treated as a literal by default in modern Fish (`qmark-noglob`).

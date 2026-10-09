@@ -50,8 +50,7 @@ func containsUnquotedFishListVar(s string) bool {
 //
 // FUNCNAME maps to `status current-function`, which fish exposes only for the
 // innermost frame: indices beyond 0 and the array count have no fish
-// equivalent and are warned about. (The fish pinned in flake.lock has no
-// $funcstack list; see the task-8 report.)
+// equivalent and are warned about (the pinned fish has no $funcstack list).
 var bashContextVars = map[string][]string{
 	"0":            {"status", "filename"},
 	"BASH_SOURCE":  {"status", "filename"},

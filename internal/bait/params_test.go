@@ -366,9 +366,8 @@ func TestDollarDashParameterExpansion(t *testing.T) {
 
 // TestContextArrayResolution pins the fish references for bash context
 // arrays. FUNCNAME maps to `status current-function`, which only names the
-// innermost frame; deeper indices and the array count warn. The fish pinned
-// in flake.lock has no $funcstack list, so mapping FUNCNAME onto one (plan
-// task 8, ruling R1) is not executable here.
+// innermost frame; deeper indices and the array count warn, because fish
+// exposes no function-stack list to count or index.
 func TestContextArrayResolution(t *testing.T) {
 	tests := []struct {
 		name     string
