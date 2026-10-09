@@ -3,6 +3,7 @@ package bait
 import (
 	_ "embed"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -62,22 +63,23 @@ const (
 
 type helperInfo struct {
 	kind helperKind
+	name string
 	code string
 }
 
 var allHelpers = []helperInfo{
-	{kind: helperWords, code: baitWordsHelper},
-	{kind: helperExec, code: baitExecHelper},
-	{kind: helperGetopts, code: baitGetoptsHelper},
-	{kind: helperHash, code: baitHashHelper},
-	{kind: helperUnalias, code: baitUnaliasHelper},
-	{kind: helperSource, code: baitSourceHelper},
-	{kind: helperDot, code: baitDotHelper},
-	{kind: helperUnset, code: baitUnsetHelper},
-	{kind: helperOSType, code: baitOSTypeHelper},
-	{kind: helperEval, code: baitEvalHelper},
-	{kind: helperMath, code: baitMathHelper},
-	{kind: helperCmp, code: baitCmpHelper},
+	{kind: helperWords, name: "__bait_words", code: baitWordsHelper},
+	{kind: helperExec, name: "__bait_exec", code: baitExecHelper},
+	{kind: helperGetopts, name: "getopts", code: baitGetoptsHelper},
+	{kind: helperHash, name: "hash", code: baitHashHelper},
+	{kind: helperUnalias, name: "unalias", code: baitUnaliasHelper},
+	{kind: helperSource, name: "source", code: baitSourceHelper},
+	{kind: helperDot, name: ".", code: baitDotHelper},
+	{kind: helperUnset, name: "unset", code: baitUnsetHelper},
+	{kind: helperOSType, name: "__bait_ostype", code: baitOSTypeHelper},
+	{kind: helperEval, name: "__bait_eval", code: baitEvalHelper},
+	{kind: helperMath, name: "__bait_math", code: baitMathHelper},
+	{kind: helperCmp, name: "__bait_cmp", code: baitCmpHelper},
 }
 
 // helperDeps lists the helpers a helper's own code calls: emitting or
@@ -96,21 +98,14 @@ func (e *emitter) needHelper(h helperKind) {
 }
 
 // helperKindByName maps the names the CLI and tests use to helper kinds.
-var helperKindByName = map[string]helperKind{
-	"source":        helperSource,
-	".":             helperDot,
-	"getopts":       helperGetopts,
-	"hash":          helperHash,
-	"unalias":       helperUnalias,
-	"unset":         helperUnset,
-	"__bait_words":  helperWords,
-	"__bait_exec":   helperExec,
-	"eval":          helperEval,
-	"__bait_eval":   helperEval,
-	"__bait_ostype": helperOSType,
-	"__bait_math":   helperMath,
-	"__bait_cmp":    helperCmp,
-}
+var helperKindByName = func() map[string]helperKind {
+	m := make(map[string]helperKind, len(allHelpers)+1)
+	for _, h := range allHelpers {
+		m[h.name] = h.kind
+	}
+	m["eval"] = helperEval
+	return m
+}()
 
 func helperCode(k helperKind) string {
 	for _, h := range allHelpers {
@@ -142,18 +137,10 @@ func Helper(name string) (string, error) {
 
 // Helpers returns the canonical names of available runtime helpers.
 func Helpers() []string {
-	return []string{
-		"source",
-		".",
-		"getopts",
-		"hash",
-		"unalias",
-		"unset",
-		"__bait_words",
-		"__bait_exec",
-		"__bait_ostype",
-		"__bait_eval",
-		"__bait_math",
-		"__bait_cmp",
+	names := make([]string, len(allHelpers))
+	for i, h := range allHelpers {
+		names[i] = h.name
 	}
+	slices.Sort(names)
+	return names
 }

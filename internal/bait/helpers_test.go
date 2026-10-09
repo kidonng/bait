@@ -511,8 +511,19 @@ func TestHelperAPI(t *testing.T) {
 	}
 
 	helpers := Helpers()
-	if len(helpers) == 0 {
-		t.Errorf("expected non-empty Helpers list")
+	if len(helpers) != len(allHelpers) {
+		t.Errorf("expected %d helpers, got %d", len(allHelpers), len(helpers))
+	}
+	if slices.Contains(helpers, "eval") {
+		t.Errorf("expected Helpers() to omit alias %q", "eval")
+	}
+	if !slices.Contains(helpers, "__bait_eval") {
+		t.Errorf("expected Helpers() to contain %q", "__bait_eval")
+	}
+	for _, h := range helpers {
+		if _, err := Helper(h); err != nil {
+			t.Errorf("Helper(%q) returned unexpected error: %v", h, err)
+		}
 	}
 }
 

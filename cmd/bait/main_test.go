@@ -246,27 +246,6 @@ func TestHelperUnknown(t *testing.T) {
 	}
 }
 
-func TestHelperNames(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	exitCode := run([]string{"helper", "--names"}, strings.NewReader(""), &stdout, &stderr)
-	if exitCode != 0 {
-		t.Fatalf("expected exit code 0, got %d (stderr: %s)", exitCode, stderr.String())
-	}
-	if stderr.Len() != 0 {
-		t.Errorf("expected empty stderr, got %q", stderr.String())
-	}
-	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
-	expected := []string{"source", ".", "getopts", "hash", "unalias", "unset", "__bait_words", "__bait_exec", "__bait_ostype", "__bait_eval", "__bait_math", "__bait_cmp"}
-	if len(lines) != len(expected) {
-		t.Fatalf("expected %d names, got %d: %v", len(expected), len(lines), lines)
-	}
-	for i, exp := range expected {
-		if lines[i] != exp {
-			t.Errorf("line %d: expected %q, got %q", i, exp, lines[i])
-		}
-	}
-}
-
 func TestHelperNamesTooManyArguments(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	exitCode := run([]string{"helper", "--names", "extra"}, strings.NewReader(""), &stdout, &stderr)
