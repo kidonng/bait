@@ -1,6 +1,7 @@
 package bait
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"os/exec"
@@ -9,8 +10,8 @@ import (
 )
 
 // TestBashFishEquivalence executes each fixture under bash and executes
-// its bait translation under fish, requiring identical stdout and exit
-// status.
+// its bait translation under fish, requiring identical stdout, stderr and
+// exit status.
 func TestBashFishEquivalence(t *testing.T) {
 	if _, err := exec.LookPath("fish"); err != nil {
 		t.Skip("fish not found in PATH")
@@ -1059,7 +1060,7 @@ func TestBashFishEquivalence(t *testing.T) {
 		{
 			name:          "shift with a negative count fails",
 			allowWarnings: true,
-			src:           "shift -1\necho \"rc=$?\"\n",
+			src:           "shift -1 2>/dev/null\necho \"rc=$?\"\n",
 		},
 		{
 			name: "shift a dynamic count",
@@ -1109,10 +1110,16 @@ func TestBashFishEquivalence(t *testing.T) {
 			src:           "read -N 2 w <<< \"abcd\"\necho \"w=[$w]\"\n",
 		},
 		{
-			// With IFS=",", bash does not split "echo hi" on its space, so
-			// it looks for a command with that whole name.
-			name: "dynamic command does not split on whitespace when IFS excludes it",
-			src:  "IFS=,\ncmd=\"echo hi\"\n$cmd 2>/dev/null\n",
+			// With IFS=",", bash splits the dynamic command word on the
+			// comma rather than on the space.
+			name: "dynamic command splits on IFS",
+			src:  "IFS=,\ncmd=\"echo,hi\"\n$cmd\n",
+		},
+		{
+			// bash succeeds for an undefined name and erases the variable
+			// the translator mangled the reserved name into.
+			name: "unset of reserved and undefined names",
+			src:  "version=1\nunset version\nunset never_defined\necho \"rc=$?\"\n",
 		},
 	}
 
@@ -1141,25 +1148,32 @@ func TestBashFishEquivalence(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			run := func(shell, path string) (string, int) {
+			run := func(shell, path string) (string, string, int) {
 				cmd := exec.Command(shell, append([]string{path}, tc.args...)...)
 				cmd.Dir = dir
 				cmd.Env = append(os.Environ(), tc.env...)
-				stdout, err := cmd.Output()
+				var stdout, stderr bytes.Buffer
+				cmd.Stdout = &stdout
+				cmd.Stderr = &stderr
 				code := 0
-				var exitErr *exec.ExitError
-				if errors.As(err, &exitErr) {
-					code = exitErr.ExitCode()
-				} else if err != nil {
-					t.Fatalf("%s %s: %v", shell, path, err)
+				if err := cmd.Run(); err != nil {
+					var exitErr *exec.ExitError
+					if errors.As(err, &exitErr) {
+						code = exitErr.ExitCode()
+					} else {
+						t.Fatalf("%s %s: %v", shell, path, err)
+					}
 				}
-				return string(stdout), code
+				return stdout.String(), stderr.String(), code
 			}
 
-			bashOut, bashCode := run("bash", bashPath)
-			fishOut, fishCode := run("fish", fishPath)
+			bashOut, bashErr, bashCode := run("bash", bashPath)
+			fishOut, fishErr, fishCode := run("fish", fishPath)
 			if fishOut != bashOut {
 				t.Errorf("stdout mismatch\n bash: %q\n fish: %q", bashOut, fishOut)
+			}
+			if fishErr != bashErr {
+				t.Errorf("stderr mismatch\n bash: %q\n fish: %q", bashErr, fishErr)
 			}
 			if fishCode != bashCode {
 				t.Errorf("exit status mismatch: bash=%d fish=%d", bashCode, fishCode)

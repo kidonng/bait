@@ -625,7 +625,7 @@ func (e *emitter) chainNeedsRewrite(b *syntax.BinaryCmd) bool {
 		if !ok {
 			return true
 		}
-		if e.stmtNeedsRewrite(st) {
+		if e.stmtNeedsRewrite(st) || e.hasStructuralCmdSubst(st) {
 			found = true
 			return false
 		}
