@@ -234,9 +234,10 @@ func (e *emitter) helperDispatch(c *syntax.CallExpr) {
 	case isLitWord(c.Args[0], "."):
 		e.needHelper(helperDot)
 	case isLitWord(c.Args[0], "unset"):
-		if !e.unsetShadows[c] {
-			e.needHelper(helperUnset)
-		}
+		// Registered even when the call is shadowed: bodies printed
+		// verbatim (backquotes, here-document pipelines, C-style loops)
+		// keep the bare call, and fish has no unset of its own.
+		e.needHelper(helperUnset)
 	}
 }
 
@@ -267,6 +268,11 @@ func (e *emitter) markSubstitutionUnserts(stmts []*syntax.Stmt) {
 // argument (function mode, an array element, or a dynamic word) cannot be
 // shadowed at all.
 func unsetShadowable(c *syntax.CallExpr) (names []string, rest bool) {
+	if len(c.Assigns) > 0 {
+		// A prefix assignment cannot ride on a shadow, so the call is
+		// skipped with a warning instead of losing the assignment.
+		return nil, true
+	}
 	modeFunc := false
 	inOptions := true
 	for i, w := range c.Args {

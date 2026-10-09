@@ -555,7 +555,7 @@ func (e *emitter) emitUnsetShadow(s *syntax.Stmt, c *syntax.CallExpr) {
 		e.warn(c.Pos(), "%s", msg)
 	}
 	if rest {
-		e.warn(c.Pos(), "unset of a function, an array element, or a dynamic name inside a command substitution cannot be scoped in fish; it is skipped so the caller's state is preserved")
+		e.warn(c.Pos(), "unset of a function, an array element, a dynamic name, or a call with prefix assignments inside a command substitution cannot be scoped in fish; it is skipped so the caller's state is preserved")
 	}
 	e.printLineWithTrailing(line, sc.trailing)
 }

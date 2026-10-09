@@ -75,13 +75,19 @@ func TranslateWithOptions(src []byte, opts Options) ([]byte, []Warning, error) {
 	em.normalize(file)
 	em.file(file)
 	if len(repaired) > 0 {
+		delims := make(map[string]bool, len(repaired))
+		for _, d := range repaired {
+			delims[d] = true
+		}
 		w := Warning{Text: fmt.Sprintf("here-document %s is delimited by end-of-file; the rest of the input is its body, matching bash's warning", strings.Join(repaired, ", "))}
 		syntax.Walk(file, func(n syntax.Node) bool {
 			if w.Line != 0 {
 				return false
 			}
-			if r, ok := n.(*syntax.Redirect); ok && (r.Op == syntax.Hdoc || r.Op == syntax.DashHdoc) {
-				w.Line, w.Col = int(r.Pos().Line()), int(r.Pos().Col())
+			if r, ok := n.(*syntax.Redirect); ok && (r.Op == syntax.Hdoc || r.Op == syntax.DashHdoc) && r.Word != nil {
+				if lit, ok := staticWordValue(r.Word); ok && delims[lit] {
+					w.Line, w.Col = int(r.Pos().Line()), int(r.Pos().Col())
+				}
 			}
 			return true
 		})

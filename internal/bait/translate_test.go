@@ -671,7 +671,7 @@ func TestWarnings(t *testing.T) {
 		{
 			"unset -f inside a command substitution",
 			"y=$(unset -f f; f)\n",
-			"unset of a function, an array element, or a dynamic name",
+			"unset of a function",
 		},
 	}
 	for _, tc := range tests {
