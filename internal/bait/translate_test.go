@@ -496,6 +496,11 @@ func TestWarnings(t *testing.T) {
 			"multiple here-documents on a single command cannot be translated",
 		},
 		{
+			"negative shift warning",
+			"shift -1\n",
+			"shift with a negative count fails in bash",
+		},
+		{
 			"associative array literal warning",
 			"m=([k]=v)\n",
 			"sparse or associative array literal cannot be translated",
@@ -749,7 +754,7 @@ func TestCommentPreservation(t *testing.T) {
 				"# before unset\n" +
 				"unset myvar # trailing unset\n",
 			want: "# before shift\n" +
-				"set --erase argv[1..2] # trailing shift\n" +
+				"test (count $argv) -ge 2; and set --erase argv[1..2] # trailing shift\n" +
 				"# before unset\n" +
 				"unset myvar # trailing unset\n",
 		},

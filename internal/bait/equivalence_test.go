@@ -1037,6 +1037,41 @@ func TestBashFishEquivalence(t *testing.T) {
 			allowWarnings: true,
 			src:           "arr=([0]=a [2]=c)\necho \"sparse:${arr[1]}|${arr[2]}\"\n",
 		},
+		{
+			// shift fails and leaves the positionals alone when the count
+			// exceeds $#.
+			name: "shift past the end fails",
+			src: "f() {\n" +
+				"\tshift\n" +
+				"\techo \"rc=$? count=$#\"\n" +
+				"}\n" +
+				"f\n" +
+				"f a b\n",
+		},
+		{
+			name: "shift 2 with one positional fails",
+			src: "f() {\n" +
+				"\tshift 2\n" +
+				"\techo \"rc=$? args=$*\"\n" +
+				"}\n" +
+				"f a\n",
+		},
+		{
+			name:          "shift with a negative count fails",
+			allowWarnings: true,
+			src:           "shift -1\necho \"rc=$?\"\n",
+		},
+		{
+			name: "shift a dynamic count",
+			src: "n=2\n" +
+				"f() {\n" +
+				"\tshift \"$n\"\n" +
+				"\techo \"rc=$? args=$*\"\n" +
+				"}\n" +
+				"f a b c\n" +
+				"n=5\n" +
+				"f a b c\n",
+		},
 	}
 
 	for _, tc := range tests {

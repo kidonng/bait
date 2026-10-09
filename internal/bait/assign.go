@@ -528,24 +528,40 @@ func (e *emitter) shiftCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 	sc := e.prepareStmt(s)
 	tail := e.tails(s)
 	if len(c.Args) <= 1 {
-		e.printLineWithTrailing("set --erase argv[1]"+tail, sc.trailing)
+		e.printLineWithTrailing(shiftEraseLine("1")+tail, sc.trailing)
 		return
 	}
 	arg := e.render(c.Args[1])
 	if n, err := strconv.Atoi(arg); err == nil {
 		switch {
-		case n <= 0:
+		case n < 0:
+			// bash fails with a message; fish has none for it.
+			e.warn(c.Args[1].Pos(), "shift with a negative count fails in bash; the status is kept, the message is not")
+			e.printLineWithTrailing("false"+tail, sc.trailing)
+		case n == 0:
 			e.printLineWithTrailing("true"+tail, sc.trailing)
-		case n == 1:
-			e.printLineWithTrailing("set --erase argv[1]"+tail, sc.trailing)
 		default:
-			e.printLineWithTrailing(fmt.Sprintf("set --erase argv[1..%d]%s", n, tail), sc.trailing)
+			e.printLineWithTrailing(shiftEraseLine(arg)+tail, sc.trailing)
 		}
 		return
 	}
 	argWord := e.renderWordSmart(c.Args[1])
 	unquoted := unquoteArg(argWord)
-	e.printLineWithTrailing(fmt.Sprintf("test \"%s\" -gt 0 2>/dev/null; and set --erase argv[1..%s]%s", unquoted, unquoted, tail), sc.trailing)
+	// fish's test reports 1 for a failed comparison and 2 for a bad
+	// operand, which is exactly what bash's shift does for an
+	// out-of-range count and a non-numeric one.
+	e.printLineWithTrailing(fmt.Sprintf(
+		"test \"%s\" -gt 0 2>/dev/null; and test (count $argv) -ge \"%s\" 2>/dev/null; and set --erase argv[1..%s]%s",
+		unquoted, unquoted, unquoted, tail), sc.trailing)
+}
+
+// shiftEraseLine erases n positionals only when at least n exist: bash's
+// shift fails without touching them when the count exceeds $#.
+func shiftEraseLine(n string) string {
+	if n == "1" {
+		return "test (count $argv) -ge 1; and set --erase argv[1]"
+	}
+	return fmt.Sprintf("test (count $argv) -ge %s; and set --erase argv[1..%s]", n, n)
 }
 
 func unquoteArg(arg string) string {
