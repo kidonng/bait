@@ -1144,3 +1144,27 @@ func TestReservedNameCollisionInUnsetArgs(t *testing.T) {
 		t.Errorf("no collision warning for an unset argument; got %v", warnings)
 	}
 }
+
+// TestExecChainTailsAndSingleRender pins two regressions: a backgrounded
+// exec chain keeps its ampersand, and a statement rendered twice does not
+// clobber the captured path.
+func TestExecChainTailsAndSingleRender(t *testing.T) {
+	got, _, err := Translate([]byte("exec 3< \"$1\" || exit 1 &\nwait\n"))
+	if err != nil {
+		t.Fatalf("Translate error: %v", err)
+	}
+	if !strings.Contains(string(got), "|| exit 1 &") {
+		t.Errorf("background marker dropped from the exec chain:\n%s", got)
+	}
+
+	got, _, err = Translate([]byte("export V=\"$(exec 3< \"$f\"; echo hi)\"\necho \"$V\"\n"))
+	if err != nil {
+		t.Fatalf("Translate error: %v", err)
+	}
+	if strings.Contains(string(got), "__bait_fd_3 $__bait_fd_3") {
+		t.Errorf("capture clobbered on a repeated render:\n%s", got)
+	}
+	if strings.Count(string(got), "set --global __bait_fd_3") != 1 {
+		t.Errorf("capture rendered more than once:\n%s", got)
+	}
+}

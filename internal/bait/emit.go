@@ -716,7 +716,7 @@ func (e *emitter) emitChain(s *syntax.Stmt, b *syntax.BinaryCmd) {
 		}
 		parts = append(parts, e.chainLeaf(leaf))
 	}
-	e.printLineWithTrailing(strings.Join(parts, " "), sc.trailing)
+	e.printLineWithTrailing(strings.Join(parts, " ")+e.tails(s), sc.trailing)
 }
 
 func binOpText(op syntax.BinCmdOperator) string {

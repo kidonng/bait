@@ -341,7 +341,12 @@ func fdVarName(fd int) string {
 // variable, so a loop that reads one can reopen the file the exec actually
 // named instead of the /dev/fd device fish cannot keep open.
 func (e *emitter) emitExecRewrite(s *syntax.Stmt, c *syntax.CallExpr) {
-	for _, r := range s.Redirs {
+	// Render a copy: the captured words must not survive on the shared AST,
+	// which some words render twice.
+	cp := *s
+	cp.Redirs = make([]*syntax.Redirect, len(s.Redirs))
+	for i, r := range s.Redirs {
+		cp.Redirs[i] = r
 		if r.Op != syntax.RdrIn || r.N == nil || r.Word == nil {
 			continue
 		}
@@ -352,9 +357,11 @@ func (e *emitter) emitExecRewrite(s *syntax.Stmt, c *syntax.CallExpr) {
 		e.lines("set --global " + fdVarName(n) + " " + e.renderWordSmart(r.Word))
 		// The descriptor opens from the captured value, so the word is
 		// evaluated exactly once.
-		r.Word = &syntax.Word{Parts: []syntax.WordPart{namedParam(fdVarName(n))}}
+		rc := *r
+		rc.Word = &syntax.Word{Parts: []syntax.WordPart{namedParam(fdVarName(n))}}
+		cp.Redirs[i] = &rc
 	}
-	e.lines(e.render(s))
+	e.lines(e.render(&cp))
 }
 
 // readFDOption returns the descriptor a read's -u option names, for the
