@@ -190,7 +190,7 @@ func (e *emitter) arithExpr(expr syntax.ArithmExpr, withStatus bool) []syntax.Co
 		if !ok {
 			return nil
 		}
-		mangled := e.varName(name)
+		mangled := e.bindName(x.Pos(), name)
 		delta, inverse := "+", "-"
 		if x.Op == syntax.Dec {
 			delta, inverse = "-", "+"
@@ -207,7 +207,7 @@ func (e *emitter) arithExpr(expr syntax.ArithmExpr, withStatus bool) []syntax.Co
 
 	case *syntax.BinaryArithm:
 		if name, ok := bareArithName(x.X); ok && isAssignOp(x.Op) {
-			mangled := e.varName(name)
+			mangled := e.bindName(x.X.Pos(), name)
 			rhs, rhsOK := e.arithmText(x.Y)
 			var payload string
 			var valid bool
@@ -283,8 +283,8 @@ func (e *emitter) arithmText(n syntax.ArithmExpr) (string, bool) {
 		if isDigits(s) || strings.HasPrefix(s, "$") {
 			return s, true
 		}
-		if syntax.ValidName(s) {
-			return "$" + e.varName(s), true
+		if t, ok := e.resolveParamTarget(s); ok {
+			return e.paramTargetText(t), true
 		}
 		return "", false
 	case *syntax.ParenArithm:

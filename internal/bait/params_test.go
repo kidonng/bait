@@ -363,3 +363,133 @@ func TestDollarDashParameterExpansion(t *testing.T) {
 		t.Errorf("expected status is-interactive check in output, got:\n%s", string(got))
 	}
 }
+
+// TestContextArrayResolution pins the fish references for bash context
+// arrays. FUNCNAME maps to `status current-function`, which only names the
+// innermost frame; deeper indices and the array count warn. The fish pinned
+// in flake.lock has no $funcstack list, so mapping FUNCNAME onto one (plan
+// task 8, ruling R1) is not executable here.
+func TestContextArrayResolution(t *testing.T) {
+	tests := []struct {
+		name     string
+		in       string
+		want     string
+		warnPart string
+	}{
+		{
+			"FUNCNAME bare",
+			"echo \"$FUNCNAME\"\n",
+			"echo \"$(status current-function)\"\n",
+			"",
+		},
+		{
+			"FUNCNAME index 0",
+			"echo ${FUNCNAME[0]}\n",
+			"echo $(status current-function)\n",
+			"",
+		},
+		{
+			"FUNCNAME deeper index warns",
+			"echo ${FUNCNAME[1]}\n",
+			"echo $(status current-function)\n",
+			"beyond depth",
+		},
+		{
+			"FUNCNAME whole array",
+			"echo ${FUNCNAME[@]}\n",
+			"echo $(status current-function)\n",
+			"",
+		},
+		{
+			"FUNCNAME length warns",
+			"echo ${#FUNCNAME[@]}\n",
+			"echo $(count $FUNCNAME)\n",
+			"implicit",
+		},
+		{
+			"status filename prefix strip",
+			"echo ${0#*/}\n",
+			"echo $(string replace --regex -- '^.*?/' '' \"$(status filename)\")\n",
+			"",
+		},
+		{
+			"status filename greedy prefix strip",
+			"echo ${0##*/}\n",
+			"echo $(string replace --regex -- '^.*/' '' \"$(status filename)\")\n",
+			"",
+		},
+		{
+			"random suffix strip",
+			"echo ${RANDOM%?}\n",
+			"echo $(string replace --regex -- '.$' '' \"$(random)\")\n",
+			"",
+		},
+		{
+			"context default operator warns",
+			"echo ${RANDOM:-1}\n",
+			"echo ${RANDOM:-1}\n",
+			"cannot be applied",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, warnings, err := Translate([]byte(tc.in))
+			if err != nil {
+				t.Fatalf("Translate(%q) error: %v", tc.in, err)
+			}
+			if tc.warnPart == "" {
+				if len(warnings) != 0 {
+					t.Errorf("unexpected warnings: %v", warnings)
+				}
+			} else if len(warnings) == 0 {
+				t.Errorf("expected a warning containing %q, got none", tc.warnPart)
+			} else if !strings.Contains(warnings[0].Text, tc.warnPart) {
+				t.Errorf("warning %q does not contain %q", warnings[0].Text, tc.warnPart)
+			}
+			if string(got) != tc.want {
+				t.Errorf("mismatch\n in:   %q\n got:  %q\n want: %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestMappedParameterBindings pins that assignments to names fish derives
+// from other state warn and keep a best-effort emission.
+func TestMappedParameterBindings(t *testing.T) {
+	tests := []struct {
+		name     string
+		in       string
+		want     string
+		warnPart string
+	}{
+		{
+			"HOSTNAME assignment",
+			"HOSTNAME=myhost\necho \"$HOSTNAME\"\n",
+			"set hostname myhost\necho \"$hostname\"\n",
+			"HOSTNAME",
+		},
+		{
+			"RANDOM assignment",
+			"RANDOM=1\n",
+			"set RANDOM 1\n",
+			"RANDOM",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, warnings, err := Translate([]byte(tc.in))
+			if err != nil {
+				t.Fatalf("Translate(%q) error: %v", tc.in, err)
+			}
+			if len(warnings) == 0 {
+				t.Fatalf("expected a warning containing %q, got none", tc.warnPart)
+			}
+			if !strings.Contains(warnings[0].Text, tc.warnPart) {
+				t.Errorf("warning %q does not contain %q", warnings[0].Text, tc.warnPart)
+			}
+			if string(got) != tc.want {
+				t.Errorf("mismatch\n in:   %q\n got:  %q\n want: %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}

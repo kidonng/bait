@@ -17,11 +17,12 @@ func TestBashFishEquivalence(t *testing.T) {
 	}
 
 	tests := []struct {
-		name  string
-		env   []string
-		files map[string]string
-		args  []string
-		src   string
+		name          string
+		env           []string
+		files         map[string]string
+		args          []string
+		allowWarnings bool
+		src           string
 	}{
 		{
 			name: "if elif else",
@@ -857,6 +858,35 @@ func TestBashFishEquivalence(t *testing.T) {
 			name: "negated positional command in function",
 			src:  "f() {\n  if ! \"$@\"; then echo fail; fi\n}\nf false\nf true\n",
 		},
+		{
+			name:          "FUNCNAME array length at top level",
+			allowWarnings: true,
+			src:           "echo \"frames:${#FUNCNAME[@]}\"\n",
+		},
+		{
+			name: "prefix strip on status filename",
+			src: "x=${0#*/}\n" +
+				"case $x in\n" +
+				"\t/*) echo kept-abs;;\n" +
+				"\t*/*) echo path;;\n" +
+				"\t*) echo bare;;\n" +
+				"esac\n",
+		},
+		{
+			name: "random modulo range",
+			src: "sum=0\n" +
+				"i=0\n" +
+				"while [ $i -lt 64 ]; do\n" +
+				"\tr=$((RANDOM % 2))\n" +
+				"\tsum=$((sum + r))\n" +
+				"\ti=$((i + 1))\n" +
+				"done\n" +
+				"if [ \"$sum\" -gt 0 ]; then echo varied; else echo all-zero; fi\n",
+		},
+		{
+			name: "UID arithmetic comparison",
+			src:  "((UID == 0))\necho \"uid0=$?\"\n",
+		},
 	}
 
 	for _, tc := range tests {
@@ -874,7 +904,7 @@ func TestBashFishEquivalence(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Translate error: %v", err)
 			}
-			if len(warnings) > 0 {
+			if len(warnings) > 0 && !tc.allowWarnings {
 				t.Fatalf("fixture should translate without warnings, got %v", warnings)
 			}
 			if err := os.WriteFile(bashPath, []byte(tc.src), 0o755); err != nil {

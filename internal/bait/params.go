@@ -153,16 +153,20 @@ func (e *emitter) rewriteParams(f *syntax.File) {
 				node.Parts = []syntax.WordPart{argvParam()}
 				return true
 			}
-			if name, isStar, quoted, ok := e.soleArrayAll(node); ok {
-				if cv, isCtx := bashContextVars[name]; isCtx {
-					node.Parts = []syntax.WordPart{substPart(cv...)}
+			if raw, isStar, quoted, ok := e.soleArrayAll(node); ok {
+				t, rok := e.resolveParamTarget(raw)
+				if !rok {
+					t = paramTarget{name: e.varName(raw)}
+				}
+				if t.subst != nil {
+					node.Parts = t.subst
 					return true
 				}
+				whole := []syntax.WordPart{namedParam(t.name)}
 				if quoted && isStar {
-					node.Parts = []syntax.WordPart{&syntax.DblQuoted{Parts: []syntax.WordPart{namedParam(name)}}}
-					return true
+					whole = []syntax.WordPart{&syntax.DblQuoted{Parts: whole}}
 				}
-				node.Parts = []syntax.WordPart{namedParam(name)}
+				node.Parts = whole
 				return true
 			}
 			node.Parts = e.spliceParts(node.Parts)
@@ -558,53 +562,18 @@ func (e *emitter) paramReplacements(pe *syntax.ParamExp) []syntax.WordPart {
 		}
 		return []syntax.WordPart{pe}
 	}
-	if cv, ok := bashContextVars[name]; ok {
-		return []syntax.WordPart{substPart(cv...)}
+	t, ok := e.resolveParamTarget(name)
+	if !ok {
+		return []syntax.WordPart{pe}
 	}
-	if mangled, ok := fishReservedVars[name]; ok {
-		return []syntax.WordPart{namedParam(mangled)}
-	}
-	switch name {
-	case "@", "*":
-		return []syntax.WordPart{argvParam()}
-	case "?":
-		return []syntax.WordPart{namedParam("status")}
-	case "!":
-		return []syntax.WordPart{namedParam("last_pid")}
-	case "$", "BASHPID":
-		return []syntax.WordPart{namedParam("fish_pid")}
-	case "#":
-		return []syntax.WordPart{substPart("count", "$argv")}
-	case "HOSTNAME":
-		return []syntax.WordPart{namedParam("hostname")}
-	case "HOSTTYPE", "MACHTYPE":
-		return []syntax.WordPart{substPart("uname", "-m")}
-	case "PIPESTATUS":
-		return []syntax.WordPart{namedParam("pipestatus")}
-	case "DIRSTACK":
-		return []syntax.WordPart{namedParam("dirstack")}
-	case "OSTYPE":
-		e.needHelper(helperOSType)
-		return []syntax.WordPart{substPart("__bait_ostype")}
-	case "RANDOM":
-		return []syntax.WordPart{substPart("random")}
-	case "SRANDOM":
-		return []syntax.WordPart{substPart("random", "0", "4294967295")}
-	case "EPOCHSECONDS":
-		return []syntax.WordPart{substPart("date", "+%s")}
-	case "-":
+	if name == "-" {
 		e.warn(pe.Pos(), "$- has no fish equivalent; fish uses status subcommands (e.g. status is-interactive)")
-		return []syntax.WordPart{statusDashPart()}
 	}
-	if isDigits(name) {
-		// bash positional params are 1-based like fish list indices;
-		// a Lit suffix keeps the printed form $argv[N], never braced.
-		return []syntax.WordPart{argvParam(), litPart("[" + name + "]")}
-	}
-	if syntax.ValidName(name) {
+	if !t.mapped && t.subst == nil && t.index == "" && t.name == name && syntax.ValidName(name) {
 		pe.Short = true // ${var}: drop the braces
+		return []syntax.WordPart{pe}
 	}
-	return []syntax.WordPart{pe}
+	return paramTargetParts(t)
 }
 
 func bareParam(pe *syntax.ParamExp) bool {
@@ -651,15 +620,7 @@ func substPart(args ...string) syntax.WordPart {
 	return &syntax.CmdSubst{Stmts: []*syntax.Stmt{{Cmd: call}}}
 }
 
-func stringUnarySubst(subcmd, name string) syntax.WordPart {
-	var ref *syntax.Word
-	if name == "-" {
-		ref = dq(statusDashPart())
-	} else if isDigits(name) {
-		ref = dq(argvParam(), litPart("["+name+"]"))
-	} else {
-		ref = dq(namedParam(name))
-	}
+func stringUnarySubst(subcmd string, ref *syntax.Word) syntax.WordPart {
 	call := &syntax.CallExpr{
 		Args: []*syntax.Word{
 			litWord("string"),
@@ -764,35 +725,47 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 	if pe.Param == nil {
 		return nil, false
 	}
-	name := e.varName(pe.Param.Value)
-	var ref *syntax.Word
-	varPlain := "$" + name
-	varQuoted := "\"" + varPlain + "\""
-	if pe.Param.Value == "-" {
-		e.warn(pe.Pos(), "$- has no fish equivalent; fish uses status subcommands (e.g. status is-interactive)")
-		ref = dq(statusDashPart())
-		varPlain = "\"$(status is-interactive && echo i || echo '')\""
-		varQuoted = varPlain
-	} else if isDigits(name) {
-		ref = dq(argvParam(), litPart("["+name+"]"))
-		varPlain = "$argv[" + name + "]"
-		varQuoted = "\"" + varPlain + "\""
-	} else {
-		ref = dq(namedParam(name))
+	raw := pe.Param.Value
+	t, ok := e.resolveParamTarget(raw)
+	if !ok {
+		return nil, false
 	}
+	name := t.name
+	isPos := isDigits(raw)
+	if raw == "-" {
+		e.warn(pe.Pos(), "$- has no fish equivalent; fish uses status subcommands (e.g. status is-interactive)")
+	}
+	valuePlain := e.paramTargetText(t)
+	valueArg := valuePlain
+	if t.subst != nil {
+		valueArg = "\"" + valuePlain + "\""
+	}
+	ref := e.paramTargetRef(t)
 	printVal := func(val *syntax.Word) *syntax.Stmt {
 		return callStmt(litWord("printf"), litWord(`%s\n`), val)
 	}
 
 	switch {
 	case pe.Length && pe.Index != nil:
-		if tok, ok := e.arrayIndex(pe.Index); !ok || (tok != "@" && tok != "*") {
+		if tok, ok := e.indexToken(pe.Index); !ok || (tok != "@" && tok != "*") {
 			return nil, false
+		}
+		if t.subst != nil {
+			if raw == "FUNCNAME" {
+				e.warn(pe.Pos(), "fish has no function stack to count; bash's ${#FUNCNAME[@]} includes its implicit script frame; emitted as count $FUNCNAME")
+			} else {
+				e.warn(pe.Pos(), "length of %s is not supported; emitted as count $%s", valuePlain, raw)
+			}
+			return []syntax.WordPart{substPart("count", "$"+raw)}, true
 		}
 		return []syntax.WordPart{substPart("count", "$"+name)}, true
 
 	case pe.Index != nil && pe.Slice != nil:
-		tok, ok := e.arrayIndex(pe.Index)
+		if t.subst != nil {
+			e.warn(pe.Pos(), "slice of %s is not supported; left untranslated", valuePlain)
+			return []syntax.WordPart{pe}, true
+		}
+		tok, ok := e.indexToken(pe.Index)
 		if !ok || (tok != "@" && tok != "*") {
 			return nil, false
 		}
@@ -829,7 +802,11 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 	case pe.Index != nil && pe.Exp != nil &&
 		(pe.Exp.Op == syntax.RemSmallSuffix || pe.Exp.Op == syntax.RemLargeSuffix ||
 			pe.Exp.Op == syntax.RemSmallPrefix || pe.Exp.Op == syntax.RemLargePrefix):
-		tok, ok := e.arrayIndex(pe.Index)
+		if t.subst != nil {
+			e.warn(pe.Pos(), "element operator on %s is not supported; left untranslated", valuePlain)
+			return []syntax.WordPart{pe}, true
+		}
+		tok, ok := e.indexToken(pe.Index)
 		if !ok || tok == "@" || tok == "*" {
 			return nil, false
 		}
@@ -844,7 +821,7 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 			body += "$"
 		}
 		return []syntax.WordPart{substPart("string", "replace", "--regex", "--",
-			fishSingleQuote(body), "''", "$"+name+"["+tok+"]")}, true
+			fishSingleQuote(body), "''", "$"+name+"["+shiftIndex(tok, t.shift)+"]")}, true
 
 	case pe.Index != nil && pe.Exp != nil:
 		e.warn(pe.Pos(), "%s on an indexed array element is left untranslated",
@@ -852,15 +829,14 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 		return []syntax.WordPart{pe}, true
 
 	case pe.Index != nil:
-		if cv, ok := bashContextVars[name]; ok {
-			tok, _ := e.arrayIndex(pe.Index)
-			if tok != "1" && tok != "@" && tok != "" {
+		if t.subst != nil {
+			tok, _ := e.indexToken(pe.Index)
+			if tok != "" && tok != "0" && tok != "@" && tok != "*" {
 				e.warn(pe.Pos(), "context array index %s beyond depth 0 is not supported in fish; emitted current context", tok)
 			}
-			return []syntax.WordPart{substPart(cv...)}, true
+			return t.subst, true
 		}
-
-		tok, ok := e.arrayIndex(pe.Index)
+		tok, ok := e.indexToken(pe.Index)
 		switch {
 		case !ok:
 			e.warn(pe.Pos(), "dynamic array index cannot be shifted; left untranslated")
@@ -868,11 +844,11 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 		case tok == "@" || tok == "*":
 			return []syntax.WordPart{namedParam(name)}, true
 		default:
-			return []syntax.WordPart{namedParam(name), litPart("[" + tok + "]")}, true
+			return []syntax.WordPart{namedParam(name), litPart("[" + shiftIndex(tok, t.shift) + "]")}, true
 		}
 
 	case pe.Length:
-		return []syntax.WordPart{stringUnarySubst("length", name)}, true
+		return []syntax.WordPart{stringUnarySubst("length", ref)}, true
 
 	case pe.Slice != nil:
 		start, ok := intLiteral(pe.Slice.Offset)
@@ -893,7 +869,7 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 			}
 			args = append(args, "--length="+strconv.Itoa(n))
 		}
-		args = append(args, "--", varQuoted)
+		args = append(args, "--", "\""+valuePlain+"\"")
 		return []syntax.WordPart{substPart(args...)}, true
 
 	case pe.Repl != nil:
@@ -921,7 +897,7 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 		args = append(args, "--",
 			regexArg,
 			replArg,
-			varPlain)
+			valueArg)
 		return []syntax.WordPart{substPart(args...)}, true
 
 	case pe.Exp != nil:
@@ -934,14 +910,19 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 		}
 		switch exp.Op {
 		case syntax.DefaultUnsetOrNull, syntax.DefaultUnset:
-			if (exp.Word == nil || isEmptyValue(exp.Word)) && isDigits(name) {
-				return []syntax.WordPart{argvParam(), litPart("[" + name + "]")}, true
+			if t.subst != nil {
+				e.warn(pe.Pos(), "%s cannot be applied to %s; left untranslated",
+					exp.Op.String(), valuePlain)
+				return []syntax.WordPart{pe}, true
+			}
+			if (exp.Word == nil || isEmptyValue(exp.Word)) && isPos {
+				return []syntax.WordPart{argvParam(), litPart("[" + raw + "]")}, true
 			}
 			var cond *syntax.Stmt
 			if exp.Op == syntax.DefaultUnsetOrNull {
 				cond = callStmt(litWord("test"), litWord("-n"), ref)
-			} else if isDigits(name) {
-				cond = callStmt(litWord("test"), litWord("(count $argv)"), litWord("-ge"), litWord(name))
+			} else if isPos {
+				cond = callStmt(litWord("test"), litWord("(count $argv)"), litWord("-ge"), litWord(raw))
 			} else {
 				cond = callStmt(litWord("set"), litWord("--query"), litWord(name))
 			}
@@ -953,11 +934,16 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 			return []syntax.WordPart{e.synthCmdSubst(chain)}, true
 
 		case syntax.AlternateUnsetOrNull, syntax.AlternateUnset:
+			if t.subst != nil {
+				e.warn(pe.Pos(), "%s cannot be applied to %s; left untranslated",
+					exp.Op.String(), valuePlain)
+				return []syntax.WordPart{pe}, true
+			}
 			var cond *syntax.Stmt
 			if exp.Op == syntax.AlternateUnsetOrNull {
 				cond = callStmt(litWord("test"), litWord("-n"), ref)
-			} else if isDigits(name) {
-				cond = callStmt(litWord("test"), litWord("(count $argv)"), litWord("-ge"), litWord(name))
+			} else if isPos {
+				cond = callStmt(litWord("test"), litWord("(count $argv)"), litWord("-ge"), litWord(raw))
 			} else {
 				cond = callStmt(litWord("set"), litWord("--query"), litWord(name))
 			}
@@ -970,13 +956,7 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 			syntax.RemSmallSuffix, syntax.RemLargeSuffix:
 			if exp.Word == nil {
 				// `${x%}` / `${x#}` strip an empty pattern: identity.
-				if isDigits(name) {
-					return []syntax.WordPart{argvParam(), litPart("[" + name + "]")}, true
-				}
-				if name == "-" {
-					return []syntax.WordPart{statusDashPart()}, true
-				}
-				return []syntax.WordPart{namedParam(name)}, true
+				return paramTargetParts(t), true
 			}
 			lazy := exp.Op == syntax.RemSmallPrefix || exp.Op == syntax.RemSmallSuffix
 			isPrefix := exp.Op == syntax.RemSmallPrefix || exp.Op == syntax.RemLargePrefix
@@ -985,20 +965,21 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 				return nil, false
 			}
 			return []syntax.WordPart{substPart("string", "replace", "--regex", "--",
-				regexArg, "''", varPlain)}, true
+				regexArg, "''", valueArg)}, true
+
 		case syntax.UpperAll:
 			if exp.Word != nil {
 				e.warn(pe.Pos(), "case modification with pattern is not supported; left untranslated")
 				return nil, false
 			}
-			return []syntax.WordPart{stringUnarySubst("upper", name)}, true
+			return []syntax.WordPart{stringUnarySubst("upper", ref)}, true
 
 		case syntax.LowerAll:
 			if exp.Word != nil {
 				e.warn(pe.Pos(), "case modification with pattern is not supported; left untranslated")
 				return nil, false
 			}
-			return []syntax.WordPart{stringUnarySubst("lower", name)}, true
+			return []syntax.WordPart{stringUnarySubst("lower", ref)}, true
 
 		default:
 			e.warn(pe.Pos(), "parameter expansion %q has no fish equivalent; left untranslated",

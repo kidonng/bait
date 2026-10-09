@@ -47,6 +47,11 @@ func containsUnquotedFishListVar(s string) bool {
 
 // bashContextVars defines Bash context introspection variables that map to
 // Fish command substitutions instead of normal variables.
+//
+// FUNCNAME maps to `status current-function`, which fish exposes only for the
+// innermost frame: indices beyond 0 and the array count have no fish
+// equivalent and are warned about. (The fish pinned in flake.lock has no
+// $funcstack list; see the task-8 report.)
 var bashContextVars = map[string][]string{
 	"0":            {"status", "filename"},
 	"BASH_SOURCE":  {"status", "filename"},
@@ -57,6 +62,111 @@ var bashContextVars = map[string][]string{
 	"FUNCNAME":     {"status", "current-function"},
 	"UID":          {"id", "-u"},
 	"GROUPS":       {"id", "-g"},
+}
+
+// paramTarget describes the fish reference a bash parameter name resolves
+// to. Exactly one of subst and name is meaningful:
+//
+//   - subst != nil: the reference is a command substitution. Operators that
+//     consume a value apply to the substitution result; operators fish cannot
+//     express over it are left untranslated with a warning.
+//   - subst == nil: a plain fish variable reference. name is the fish
+//     variable (already mangled). index, when non-empty, is the fish subscript
+//     used for a bare expansion; shift is added to an explicit bash subscript.
+//
+// mapped marks names whose bash semantics differ from a plain user variable,
+// so assignments to them have no faithful fish equivalent.
+type paramTarget struct {
+	name   string
+	subst  []syntax.WordPart
+	index  string
+	shift  int
+	mapped bool
+}
+
+// resolveParamTarget maps a bash parameter name onto its fish reference. It is
+// the single name-to-reference mapping consulted by word expansion, parameter
+// operators, arithmetic, and the binding side.
+func (e *emitter) resolveParamTarget(name string) (paramTarget, bool) {
+	if cv, ok := bashContextVars[name]; ok {
+		return paramTarget{subst: []syntax.WordPart{substPart(cv...)}, mapped: true}, true
+	}
+	if mangled, ok := fishReservedVars[name]; ok {
+		return paramTarget{name: mangled}, true
+	}
+	switch name {
+	case "@", "*":
+		return paramTarget{name: "argv", mapped: true}, true
+	case "?":
+		return paramTarget{name: "status"}, true
+	case "!":
+		return paramTarget{name: "last_pid"}, true
+	case "$", "BASHPID":
+		return paramTarget{name: "fish_pid"}, true
+	case "#":
+		return paramTarget{subst: []syntax.WordPart{substPart("count", "$argv")}, mapped: true}, true
+	case "HOSTNAME":
+		return paramTarget{name: "hostname", mapped: true}, true
+	case "HOSTTYPE", "MACHTYPE":
+		return paramTarget{subst: []syntax.WordPart{substPart("uname", "-m")}, mapped: true}, true
+	case "PIPESTATUS":
+		return paramTarget{name: "pipestatus", shift: 1, mapped: true}, true
+	case "DIRSTACK":
+		return paramTarget{name: "dirstack", shift: 1, mapped: true}, true
+	case "OSTYPE":
+		e.needHelper(helperOSType)
+		return paramTarget{subst: []syntax.WordPart{substPart("__bait_ostype")}, mapped: true}, true
+	case "RANDOM":
+		return paramTarget{subst: []syntax.WordPart{substPart("random")}, mapped: true}, true
+	case "SRANDOM":
+		return paramTarget{subst: []syntax.WordPart{substPart("random", "0", "4294967295")}, mapped: true}, true
+	case "EPOCHSECONDS":
+		return paramTarget{subst: []syntax.WordPart{substPart("date", "+%s")}, mapped: true}, true
+	case "-":
+		return paramTarget{subst: []syntax.WordPart{statusDashPart()}, mapped: true}, true
+	}
+	if isDigits(name) {
+		return paramTarget{name: "argv", index: name}, true
+	}
+	if syntax.ValidName(name) {
+		return paramTarget{name: name, shift: 1}, true
+	}
+	return paramTarget{}, false
+}
+
+// paramTargetParts renders a bare reference to the target.
+func paramTargetParts(t paramTarget) []syntax.WordPart {
+	if t.subst != nil {
+		return t.subst
+	}
+	if t.index != "" {
+		return []syntax.WordPart{namedParam(t.name), litPart("[" + t.index + "]")}
+	}
+	return []syntax.WordPart{namedParam(t.name)}
+}
+
+// paramTargetText renders a bare reference as fish source text, embedding a
+// substitution-backed target as "$(cmd)".
+func (e *emitter) paramTargetText(t paramTarget) string {
+	if t.subst != nil {
+		return e.render(&syntax.Word{Parts: t.subst})
+	}
+	if t.index != "" {
+		return "$" + t.name + "[" + t.index + "]"
+	}
+	return "$" + t.name
+}
+
+// paramTargetRef builds the double-quoted value reference used by operators
+// that consume a scalar value.
+func (e *emitter) paramTargetRef(t paramTarget) *syntax.Word {
+	if t.subst != nil {
+		return &syntax.Word{Parts: []syntax.WordPart{&syntax.DblQuoted{Parts: t.subst}}}
+	}
+	if t.index != "" {
+		return dq(namedParam(t.name), litPart("["+t.index+"]"))
+	}
+	return dq(namedParam(t.name))
 }
 
 func (e *emitter) analyzeVariables(f *syntax.File) {

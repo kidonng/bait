@@ -25,11 +25,15 @@ func (e *emitter) assignStmt(s *syntax.Stmt, c *syntax.CallExpr) {
 				curScope = ""
 			}
 		}
+		name := ""
+		if a.Name != nil {
+			name = e.bindName(s.Position, a.Name.Value)
+		}
 		if a.Name != nil && e.commandPrefixVars[a.Name.Value] && isEmptyValue(a.Value) {
 			if curScope != "" {
-				lines = append(lines, fmt.Sprintf("set %s %s", curScope, e.varName(a.Name.Value)))
+				lines = append(lines, fmt.Sprintf("set %s %s", curScope, name))
 			} else {
-				lines = append(lines, fmt.Sprintf("set %s", e.varName(a.Name.Value)))
+				lines = append(lines, fmt.Sprintf("set %s", name))
 			}
 			continue
 		}
@@ -45,7 +49,7 @@ func (e *emitter) assignStmt(s *syntax.Stmt, c *syntax.CallExpr) {
 				e.lines(e.render(s))
 				return
 			}
-			lines = append(lines, fmt.Sprintf("set %s--append %s%s", scopePrefix(curScope), e.varName(a.Name.Value),
+			lines = append(lines, fmt.Sprintf("set %s--append %s%s", scopePrefix(curScope), name,
 				e.arrayElemArgs(a.Array)))
 
 		case a.Index != nil:
@@ -55,15 +59,15 @@ func (e *emitter) assignStmt(s *syntax.Stmt, c *syntax.CallExpr) {
 				e.lines(e.render(s))
 				return
 			}
-			lines = append(lines, fmt.Sprintf("set %s%s[%s] %s", scopePrefix(curScope), e.varName(a.Name.Value), tok,
+			lines = append(lines, fmt.Sprintf("set %s%s[%s] %s", scopePrefix(curScope), name, tok,
 				e.assignValue(a)))
 
 		case a.Array != nil:
-			lines = append(lines, fmt.Sprintf("set %s%s%s", scopePrefix(curScope), e.varName(a.Name.Value),
+			lines = append(lines, fmt.Sprintf("set %s%s%s", scopePrefix(curScope), name,
 				e.arrayElemArgs(a.Array)))
 
 		default:
-			lines = append(lines, setLineText(curScope, e.varName(a.Name.Value), e.assignValue(a)))
+			lines = append(lines, setLineText(curScope, name, e.assignValue(a)))
 		}
 	}
 	sc := e.prepareStmt(s)
@@ -78,6 +82,24 @@ func (e *emitter) assignStmt(s *syntax.Stmt, c *syntax.CallExpr) {
 		}
 	}
 	e.printLinesWithTrailing(lines, sc.trailing)
+}
+
+// bindName resolves the fish variable an assignment writes. Mapped names
+// have no faithful fish write, so the assignment is warned about and keeps
+// today's emission: the mapped fish variable when one exists (which errors
+// loudly if read-only), or the raw bash name for substitution-backed
+// mappings (an inert variable fish never reads).
+func (e *emitter) bindName(pos syntax.Pos, name string) string {
+	t, ok := e.resolveParamTarget(name)
+	if !ok || !t.mapped {
+		return e.varName(name)
+	}
+	if t.subst == nil && t.name != "" {
+		e.warn(pos, "%s maps to fish's %s; assignment has no faithful fish equivalent", name, t.name)
+		return t.name
+	}
+	e.warn(pos, "%s is derived from %s in fish; assignment has no effect", name, e.paramTargetText(t))
+	return e.varName(name)
 }
 
 func isEmptyValue(w *syntax.Word) bool {
@@ -130,11 +152,10 @@ func (e *emitter) arrayElemArgs(a *syntax.ArrayExpr) string {
 	return b.String()
 }
 
-// arrayIndex maps a bash array subscript to its fish token: "@"/"*"
-// become the whole-list marker "@" and non-negative constants shift up
-// by one; negative indices already match fish and pass through. ok is
-// false for dynamic expressions, which cannot shift statically.
-func (e *emitter) arrayIndex(idx syntax.ArithmExpr) (string, bool) {
+// indexToken extracts a raw bash subscript token without shifting: "@"/"*",
+// a non-negative integer, or a negative integer. ok is false for dynamic
+// expressions, which cannot be shifted statically.
+func (e *emitter) indexToken(idx syntax.ArithmExpr) (string, bool) {
 	if u, ok := idx.(*syntax.UnaryArithm); ok && u.Op == syntax.Minus && !u.Post {
 		s := strings.TrimSpace(e.render(u.X))
 		if isDigits(s) {
@@ -143,22 +164,39 @@ func (e *emitter) arrayIndex(idx syntax.ArithmExpr) (string, bool) {
 		return "", false
 	}
 	s := strings.TrimSpace(e.render(idx))
-	switch {
-	case s == "@" || s == "*":
+	if s == "@" || s == "*" || isDigits(s) {
 		return s, true
-	case isDigits(s):
-		n, err := strconv.Atoi(s)
-		if err != nil {
-			return "", false
-		}
-		return strconv.Itoa(n + 1), true
 	}
 	return "", false
 }
 
+// shiftIndex shifts a non-negative bash subscript into its fish position.
+// Negative subscripts count from the end in both shells and pass through.
+func shiftIndex(tok string, shift int) string {
+	if tok == "@" || tok == "*" || strings.HasPrefix(tok, "-") {
+		return tok
+	}
+	n, err := strconv.Atoi(tok)
+	if err != nil {
+		return tok
+	}
+	return strconv.Itoa(n + shift)
+}
+
+// arrayIndex maps a bash array subscript to its fish token: "@"/"*" become
+// the whole-list marker "@" and non-negative constants shift up by one;
+// negative indices already match fish and pass through.
+func (e *emitter) arrayIndex(idx syntax.ArithmExpr) (string, bool) {
+	tok, ok := e.indexToken(idx)
+	if !ok {
+		return "", false
+	}
+	return shiftIndex(tok, 1), true
+}
+
 // soleArrayAll reports whether the word is exactly "${arr[@]}" or
-// "${arr[*]}" (optionally quoted) and returns the variable name, whether
-// the subscript token was "*", and whether the word was double-quoted.
+// "${arr[*]}" (optionally quoted) and returns the raw bash variable name,
+// whether the subscript token was "*", and whether the word was double-quoted.
 func (e *emitter) soleArrayAll(w *syntax.Word) (name string, isStar bool, quoted bool, ok bool) {
 	if len(w.Parts) != 1 {
 		return "", false, false, false
@@ -181,7 +219,7 @@ func (e *emitter) soleArrayAll(w *syntax.Word) (name string, isStar bool, quoted
 	if !ok || (tok != "@" && tok != "*") {
 		return "", false, false, false
 	}
-	return e.varName(pe.Param.Value), tok == "*", isQuoted, true
+	return pe.Param.Value, tok == "*", isQuoted, true
 }
 
 func (e *emitter) assignValue(a *syntax.Assign) string {
@@ -282,6 +320,7 @@ func (e *emitter) declClause(s *syntax.Stmt, d *syntax.DeclClause) {
 			continue
 		}
 		if a.Name != nil {
+			name := e.bindName(s.Position, a.Name.Value)
 			if scope == "--function" {
 				if e.funcLocals == nil {
 					e.funcLocals = make(map[string]bool)
@@ -291,13 +330,13 @@ func (e *emitter) declClause(s *syntax.Stmt, d *syntax.DeclClause) {
 			}
 			if e.commandPrefixVars[a.Name.Value] && isEmptyValue(a.Value) {
 				if scope != "" {
-					lines = append(lines, fmt.Sprintf("set %s %s", scope, e.varName(a.Name.Value)))
+					lines = append(lines, fmt.Sprintf("set %s %s", scope, name))
 				} else {
-					lines = append(lines, fmt.Sprintf("set %s", e.varName(a.Name.Value)))
+					lines = append(lines, fmt.Sprintf("set %s", name))
 				}
 				continue
 			}
-			lines = append(lines, setLineText(scope, e.varName(a.Name.Value), e.assignValue(a)))
+			lines = append(lines, setLineText(scope, name, e.assignValue(a)))
 		}
 	}
 	sc := e.prepareStmt(s)

@@ -182,7 +182,7 @@ Bash uses 0-based arrays, while Fish lists are 1-based. `bait` systematically re
 | `$DIRSTACK` | `$dirstack` | Directory stack array |
 | `$RANDOM`, `$SRANDOM` | `$(random)`, `$(random 0 4294967295)` | Random numbers (0–32767 and 32-bit unsigned 0–4294967295) |
 | `$EPOCHSECONDS` | `$(date +%s)` | Unix epoch timestamp |
-| `$BASH`, `$BASH_COMMAND`, `$FUNCNAME`, `$FUNCNAME[0]` | `$(status fish-path)`, `$(status current-command)`, `$(status current-function)` | Execution context introspection |
+| `$BASH`, `$BASH_COMMAND`, `$FUNCNAME`, `$FUNCNAME[0]` | `$(status fish-path)`, `$(status current-command)`, `$(status current-function)` | Execution context introspection; deeper `FUNCNAME` indices and `${#FUNCNAME[@]}` have no fish equivalent and emit a warning |
 | `$BASH_VERSION` | `$(echo 5.2.0)` | Bash compatibility version string |
 | `$-` (standalone) | `$(status is-interactive && echo i \|\| echo '')` | Interactive shell check (emits warning; uses `status is-interactive`) |
 
@@ -204,6 +204,7 @@ Bash uses 0-based arrays, while Fish lists are 1-based. `bait` systematically re
 | `${s:offset:length}`, `${s:offset}` | `$(string sub --start=(offset+1) --length=length -- "$s")`, `$(string sub --start=(offset+1) -- "$s")` | Substring extraction |
 | `${arr[@]:1:2}` / `${arr[*]:1:2}`, `${arr[@]:1}` / `${arr[*]:1}` | `$arr[2..3]`, `$arr[2..-1]` | 1-based slice |
 | `${v^^}` / `${v,,}` | `$(string upper -- "$v")` / `$(string lower -- "$v")` | Uppercase / lowercase string conversion |
+| `${0#*/}`, `${RANDOM%?}` | `$(string replace --regex -- '^.*?/' '' "$(status filename)")`, `$(string replace --regex -- '.$' '' "$(random)")` | Prefix/suffix removal and pattern replacement apply to substitution-backed context variables; other operators on them warn |
 
 #### Literal `$` Escaping
 
