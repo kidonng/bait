@@ -57,7 +57,6 @@ func (e *emitter) normalize(f *syntax.File) {
 					x.Args[0] = litWord("__bait_eval")
 				}
 			}
-			normalizeReadCmd(x)
 			for i := 1; i < len(x.Args); i++ {
 				if e.arrayAllWords[x.Args[i]] {
 					// "${arr[@]}" already passes every element as its own
@@ -109,6 +108,9 @@ func (e *emitter) normalize(f *syntax.File) {
 				} else if c, ok := x.Cmd.(*syntax.CallExpr); ok && len(c.Args) == 0 && len(c.Assigns) == 0 {
 					c.Args = []*syntax.Word{litWord("true")}
 				}
+			}
+			if c, ok := x.Cmd.(*syntax.CallExpr); ok {
+				e.normalizeReadCmd(x, c)
 			}
 		case *syntax.DblQuoted:
 			for _, p := range x.Parts {

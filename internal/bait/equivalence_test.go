@@ -1072,6 +1072,42 @@ func TestBashFishEquivalence(t *testing.T) {
 				"n=5\n" +
 				"f a b c\n",
 		},
+		{
+			// bash's read assigns the global variable unless a local of
+			// that name exists, which fish's default scope does not.
+			name:  "read in a function assigns globally",
+			files: map[string]string{"data.txt": "hello\n"},
+			src: "f() {\n" +
+				"\tread x\n" +
+				"}\n" +
+				"f < data.txt\n" +
+				"echo \"x=[$x]\"\n",
+		},
+		{
+			name:  "read with a declared local keeps it",
+			files: map[string]string{"data.txt": "hello\n"},
+			src: "f() {\n" +
+				"\tlocal x\n" +
+				"\tread x\n" +
+				"\techo \"in=[$x]\"\n" +
+				"}\n" +
+				"f < data.txt\n" +
+				"echo \"out=[$x]\"\n",
+		},
+		{
+			name: "read -a splits into a list",
+			src:  "read -a arr <<< \"a b c\"\necho \"e=${arr[1]}\"\n",
+		},
+		{
+			name:  "read -p is silent without a terminal",
+			files: map[string]string{"data.txt": "hi\n"},
+			src:   "read -p \"status: \" v < data.txt\necho \"v=[$v]\"\n",
+		},
+		{
+			name:          "read -N exact count",
+			allowWarnings: true,
+			src:           "read -N 2 w <<< \"abcd\"\necho \"w=[$w]\"\n",
+		},
 	}
 
 	for _, tc := range tests {

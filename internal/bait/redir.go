@@ -202,63 +202,172 @@ func (e *emitter) checkHighFDRedir(s *syntax.Stmt, kind string) {
 	}
 }
 
+// readOptionTakesArg reports whether a bash read option consumes an
+// argument: p (prompt), u (fd), t (timeout), n/N (nchars), d (delimiter),
+// i (readline initial text), a (array name).
+func readOptionTakesArg(ch byte) bool {
+	return strings.ContainsRune("putnNdia", rune(ch))
+}
+
 // normalizeReadCmd adapts a bash read command to fish:
-//  1. Removes the -r flag (fish read never processes backslashes, so raw mode is default).
-//  2. Applies variable name mangling for target variable names to prevent colliding with
-//     fish read-only or reserved variables (e.g. "_" -> "_unused", "status" -> "_status").
-func normalizeReadCmd(c *syntax.CallExpr) {
+//  1. Drops -r: fish never processes backslashes, so raw mode is default.
+//  2. Renames -p to -P: fish's -p runs its argument as the prompt command,
+//     while -P takes the literal prompt bash's -p does.
+//  3. Drops -t (timeout), -i (readline initial text), -e (readline) and
+//     -N (exact count), warning where fish cannot match the meaning.
+//  4. Turns -u FD into an input redirection: fish's -u is --unexport.
+//  5. Drops -a and keeps its name as a target: fish's read always splits
+//     into list elements.
+//  6. Mangles target names that collide with fish's reserved variables
+//     (e.g. "_" -> "_unused", "status" -> "_status"), and records them so
+//     emission can pin the scope bash would assign to.
+func (e *emitter) normalizeReadCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 	if len(c.Args) == 0 || !isLitWord(c.Args[0], "read") {
 		return
 	}
-	filtered := c.Args[:1]
+	var targets []string
+	filtered := []*syntax.Word{c.Args[0]}
+	addTarget := func(w *syntax.Word) {
+		lit, ok := isBareLit(w)
+		if !ok {
+			filtered = append(filtered, w)
+			return
+		}
+		name := mangleVarName(lit)
+		targets = append(targets, name)
+		filtered = append(filtered, litWord(name))
+	}
 	inOptions := true
 	for i := 1; i < len(c.Args); i++ {
 		w := c.Args[i]
-		if inOptions {
-			lit, isLit := isBareLit(w)
-			if isLit && lit == "--" {
-				inOptions = false
-				filtered = append(filtered, w)
-				continue
-			}
-			if isLit && strings.HasPrefix(lit, "-") && len(lit) > 1 {
-				// Strip 'r' from the flag if present
-				cleaned := "-" + strings.ReplaceAll(lit[1:], "r", "")
-				optChar := rune(lit[len(lit)-1])
-				// Options taking an argument: p (prompt), u (fd), t (timeout),
-				// n/N (nchars), d (delim), i (initial text), a (array name)
-				takesArg := strings.ContainsRune("putnNdia", optChar)
-				consumesNext := takesArg && (len(lit) == 2 || (len(lit) > 2 && lit[len(lit)-1] == byte(optChar) && !strings.ContainsRune("putnNdia", rune(lit[1]))))
-
-				if cleaned != "-" {
-					filtered = append(filtered, litWord(cleaned))
-				}
-				if consumesNext && i+1 < len(c.Args) {
-					i++
-					argWord := c.Args[i]
-					if optChar == 'a' {
-						if argLit, ok := isBareLit(argWord); ok {
-							filtered = append(filtered, litWord(mangleVarName(argLit)))
-						} else {
-							filtered = append(filtered, argWord)
-						}
-					} else {
-						// Non-variable option arguments (prompt, fd, timeout, etc.) preserved verbatim
-						filtered = append(filtered, argWord)
-					}
-				}
-				continue
-			}
+		lit, isLit := isBareLit(w)
+		if inOptions && isLit && lit == "--" {
 			inOptions = false
-		}
-		// Positional variable name
-		if lit, ok := isBareLit(w); ok {
-			filtered = append(filtered, litWord(mangleVarName(lit)))
-		} else {
 			filtered = append(filtered, w)
+			continue
+		}
+		if !inOptions || !isLit || !strings.HasPrefix(lit, "-") || len(lit) < 2 {
+			inOptions = false
+			addTarget(w)
+			continue
+		}
+		// An option cluster: bash consumes the rest of the cluster, or the
+		// next word, as the argument of an option that takes one.
+		var kept []byte
+		var argWord *syntax.Word
+		argText := ""
+		keepArg := false
+		for j := 1; j < len(lit); j++ {
+			ch := lit[j]
+			if !readOptionTakesArg(ch) {
+				switch ch {
+				case 'r', 'e':
+					// raw is fish's default; readline has no fish form
+				default:
+					kept = append(kept, ch)
+				}
+				continue
+			}
+			if j+1 < len(lit) {
+				argText = lit[j+1:]
+			} else if i+1 < len(c.Args) {
+				i++
+				argWord = c.Args[i]
+				argText, _ = isBareLit(argWord)
+			}
+			switch ch {
+			case 'p':
+				kept = append(kept, 'P')
+				keepArg = true
+			case 'N':
+				e.warn(w.Pos(), "read -N reads an exact character count; fish's -n stops at the delimiter")
+				kept = append(kept, 'n')
+				keepArg = true
+			case 'a':
+				// bash's -a stores the fields as an array; fish's --list
+				// stores them as a list, and the name is still a target.
+				filtered = append(filtered, litWord("--list"))
+				if argWord != nil {
+					addTarget(argWord)
+				} else if argText != "" {
+					name := mangleVarName(argText)
+					targets = append(targets, name)
+					filtered = append(filtered, litWord(name))
+				}
+			case 'u':
+				// fish's -u is --unexport, and its read does not read from
+				// an inherited descriptor, so point the input at the
+				// descriptor's device instead.
+				e.warn(w.Pos(), "read -u reads from a file descriptor; fish's -u is --unexport, so the input is redirected to /dev/fd instead")
+				if fdWord := readFDWord(argWord, argText); fdWord != nil && s != nil {
+					s.Redirs = append(s.Redirs, &syntax.Redirect{Op: syntax.RdrIn, Word: fdWord})
+				}
+			case 't':
+				e.warn(w.Pos(), "read -t has no fish equivalent (no read timeout); the timeout is dropped")
+			case 'i':
+				e.warn(w.Pos(), "read -i initial text has no fish equivalent; it is dropped")
+			default:
+				kept = append(kept, ch)
+				keepArg = true
+			}
+			break
+		}
+		if len(kept) > 0 {
+			filtered = append(filtered, litWord("-"+string(kept)))
+		}
+		if keepArg {
+			if argWord != nil {
+				filtered = append(filtered, argWord)
+			} else if argText != "" {
+				filtered = append(filtered, litWord(argText))
+			}
 		}
 	}
 	c.Args = filtered
+	if len(targets) > 0 {
+		if e.readTargets == nil {
+			e.readTargets = make(map[*syntax.CallExpr][]string)
+		}
+		e.readTargets[c] = targets
+	}
+}
+
+// readFDWord builds the input target for a bash `read -u FD`: the
+// descriptor's device file, which fish's read can open even when the
+// descriptor was inherited from the caller.
+func readFDWord(argWord *syntax.Word, argText string) *syntax.Word {
+	if argWord != nil {
+		return &syntax.Word{Parts: append([]syntax.WordPart{litPart("/dev/fd/")}, argWord.Parts...)}
+	}
+	if argText == "" {
+		return nil
+	}
+	return litWord("/dev/fd/" + argText)
+}
+
+// applyReadScope pins the scope bash's read assigns to. Inside a function,
+// `read x` writes the global x unless the function declared a local one,
+// while fish's read creates a function-scoped variable when none exists;
+// an existing local is left alone so fish targets it like bash does.
+func (e *emitter) applyReadScope(c *syntax.CallExpr) {
+	if !e.inFunction || c == nil {
+		return
+	}
+	targets := e.readTargets[c]
+	if len(targets) == 0 {
+		return
+	}
+	for _, name := range targets {
+		if e.funcLocals[name] {
+			return
+		}
+	}
+	for _, a := range c.Args {
+		if isLitWord(a, "--global") || isLitWord(a, "-g") {
+			return
+		}
+	}
+	c.Args = append([]*syntax.Word{c.Args[0], litWord("--global")}, c.Args[1:]...)
 }
 
 func isBareLit(w *syntax.Word) (string, bool) {

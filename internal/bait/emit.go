@@ -34,6 +34,7 @@ type emitter struct {
 	synthStmts        map[*syntax.Stmt]bool
 	arrayAllWords     map[*syntax.Word]bool
 	synthSets         map[*syntax.CallExpr]bool
+	readTargets       map[*syntax.CallExpr][]string
 	needIFS           bool
 	lastLine          uint
 }
@@ -53,7 +54,7 @@ func (e *emitter) newSubEmitter() *emitter {
 	sub.synthStmts = e.synthStmts
 	sub.arrayAllWords = e.arrayAllWords
 	sub.synthSets = e.synthSets
-	sub.multiWordScalars = e.multiWordScalars
+	sub.readTargets = e.readTargets
 	sub.commandPrefixVars = e.commandPrefixVars
 	sub.knownFuncs = e.knownFuncs
 	return sub
@@ -387,6 +388,7 @@ func (e *emitter) stmt(s *syntax.Stmt) {
 	case nil:
 		return
 	case *syntax.CallExpr:
+		e.applyReadScope(cmd)
 		if len(cmd.Args) == 0 && len(cmd.Assigns) > 0 {
 			e.assignStmt(s, cmd)
 			break

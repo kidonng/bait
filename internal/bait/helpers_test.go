@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -44,19 +45,34 @@ func TestReadFlags(t *testing.T) {
 			"read _status _version code\n",
 		},
 		{
-			"read with prompt preserved and variable mangled",
+			"read prompt becomes the literal-prompt flag",
 			"read -p \"status: \" status\n",
-			"read -p \"status: \" _status\n",
+			"read -P \"status: \" _status\n",
 		},
 		{
-			"read with fd preserved and variable mangled",
-			"read -u 3 status\n",
-			"read -u 3 _status\n",
+			"read cluster argument is the prompt",
+			"read -pr var\n",
+			"read -P r var\n",
+		},
+		{
+			"read array flag becomes list mode",
+			"read -a arr\n",
+			"read --list arr\n",
 		},
 		{
 			"read -r with bare prompt preserved and variable mangled",
 			"read -r -p prompt status\n",
-			"read -p prompt _status\n",
+			"read -P prompt _status\n",
+		},
+		{
+			"read in a function pins the global scope",
+			"f() {\n\tread x\n}\n",
+			"function f\n    read --global x\nend\n",
+		},
+		{
+			"read with a declared local keeps fish's default scope",
+			"f() {\n\tlocal x\n\tread x\n}\n",
+			"function f\n    set --function x \"\"\n    read x\nend\n",
 		},
 	}
 	for _, tc := range tests {
@@ -67,6 +83,57 @@ func TestReadFlags(t *testing.T) {
 			}
 			for _, w := range warnings {
 				t.Errorf("unexpected warning: %v", w)
+			}
+			if string(got) != tc.want {
+				t.Errorf("mismatch\n in:   %q\n got:  %q\n want: %q",
+					tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestReadOptionRewrites pins the read options whose fish meaning differs:
+// the descriptor, timeout, and exact-count forms.
+func TestReadOptionRewrites(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		warn string
+		want string
+	}{
+		{
+			"read -u becomes an input redirection",
+			"read -u 3 status\n",
+			"read -u reads from a file descriptor",
+			"read _status < /dev/fd/3\n",
+		},
+		{
+			"read -t timeout dropped",
+			"read -t 1 status\n",
+			"read -t has no fish equivalent",
+			"read _status\n",
+		},
+		{
+			"read -N mapped to -n",
+			"read -N 2 status\n",
+			"read -N reads an exact character count",
+			"read -n 2 _status\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, warnings, err := Translate([]byte(tc.in))
+			if err != nil {
+				t.Fatalf("Translate(%q) error: %v", tc.in, err)
+			}
+			if tc.warn == "" {
+				for _, w := range warnings {
+					t.Errorf("unexpected warning: %v", w)
+				}
+			} else if !slices.ContainsFunc(warnings, func(w Warning) bool {
+				return strings.Contains(w.Text, tc.warn)
+			}) {
+				t.Errorf("missing warning %q in %v", tc.warn, warnings)
 			}
 			if string(got) != tc.want {
 				t.Errorf("mismatch\n in:   %q\n got:  %q\n want: %q",
