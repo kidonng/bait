@@ -249,14 +249,7 @@ func (e *emitter) paramValueRef(pe *syntax.ParamExp) (string, bool) {
 	if pe == nil || pe.Param == nil {
 		return "", false
 	}
-	name := pe.Param.Value
-	switch e.listPolicy(name) {
-	case listFishListEnv:
-		return `"$` + name + `"`, true
-	case listBashArray:
-		return `"$` + name + `[1]"`, true
-	}
-	return "$" + name, true
+	return e.paramTargetValueRef(paramTarget{name: pe.Param.Value}), true
 }
 
 // arrayAllRef returns the whole-list reference for a word that
