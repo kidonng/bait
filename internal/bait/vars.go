@@ -157,16 +157,36 @@ func (e *emitter) paramTargetText(t paramTarget) string {
 	return "$" + t.name
 }
 
-// paramTargetRef builds the double-quoted value reference used by operators
-// that consume a scalar value.
-func (e *emitter) paramTargetRef(t paramTarget) *syntax.Word {
+// paramTargetRefText renders the double-quoted reference operators use when
+// they consume one value. It is literal text, not a parameter node: the name
+// has already been resolved, and a node would be resolved a second time.
+func (e *emitter) paramTargetRefText(t paramTarget) string {
 	if t.subst != nil {
-		return &syntax.Word{Parts: []syntax.WordPart{&syntax.DblQuoted{Parts: t.subst}}}
+		return `"` + e.paramTargetText(t) + `"`
 	}
 	if t.index != "" {
-		return dq(namedParam(t.name), litPart("["+t.index+"]"))
+		return `"$` + t.name + `[` + t.index + `]"`
 	}
-	return dq(namedParam(t.name))
+	return `"$` + t.name + `"`
+}
+
+// paramTargetValueRef renders a resolved target as one value, applying the
+// list policy: colon-split names are quoted and bash arrays contribute
+// element 0.
+func (e *emitter) paramTargetValueRef(t paramTarget) string {
+	if t.subst != nil {
+		return `"` + e.paramTargetText(t) + `"`
+	}
+	if t.index != "" {
+		return `"$` + t.name + `[` + t.index + `]"`
+	}
+	switch e.listPolicy(t.name) {
+	case listFishListEnv:
+		return `"$` + t.name + `"`
+	case listBashArray:
+		return `"$` + t.name + `[1]"`
+	}
+	return "$" + t.name
 }
 
 // listKind classifies how a bash variable's value maps onto fish's list

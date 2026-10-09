@@ -51,7 +51,7 @@ func (e *emitter) stmtNeedsRewrite(st *syntax.Stmt) bool {
 		if len(c.Args) > 0 && isLitWord(c.Args[0], "shift") {
 			return true
 		}
-		if len(c.Assigns) == 0 && len(c.Args) > 0 && (e.isSetBuiltin(c) || isSynthesizedSet(c)) {
+		if len(c.Assigns) == 0 && len(c.Args) > 0 && (e.isSetBuiltin(c) || e.isSynthesizedSet(c)) {
 			return true
 		}
 		if len(c.Assigns) == 0 && len(c.Args) > 0 {

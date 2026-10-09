@@ -951,6 +951,13 @@ func TestBashFishEquivalence(t *testing.T) {
 				"if [[ $x == \"$y\" ]]; then echo quoted-m; else echo quoted-no; fi\n" +
 				"if [[ $x != $y ]]; then echo diff; else echo same; fi\n",
 		},
+		{
+			// fish's default IFS holds the same separators in a different
+			// order; the translated script restores bash's spelling so
+			// string comparisons see the same value.
+			name: "IFS compares equal to bash's default",
+			src:  "DEFAULT_IFS=\" \t\n\"\nif [ \"$IFS\" != \"$DEFAULT_IFS\" ]; then echo differ; else echo same; fi\n",
+		},
 	}
 
 	for _, tc := range tests {

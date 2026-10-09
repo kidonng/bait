@@ -821,3 +821,23 @@ func TestNewlinePreservation(t *testing.T) {
 		})
 	}
 }
+
+// TestIFSNormalization checks that a script reading IFS gets bash's
+// separator order, which fish's own default spells differently.
+func TestIFSNormalization(t *testing.T) {
+	got, _, err := Translate([]byte("if [ \"$IFS\" != \"x\" ]; then echo differ; fi\n"))
+	if err != nil {
+		t.Fatalf("Translate error: %v", err)
+	}
+	if !strings.Contains(string(got), "set --global IFS \" \t\n\"") {
+		t.Errorf("expected the IFS normalization preamble, got:\n%s", got)
+	}
+
+	got, _, err = Translate([]byte("echo hello\n"))
+	if err != nil {
+		t.Fatalf("Translate error: %v", err)
+	}
+	if strings.Contains(string(got), "--global IFS") {
+		t.Errorf("a script that never reads IFS should not get the preamble:\n%s", got)
+	}
+}

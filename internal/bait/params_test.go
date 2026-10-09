@@ -425,10 +425,12 @@ func TestContextArrayResolution(t *testing.T) {
 			"",
 		},
 		{
-			"context default operator warns",
+			// A substitution always yields a value, so :- only matters for
+			// an empty result; the value is captured once.
+			"context default operator captures the substitution",
 			"echo ${RANDOM:-1}\n",
-			"echo ${RANDOM:-1}\n",
-			"cannot be applied",
+			"echo $(set --local __bait_value $(random) && test -n $__bait_value && printf %s\\n $__bait_value || printf %s\\n 1)\n",
+			"",
 		},
 	}
 	for _, tc := range tests {

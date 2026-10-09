@@ -33,6 +33,8 @@ type emitter struct {
 	knownFuncs        map[string]bool
 	synthStmts        map[*syntax.Stmt]bool
 	arrayAllWords     map[*syntax.Word]bool
+	synthSets         map[*syntax.CallExpr]bool
+	needIFS           bool
 	lastLine          uint
 }
 
@@ -50,6 +52,7 @@ func (e *emitter) newSubEmitter() *emitter {
 	sub.knownLists = e.knownLists
 	sub.synthStmts = e.synthStmts
 	sub.arrayAllWords = e.arrayAllWords
+	sub.synthSets = e.synthSets
 	sub.multiWordScalars = e.multiWordScalars
 	sub.commandPrefixVars = e.commandPrefixVars
 	sub.knownFuncs = e.knownFuncs
@@ -77,6 +80,7 @@ func newEmitter() *emitter {
 		knownFuncs:        make(map[string]bool),
 		synthStmts:        make(map[*syntax.Stmt]bool),
 		arrayAllWords:     make(map[*syntax.Word]bool),
+		synthSets:         make(map[*syntax.CallExpr]bool),
 	}
 }
 
@@ -317,6 +321,14 @@ func (e *emitter) file(f *syntax.File) {
 		}
 	}
 
+	if e.needIFS {
+		// fish's default IFS holds the same separator characters in a
+		// different order; bash's order is what scripts read and compare.
+		e.buf.WriteString("# fish's default IFS lists the same separators in a different order;\n")
+		e.buf.WriteString("# bash scripts compare its string value, so restore bash's order.\n")
+		e.buf.WriteString("set --global IFS \" \t\n\"\n\n")
+	}
+
 	if !e.noHelpers {
 		wroteHelper := false
 		for _, h := range allHelpers {
@@ -441,23 +453,8 @@ func (e *emitter) simple(s *syntax.Stmt) {
 			e.shiftCmd(s, c)
 			return
 		}
-		if len(c.Args) > 0 {
-			if isLitWord(c.Args[0], "getopts") {
-				e.needHelper(helperGetopts)
-			} else if isLitWord(c.Args[0], "hash") {
-				e.needHelper(helperHash)
-			} else if isLitWord(c.Args[0], "unalias") {
-				e.needHelper(helperUnalias)
-			} else if isLitWord(c.Args[0], "source") {
-				e.needHelper(helperSource)
-			} else if isLitWord(c.Args[0], ".") {
-				e.needHelper(helperDot)
-			} else if isLitWord(c.Args[0], "unset") {
-				e.needHelper(helperUnset)
-			}
-		}
 		e.warnBashOnlyBuiltin(s, c)
-		if isSynthesizedSet(c) {
+		if e.isSynthesizedSet(c) {
 			sc := e.prepareStmt(s)
 			varName := c.Args[1].Parts[0].(*syntax.Lit).Value
 			val := e.renderWordSmart(c.Args[2])

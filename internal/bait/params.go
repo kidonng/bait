@@ -22,32 +22,29 @@ func (e *emitter) normalize(f *syntax.File) {
 				e.knownFuncs[x.Name.Value] = true
 			}
 		case *syntax.ParamExp:
-			if x.Param != nil && x.Param.Value == "OSTYPE" {
-				e.needHelper(helperOSType)
+			if x.Param != nil {
+				if x.Param.Value == "OSTYPE" {
+					e.needHelper(helperOSType)
+				}
+				if x.Param.Value == "IFS" {
+					// fish's default IFS lists the same separator
+					// characters in a different order; scripts that read
+					// IFS compare its string value, so restore bash's
+					// order once at the top of the script.
+					e.needIFS = true
+				}
 			}
 		case *syntax.CallExpr:
 			normalizeCommandName(x)
-			if len(x.Args) > 0 {
-				if isLitWord(x.Args[0], "getopts") {
-					e.needHelper(helperGetopts)
-					if len(x.Args) >= 3 {
-						if lit, ok := isBareLit(x.Args[2]); ok {
-							x.Args[2] = litWord(e.varName(lit))
-						}
+			e.helperDispatch(x)
+			if len(x.Args) > 0 && isLitWord(x.Args[0], "getopts") {
+				if len(x.Args) >= 3 {
+					if lit, ok := isBareLit(x.Args[2]); ok {
+						x.Args[2] = litWord(e.varName(lit))
 					}
-					if len(x.Args) == 3 {
-						x.Args = append(x.Args, &syntax.Word{Parts: []syntax.WordPart{argvParam()}})
-					}
-				} else if isLitWord(x.Args[0], "hash") {
-					e.needHelper(helperHash)
-				} else if isLitWord(x.Args[0], "unalias") {
-					e.needHelper(helperUnalias)
-				} else if isLitWord(x.Args[0], "source") {
-					e.needHelper(helperSource)
-				} else if isLitWord(x.Args[0], ".") {
-					e.needHelper(helperDot)
-				} else if isLitWord(x.Args[0], "unset") {
-					e.needHelper(helperUnset)
+				}
+				if len(x.Args) == 3 {
+					x.Args = append(x.Args, &syntax.Word{Parts: []syntax.WordPart{argvParam()}})
 				}
 			}
 			if len(x.Args) > 0 && isLitWord(x.Args[0], "eval") {
@@ -198,6 +195,35 @@ func (e *emitter) rewriteParams(f *syntax.File) {
 	})
 }
 
+// helperDispatch marks the runtime helper a builtin needs. It runs once per
+// call expression during normalize, so statements, conditions, and chain
+// leaves all resolve helpers through the same decision.
+func (e *emitter) helperDispatch(c *syntax.CallExpr) {
+	if len(c.Args) == 0 || len(c.Assigns) != 0 {
+		return
+	}
+	switch {
+	case isLitWord(c.Args[0], "getopts"):
+		e.needHelper(helperGetopts)
+	case isLitWord(c.Args[0], "hash"):
+		e.needHelper(helperHash)
+	case isLitWord(c.Args[0], "unalias"):
+		e.needHelper(helperUnalias)
+	case isLitWord(c.Args[0], "source"):
+		e.needHelper(helperSource)
+	case isLitWord(c.Args[0], "."):
+		e.needHelper(helperDot)
+	case isLitWord(c.Args[0], "unset"):
+		e.needHelper(helperUnset)
+	}
+}
+
+// statusDashText renders the $- emulation for contexts that need text
+// rather than a word part.
+func (e *emitter) statusDashText() string {
+	return e.render(&syntax.Word{Parts: []syntax.WordPart{statusDashPart()}})
+}
+
 // rewriteRedirectTarget applies the shared list policy to a redirection
 // target at normalize time, so every emission path (the printer for simple
 // commands, tails for structural ones) sees the same word: a colon-split
@@ -214,10 +240,13 @@ func (e *emitter) rewriteRedirectTarget(r *syntax.Redirect) {
 	if !ok {
 		return
 	}
-	ref, ok := e.paramValueRef(pe)
+	// This rewrite runs before the word walk splices names, so resolve the
+	// target here.
+	t, ok := e.resolveParamTarget(pe.Param.Value)
 	if !ok {
 		return
 	}
+	ref := e.paramTargetValueRef(t)
 	switch {
 	case r.Op == syntax.WordHdoc:
 		// A herestring is a single string: quoting keeps a list joined.
@@ -794,7 +823,7 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 	if t.subst != nil {
 		valueArg = "\"" + valuePlain + "\""
 	}
-	ref := e.paramTargetRef(t)
+	ref := litWord(e.paramTargetRefText(t))
 	printVal := func(val *syntax.Word) *syntax.Stmt {
 		return callStmt(litWord("printf"), litWord(`%s\n`), val)
 	}
@@ -965,9 +994,19 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 		switch exp.Op {
 		case syntax.DefaultUnsetOrNull, syntax.DefaultUnset:
 			if t.subst != nil {
-				e.warn(pe.Pos(), "%s cannot be applied to %s; left untranslated",
-					exp.Op.String(), valuePlain)
-				return []syntax.WordPart{pe}, true
+				// A substitution always yields a value, so only an empty
+				// result reaches the default — and an empty default cannot
+				// change it.
+				if exp.Op == syntax.DefaultUnset || exp.Word == nil || isEmptyValue(exp.Word) {
+					return t.subst, true
+				}
+				local := "__bait_value"
+				setStmt := callStmt(litWord("set"), litWord("--local"), litWord(local), &syntax.Word{Parts: t.subst})
+				cond := callStmt(litWord("test"), litWord("-n"), litWord("$"+local))
+				chain := binCmd(syntax.OrStmt,
+					binCmd(syntax.AndStmt, cond, printVal(litWord("$"+local))),
+					printVal(e.argWord(exp.Word)))
+				return []syntax.WordPart{e.synthCmdSubst(binCmd(syntax.AndStmt, setStmt, chain))}, true
 			}
 			if (exp.Word == nil || isEmptyValue(exp.Word)) && isPos {
 				return []syntax.WordPart{argvParam(), litPart("[" + raw + "]")}, true
@@ -989,9 +1028,11 @@ func (e *emitter) operatorExpansion(pe *syntax.ParamExp) ([]syntax.WordPart, boo
 
 		case syntax.AlternateUnsetOrNull, syntax.AlternateUnset:
 			if t.subst != nil {
-				e.warn(pe.Pos(), "%s cannot be applied to %s; left untranslated",
-					exp.Op.String(), valuePlain)
-				return []syntax.WordPart{pe}, true
+				// fish has no variable behind the emulation, so a set-ness
+				// test cannot be answered: bash-only guards must not fire
+				// here, and the divergence is warned about.
+				e.warn(pe.Pos(), "%s cannot be applied to %s: fish has no such variable, so the test reads as unset", exp.Op.String(), valuePlain)
+				return []syntax.WordPart{&syntax.DblQuoted{}}, true
 			}
 			var cond *syntax.Stmt
 			if exp.Op == syntax.AlternateUnsetOrNull {

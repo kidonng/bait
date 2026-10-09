@@ -274,7 +274,7 @@ func (e *emitter) caseClause(s *syntax.Stmt, cl *syntax.CaseClause) {
 		wTxt = e.render(cl.Word)
 		if isDollarDash(cl.Word) {
 			e.warn(cl.Word.Pos(), "$- has no fish equivalent; fish uses status subcommands (e.g. status is-interactive)")
-			wTxt = "$(status is-interactive && echo i || echo '')"
+			wTxt = e.statusDashText()
 		}
 		if containsUnquotedFishListVar(wTxt) && !strings.HasPrefix(wTxt, `"`) && !strings.HasPrefix(wTxt, "'") {
 			wTxt = `"` + wTxt + `"`

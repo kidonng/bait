@@ -410,22 +410,20 @@ func (e *emitter) setLine(scope, name, value string) {
 }
 
 // isSetBuiltin reports whether the command invokes bash's set builtin,
-// including the bare argument-less form.
+// including the bare argument-less form. Synthesized set commands (arith
+// assignments) are registered in synthSets and are never rewritten.
 func (e *emitter) isSetBuiltin(c *syntax.CallExpr) bool {
 	if len(c.Args) == 0 {
 		return true
 	}
-	// Synthesized `set` commands produced by the translator's own
-	// rewrites (arithmetic statements, assignments) carry no source
-	// position; only user-written set builtins are rewritten.
-	if c.Args[0].Pos().Col() == 0 {
+	if e.synthSets[c] {
 		return false
 	}
 	return e.render(c.Args[0]) == "set"
 }
 
-func isSynthesizedSet(c *syntax.CallExpr) bool {
-	return c != nil && len(c.Args) == 3 && c.Args[0].Pos().Col() == 0 && isLitWord(c.Args[0], "set")
+func (e *emitter) isSynthesizedSet(c *syntax.CallExpr) bool {
+	return c != nil && e.synthSets[c]
 }
 
 func (e *emitter) shiftCmd(s *syntax.Stmt, c *syntax.CallExpr) {

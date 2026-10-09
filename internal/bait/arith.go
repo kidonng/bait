@@ -195,7 +195,7 @@ func (e *emitter) arithExpr(expr syntax.ArithmExpr, withStatus bool) []syntax.Co
 		if x.Op == syntax.Dec {
 			delta, inverse = "-", "+"
 		}
-		set := setCall(mangled, e.mathSubst("$"+mangled+" "+delta+" 1"))
+		set := e.setCall(mangled, e.mathSubst("$"+mangled+" "+delta+" 1"))
 		if !withStatus {
 			return []syntax.Command{set}
 		}
@@ -222,7 +222,7 @@ func (e *emitter) arithExpr(expr syntax.ArithmExpr, withStatus bool) []syntax.Co
 			if !valid {
 				return nil
 			}
-			set := setCall(mangled, e.mathSubst(payload))
+			set := e.setCall(mangled, e.mathSubst(payload))
 			if !withStatus {
 				return []syntax.Command{set}
 			}
@@ -332,12 +332,15 @@ func (e *emitter) mathSubst(payload string) syntax.WordPart {
 	return substPart("__bait_math", "\""+payload+"\"")
 }
 
-func setCall(name string, value syntax.WordPart) syntax.Command {
-	// The zero position on the command word marks this command as
-	// synthesized; source positions always have a column >= 1.
-	return &syntax.CallExpr{Args: []*syntax.Word{
+// setCall builds the `set name value` command the translator emits for
+// arithmetic assignments, registering it so later passes can tell it apart
+// from a user-written set builtin.
+func (e *emitter) setCall(name string, value syntax.WordPart) syntax.Command {
+	call := &syntax.CallExpr{Args: []*syntax.Word{
 		{Parts: []syntax.WordPart{&syntax.Lit{Value: "set"}}},
 		litWord(name),
 		{Parts: []syntax.WordPart{value}},
 	}}
+	e.synthSets[call] = true
+	return call
 }

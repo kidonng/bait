@@ -89,10 +89,6 @@ func (e *emitter) needHelper(h helperKind) {
 	}
 }
 
-func (e *emitter) hasHelper(h helperKind) bool {
-	return e.neededHelpers[h]
-}
-
 // Helper returns the fish script content of the named runtime helper.
 func Helper(name string) (string, error) {
 	switch name {

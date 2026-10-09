@@ -46,7 +46,7 @@ var bashOnlyBuiltins = map[string]string{
 }
 
 func (e *emitter) warnBashOnlyBuiltin(s *syntax.Stmt, c *syntax.CallExpr) {
-	if len(c.Args) == 0 || len(c.Assigns) != 0 || c.Args[0].Pos().Col() == 0 {
+	if len(c.Args) == 0 || len(c.Assigns) != 0 || e.synthSets[c] {
 		return
 	}
 	name := e.render(c.Args[0])
