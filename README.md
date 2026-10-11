@@ -57,9 +57,6 @@ curl script.sh | bait | source
 # Suppress warnings on stderr (or BAIT_QUIET=1)
 bait --quiet install.sh > install.fish
 
-# Disable colored warnings (or NO_COLOR=1)
-NO_COLOR=1 bait install.sh > install.fish
-
 # Prevent helper injection (or BAIT_NO_HELPERS=1)
 bait --no-helpers install.sh > install.fish
 ```
