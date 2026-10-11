@@ -10,7 +10,7 @@ This project is based on [mvdan/sh](https://github.com/mvdan/sh), similar to the
 
 Bait leverages modern fish features to produce clean, idiomatic output. Most common Bash snippets translate with only minimal changes.
 
-Bait is experimental, but it can already translate [nvm](https://github.com/nvm-sh/nvm) and many prominent installers, allowing them to run natively in fish.
+Bait can already translate [nvm](https://github.com/nvm-sh/nvm) and many prominent installers, allowing them to run natively in fish.
 
 </td>
 <td width="50%" valign="top">
