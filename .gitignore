@@ -1,3 +1,5 @@
+.direnv
 /result
+
 # Added by goreleaser init:
 dist/
