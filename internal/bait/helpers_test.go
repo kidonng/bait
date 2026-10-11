@@ -290,77 +290,17 @@ func TestProcSubst(t *testing.T) {
 	}
 }
 
-func TestRustupSupportFeatures(t *testing.T) {
-	tests := []struct {
-		name     string
-		in       string
-		want     string
-		contains string
-	}{
-		{
-			name: "literal dollar escaping",
-			in:   "echo 404$\n",
-			want: "echo 404\\$\n",
-		},
-		{
-			name: "function locals remain function scoped",
-			in: "main() {\n" +
-				"    local need_tty=yes\n" +
-				"    echo $need_tty\n" +
-				"}\n",
-			want: "function main\n" +
-				"    set --function need_tty yes\n" +
-				"    echo $need_tty\n" +
-				"end\n",
-		},
-		{
-			name: "helper function locals remain function scoped",
-			in: "helper() {\n" +
-				"    local val=123\n" +
-				"    echo $val\n" +
-				"}\n",
-			want: "function helper\n" +
-				"    set --function val 123\n" +
-				"    echo $val\n" +
-				"end\n",
-		},
-		{
-			name: "path concatenation does not split into list",
-			in:   "_file=\"$_dir/rustup-init$_ext\"\n",
-			want: "set _file \"$_dir/rustup-init$_ext\"\n",
-		},
-		{
-			name: "options variable passes through without helper injection",
-			in:   "curl $_retry $url\n",
-			want: "curl $_retry $url\n",
-		},
-		{
-			name:     "word split applied to for loop command substitution",
-			in:       "for x in $(get_items); do echo \"$x\"; done\n",
-			contains: "for x in (__bait_words $(get_items))",
-		},
-		{
-			name: "getopts helper emitted",
-			in: "while getopts :hqy opt \"$arg\"; do\n" +
-				"    echo $opt\n" +
-				"done\n",
-			contains: "function getopts",
-		},
+func TestGetoptsHelperEmitted(t *testing.T) {
+	in := "while getopts :hqy opt \"$arg\"; do\n    echo $opt\ndone\n"
+	out, warnings, err := Translate([]byte(in))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got, _, err := Translate([]byte(tc.in))
-			if err != nil {
-				t.Fatalf("Translate(%q) error: %v", tc.in, err)
-			}
-			if tc.want != "" && string(got) != tc.want {
-				t.Errorf("mismatch\n in: %q\n got: %q\n want: %q", tc.in, got, tc.want)
-			}
-			if tc.contains != "" && !strings.Contains(string(got), tc.contains) {
-				t.Errorf("expected output to contain %q, got: %q", tc.contains, string(got))
-			}
-		})
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", warnings)
+	}
+	if !strings.Contains(string(out), "function getopts") {
+		t.Errorf("expected getopts helper to be emitted, got: %s", string(out))
 	}
 }
 

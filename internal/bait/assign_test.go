@@ -89,6 +89,11 @@ func TestAssignments(t *testing.T) {
 			"LINE=\"set PATH \\\"$BIN\\\" \\$PATH\"\n",
 			"set LINE \"set PATH \\\"$BIN\\\" \\$PATH\"\n",
 		},
+		{
+			"path concatenation does not split into list",
+			"_file=\"$_dir/rustup-init$_ext\"\n",
+			"set _file \"$_dir/rustup-init$_ext\"\n",
+		},
 	}
 
 	for _, tc := range tests {
@@ -216,6 +221,11 @@ func TestListValuedEnvVars(t *testing.T) {
 			name:     "for loop over non-PATH variable wrapped in bait_words",
 			in:       "for p in $DIR_LIST; do echo $p; done\n",
 			contains: "for p in (__bait_words $DIR_LIST)",
+		},
+		{
+			name:     "for loop over command substitution wrapped in bait_words",
+			in:       "for x in $(get_items); do echo \"$x\"; done\n",
+			contains: "for x in (__bait_words $(get_items))",
 		},
 		{
 			name: "switch on PATH quoted",

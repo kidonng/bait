@@ -92,6 +92,11 @@ func TestParameterExpansions(t *testing.T) {
 			"echo $EPOCHSECONDS $SRANDOM\n",
 			"echo $(date +%s) $(random 0 4294967295)\n",
 		},
+		{
+			"literal dollar escaping",
+			"echo 404$\n",
+			"echo 404\\$\n",
+		},
 	}
 
 	for _, tc := range tests {
