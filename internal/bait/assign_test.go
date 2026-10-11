@@ -262,8 +262,8 @@ func TestListValuedEnvVars(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			// Helper preambles are asserted elsewhere; pin the statements.
-			got, warnings, err := TranslateWithOptions([]byte(tc.in), Options{NoHelpers: true})
+			// Shim preambles are asserted elsewhere; pin the statements.
+			got, warnings, err := TranslateWithOptions([]byte(tc.in), Options{NoShims: true})
 			if err != nil {
 				t.Fatalf("Translate(%q) error: %v", tc.in, err)
 			}
@@ -529,7 +529,7 @@ func TestUnsetBuiltin(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, warnings, err := TranslateWithOptions([]byte(tc.in), Options{NoHelpers: true})
+			got, warnings, err := TranslateWithOptions([]byte(tc.in), Options{NoShims: true})
 			if err != nil {
 				t.Fatalf("Translate(%q) error: %v", tc.in, err)
 			}

@@ -7,7 +7,7 @@
 - **Target Version**: **Fish 4.1.0+**. Translated scripts strictly require Fish 4.1.0 or newer (for POSIX-style `$(cmd)` command substitutions, `set --function` lexical scoping, and native `{ ... }` command blocks).
 - **Passthrough First**: Constructs natively supported by modern Fish (pipes, redirects, combiners, commands, per-command env `VAR=val cmd`, backgrounding, quotes) pass through byte-for-byte.
 - **Idiomatic Fish**: Incompatible syntax is translated into native Fish keywords, builtins, and modern `$(cmd)` command substitutions.
-- **On-Demand Helpers**: Runtime helper functions are injected strictly on demand when scripts require missing POSIX semantics (suppressible via `--no-helpers`); clean scripts carry zero runtime overhead.
+- **On-Demand Shims**: Runtime shim functions are injected strictly on demand when scripts require missing POSIX semantics (suppressible via `--no-shims`); clean scripts carry zero runtime overhead.
 - **Explicit Diagnostics**: Constructs without a faithful Fish equivalent emit diagnostic warnings on stderr (suppressible via `--quiet`).
 
 ---
@@ -121,17 +121,17 @@ Fish uses explicit scoping flags (`--function`, `--global`). `bait` translates a
 | `set -- a b`, `set - a b`, `set a b` | `set argv a b` | Positional parameter assignment |
 | `set --` | `set argv` | Clears positional parameters |
 | `shift`, `shift N` | `test (count $argv) -ge N; and set --erase argv[1..N]` | Erases only when enough positionals exist, so an over-large count fails with bash's status and leaves them alone; a negative literal count fails with a warning |
-| `unset x`, `unset -v x y`, `unset -f func`, `unset 'arr[0]'` | `unset x`, `unset -v x y`, `unset -f func`, `unset 'arr[0]'` | Supported via an on-demand runtime helper. Inside a command substitution the erasure cannot be scoped in fish, so a single plain variable name is emptied with a block-local shadow (warned: the caller's value survives, but set-ness tests still see the name as set) and anything else is skipped with a warning, keeping the caller's variable intact |
+| `unset x`, `unset -v x y`, `unset -f func`, `unset 'arr[0]'` | `unset x`, `unset -v x y`, `unset -f func`, `unset 'arr[0]'` | Supported via an on-demand runtime shim. Inside a command substitution the erasure cannot be scoped in fish, so a single plain variable name is emptied with a block-local shadow (warned: the caller's value survives, but set-ness tests still see the name as set) and anything else is skipped with a warning, keeping the caller's variable intact |
 | `read -r line`, `read _`, `read status`, `read pipestatus` | `read line`, `read _unused`, `read _status`, `read _pipestatus` | Drops `-r` (default in Fish); automatically mangles variable names conflicting with Fish read-only variables (e.g. `_` $\to$ `_unused`, `status` $\to$ `_status`). A fully quoted literal target such as `read "status"` undergoes bash's quote removal first, so it is mangled and scope-pinned like a bare one |
 | `read -p PROMPT x`, `read -a arr`, `read -n N x` | `read -P PROMPT x`, `read --list arr`, `read -n N x` | Options are parsed with bash's cluster rule (an argument-taking option consumes the rest of the cluster or the next word). `-p` maps to fish's literal-prompt flag, `-a` to list mode, `-N` to `-n` with a warning, `-t`/`-i`/`-e` are dropped (the first two with a warning), and `-u FD` becomes an input redirection to `/dev/fd/FD` with a warning because fish's `-u` means `--unexport` |
 | `read x` (inside function, no local) | `read --global x` | bash assigns the global variable unless a local of that name exists; fish's read would create a function-scoped one |
 | `set` (bare), `set -` | *(dropped with warning)* | Prints shell state / trace flags in Bash; dropped in Fish |
 | `set -e`, `set -u`, `set +x`, `set -o ...` | *(dropped with warning)* | Fish has no shell option flags |
 | `exec 3< file`, `exec < file`, bare `exec` | `true 3< file`, `true < file`, `true` | bash applies the redirections to the shell itself; fish's `exec` takes only a command (bare `exec` runs its manual page) and cannot hold descriptors above 2, so the statement keeps the redirections' file-open side effects and warns that the shell's streams and descriptors are unchanged. A `while read -u FD` loop whose descriptor the script opened itself is redirected to that file instead (warned: the loop body's standard input differs from bash's, and a second loop over the same descriptor restarts at the beginning); other descriptor reads stay on `/dev/fd/FD` and fail visibly |
-| `eval "..."` | `__bait_eval "..."` | Supported via an on-demand runtime helper translating Bash code on-the-fly (requires `bait` in PATH; falls back to passthrough with warning when `--no-helpers` is specified) |
-| `hash cmd`, `hash cmd1 cmd2`, `hash -r` | `hash cmd`, `hash cmd1 cmd2`, `hash -r` | Supported via an on-demand runtime helper; `hash -t` and bare `hash`, which print bash's hash table, warn |
-| `unalias foo`, `unalias "$1"`, `unalias -a` | `unalias foo`, `unalias "$argv[1]"`, `unalias -a` | Supported via an on-demand runtime helper |
-| `source file.sh`, `. file.sh` | `source file.sh`, `. file.sh` | Supported via an on-demand runtime helper translating Bash scripts on-the-fly |
+| `eval "..."` | `__bait_eval "..."` | Supported via an on-demand runtime shim translating Bash code on-the-fly (requires `bait` in PATH; falls back to passthrough with warning when `--no-shims` is specified) |
+| `hash cmd`, `hash cmd1 cmd2`, `hash -r` | `hash cmd`, `hash cmd1 cmd2`, `hash -r` | Supported via an on-demand runtime shim; `hash -t` and bare `hash`, which print bash's hash table, warn |
+| `unalias foo`, `unalias "$1"`, `unalias -a` | `unalias foo`, `unalias "$argv[1]"`, `unalias -a` | Supported via an on-demand runtime shim |
+| `source file.sh`, `. file.sh` | `source file.sh`, `. file.sh` | Supported via an on-demand runtime shim translating Bash scripts on-the-fly |
 
 #### Lexical Scoping Decision Matrix
 
@@ -162,7 +162,7 @@ Bash uses 0-based arrays, while Fish lists are 1-based. `bait` systematically re
 | Length-based slice | `${arr[@]:start:len}` | `$arr[(start+1)..(start+len)]` | Shifted start index + computed end index |
 | Open slice to end | `${arr[@]:start}` | `$arr[(start+1)..-1]` | Slice starting from 1-based offset to end (`-1`) |
 | Negative slice offset | `${arr[@]: -N}` | `$arr[-N..-1]` | Slice last `N` elements to end |
-| Array element erasure | `unset "arr[N]"` | `set --erase arr[N+1]` | Done via `unset` helper with 0-to-1 conversion |
+| Array element erasure | `unset "arr[N]"` | `set --erase arr[N+1]` | Done via `unset` shim with 0-to-1 conversion |
 
 
 ### Parameter Expansions & Special Variables
@@ -184,7 +184,7 @@ Bash uses 0-based arrays, while Fish lists are 1-based. `bait` systematically re
 | `$GROUPS` | `$(id -g)` | Primary group ID |
 | `$HOSTNAME` | `$hostname` | Hostname |
 | `$HOSTTYPE`, `$MACHTYPE` | `$(uname -m)` | Machine architecture |
-| `$OSTYPE` | `$(__bait_ostype)` | Operating system identifier (emulating Bash `linux-gnu`, `darwin<kernel release>`, etc. via helper; the darwin form carries the full lowercased `uname -r` like bash) |
+| `$OSTYPE` | `$(__bait_ostype)` | Operating system identifier (emulating Bash `linux-gnu`, `darwin<kernel release>`, etc. via shim; the darwin form carries the full lowercased `uname -r` like bash) |
 | `$PIPESTATUS` | `$pipestatus` | Array of pipeline exit codes |
 | `$DIRSTACK` | `$dirstack` | Directory stack array |
 | `$RANDOM`, `$SRANDOM` | `$(random)`, `$(random 0 4294967295)` | Random numbers (0–32767 and 32-bit unsigned 0–4294967295) |
@@ -239,9 +239,9 @@ Bash arithmetic `$(( ... ))` and statements `(( ... ))` are integer-only. `bait`
 | `((a = 1, b = 2))` | `set a $(math --scale=0 "1")`<br>`set b $(math --scale=0 "2")` (comma expressions flattened into sequential statements) |
 | `((x > 0))` | `test "$x" -gt 0` (comparisons map to `test` flags `-gt`, `-lt`, `-eq`, etc.) |
 | `((count))` | `test "$count" -ne 0` (truthiness test) |
-### On-Demand Runtime Helpers
+### On-Demand Runtime Shims
 
-When scripts use POSIX constructs that Fish does not provide natively, `bait` injects helper functions at the top of the file (suppressible via `--no-helpers`):
+When scripts use POSIX constructs that Fish does not provide natively, `bait` injects shim functions at the top of the file (suppressible via `--no-shims`):
 
 1. **`getopts` option parsing**:
    - Injected when scripts call `getopts :optstring var [args...]`.
@@ -261,7 +261,7 @@ When scripts use POSIX constructs that Fish does not provide natively, `bait` in
    - Erases alias functions and supports `-a`.
 6. **`source` and `.` transparent script translation**:
    - Injected when scripts call `source` or `.`.
-   - Translates Bash scripts on-the-fly via `bait` (requires `bait` in PATH) and evaluates them in the caller's scope. Can also be printed for interactive Fish configurations via `bait helper source` and `bait helper .`.
+   - Translates Bash scripts on-the-fly via `bait` (requires `bait` in PATH) and evaluates them in the caller's scope. Can also be printed for interactive Fish configurations via `bait shim source` and `bait shim .`.
 7. **`unset` variable and function erasure**:
    - Injected when scripts call `unset`.
    - Erases variables (including array elements with 0-based index translation) and function definitions, supporting `-v`, `-f`, `-n`, and `--` (with `-n` handled as standard variable erasure due to Fish's lack of namerefs).

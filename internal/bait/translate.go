@@ -23,8 +23,8 @@ func (w Warning) Error() string {
 
 // Options specifies translation options.
 type Options struct {
-	// NoHelpers suppresses emitting runtime helper functions.
-	NoHelpers bool
+	// NoShims suppresses emitting runtime shim functions.
+	NoShims bool
 }
 
 // Translate parses src as a bash script and returns its fish translation.
@@ -65,7 +65,7 @@ func TranslateWithOptions(src []byte, opts Options) ([]byte, []Warning, error) {
 		return nil, nil, fmt.Errorf("parse bash: %w", err)
 	}
 	em := newEmitter()
-	em.noHelpers = opts.NoHelpers
+	em.noShims = opts.NoShims
 	em.normalize(file)
 	em.file(file)
 	if len(repaired) > 0 {

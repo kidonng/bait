@@ -18,7 +18,7 @@
      - **Symmetric Variable Collision Avoidance**: Systematically mangle variable names that collide with Fish read-only variables across all binding, declaration, and expansion sites. Never use one-sided or ad-hoc renames.
      - **Dataflow-Driven Word Splitting over Call-Site Name Heuristics**: Inject call-site word splitting on-demand via assignment dataflow analysis instead of guessing call-site splitting via variable name heuristics, while adhering to Fish's native list semantics (such as list-valued environment variables).
      - **Decoupled Context Introspection**: Unify execution context introspection (script paths, function frames, execution IDs) behind a dedicated translation layer decoupled from generic array index arithmetic.
-     - **On-Demand Runtime Helpers**: Inject helper functions strictly on-demand when modern Fish lacks native semantics; clean scripts must carry zero runtime overhead.
+     - **On-Demand Runtime Shims**: Inject shim functions strictly on-demand when modern Fish lacks native semantics; clean scripts must carry zero runtime overhead.
 
 3. **Explicit Warning Contract over Silent Breakage**
    - When encountering unsupported constructs or those with no faithful Fish equivalent (e.g. namerefs, unsupported builtins, untranslated C-style loops), emit the construct verbatim and print a diagnostic warning to stderr with source coordinates.
@@ -32,8 +32,8 @@
 ## Maintenance Rules
 
 - **High-Level Decisions Only**: Keep this document focused strictly on architectural invariants, principles, and workflows. Never treat it as a changelog or feature dump.
-- **No Implementation Enumerations**: Do not list specific variable names, parameter expansions, helper functions, AST passes, or regex patterns here.
-- **Single Source of Truth**: Syntax mapping and compatibility belong in `COMPATIBILITY.md`; concrete translation logic and helpers belong in code and tests.
+- **No Implementation Enumerations**: Do not list specific variable names, parameter expansions, shim functions, AST passes, or regex patterns here.
+- **Single Source of Truth**: Syntax mapping and compatibility belong in `COMPATIBILITY.md`; concrete translation logic and shims belong in code and tests.
 
 ## Developer Workflows
 

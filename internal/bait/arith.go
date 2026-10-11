@@ -260,7 +260,7 @@ func truthyCall(payload string) syntax.Command {
 // cmpCall builds `__bait_cmp <op> "<lhs>" "<rhs>"`, which evaluates both
 // operands as bash arithmetic expressions before comparing them.
 func (e *emitter) cmpCall(op, lhs, rhs string) syntax.Command {
-	e.needHelper(helperCmp)
+	e.needShim(shimCmp)
 	return &syntax.CallExpr{Args: []*syntax.Word{
 		litWord("__bait_cmp"),
 		litWord(op),
@@ -328,7 +328,7 @@ func bareArithName(n syntax.ArithmExpr) (string, bool) {
 // mathSubst renders an arithmetic payload as a call to __bait_math, which
 // applies bash's coercion rules: unset and non-numeric operands are zero.
 func (e *emitter) mathSubst(payload string) syntax.WordPart {
-	e.needHelper(helperMath)
+	e.needShim(shimMath)
 	return substPart("__bait_math", "\""+payload+"\"")
 }
 

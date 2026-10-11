@@ -119,7 +119,7 @@ func (e *emitter) resolveParamTarget(name string) (paramTarget, bool) {
 	case "DIRSTACK":
 		return paramTarget{name: "dirstack", shift: 1, mapped: true}, true
 	case "OSTYPE":
-		e.needHelper(helperOSType)
+		e.needShim(shimOSType)
 		return paramTarget{subst: []syntax.WordPart{substPart("__bait_ostype")}, mapped: true}, true
 	case "RANDOM":
 		return paramTarget{subst: []syntax.WordPart{substPart("random")}, mapped: true}, true

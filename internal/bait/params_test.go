@@ -65,7 +65,7 @@ func TestParameterExpansions(t *testing.T) {
 		{
 			"OSTYPE maps to __bait_ostype",
 			"echo $OSTYPE \"${OSTYPE}\"\n",
-			baitOSTypeHelper + "\necho $(__bait_ostype) \"$(__bait_ostype)\"\n",
+			baitOSTypeShim + "\necho $(__bait_ostype) \"$(__bait_ostype)\"\n",
 		},
 		{
 			"BASH and BASH_ARGV0 maps to status",

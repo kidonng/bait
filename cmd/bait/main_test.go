@@ -122,10 +122,10 @@ func TestQuietEnv(t *testing.T) {
 	}
 }
 
-func TestNoHelpersFlag(t *testing.T) {
+func TestNoShimsFlag(t *testing.T) {
 	script := "source ./sub.sh\n"
 	var stdout, stderr bytes.Buffer
-	exitCode := run([]string{"--no-helpers"}, strings.NewReader(script), &stdout, &stderr)
+	exitCode := run([]string{"--no-shims"}, strings.NewReader(script), &stdout, &stderr)
 	if exitCode != 0 {
 		t.Fatalf("expected exit code 0, got %d", exitCode)
 	}
@@ -137,27 +137,27 @@ func TestNoHelpersFlag(t *testing.T) {
 	}
 }
 
-func TestNoHelpersEnv(t *testing.T) {
+func TestNoShimsEnv(t *testing.T) {
 	script := "source ./sub.sh\n"
 	truthyVals := []string{"1", "true", "TRUE", "yes", "YES", "on"}
 	for _, val := range truthyVals {
 		t.Run("truthy_"+val, func(t *testing.T) {
-			t.Setenv("BAIT_NO_HELPERS", val)
+			t.Setenv("BAIT_NO_SHIMS", val)
 			var stdout, stderr bytes.Buffer
 			exitCode := run([]string{}, strings.NewReader(script), &stdout, &stderr)
 			if exitCode != 0 {
 				t.Fatalf("expected exit code 0, got %d", exitCode)
 			}
 			if strings.Contains(stdout.String(), "function source") {
-				t.Errorf("expected no helpers with BAIT_NO_HELPERS=%s, got: %s", val, stdout.String())
+				t.Errorf("expected no shims with BAIT_NO_SHIMS=%s, got: %s", val, stdout.String())
 			}
 		})
 	}
 }
 
-func TestHelperCommand(t *testing.T) {
+func TestShimCommand(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	exitCode := run([]string{"helper", "source"}, strings.NewReader(""), &stdout, &stderr)
+	exitCode := run([]string{"shim", "source"}, strings.NewReader(""), &stdout, &stderr)
 	if exitCode != 0 {
 		t.Fatalf("expected exit code 0, got %d (stderr: %s)", exitCode, stderr.String())
 	}
@@ -166,20 +166,20 @@ func TestHelperCommand(t *testing.T) {
 	}
 }
 
-func TestHelperUnknown(t *testing.T) {
+func TestShimUnknown(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	exitCode := run([]string{"helper", "nonexistent_helper"}, strings.NewReader(""), &stdout, &stderr)
+	exitCode := run([]string{"shim", "nonexistent_shim"}, strings.NewReader(""), &stdout, &stderr)
 	if exitCode != 1 {
 		t.Fatalf("expected exit code 1, got %d", exitCode)
 	}
-	if !strings.Contains(stderr.String(), `error: unknown helper "nonexistent_helper"`) {
-		t.Errorf("expected stderr to contain unknown helper error, got: %q", stderr.String())
+	if !strings.Contains(stderr.String(), `error: unknown shim "nonexistent_shim"`) {
+		t.Errorf("expected stderr to contain unknown shim error, got: %q", stderr.String())
 	}
 }
 
-func TestHelperList(t *testing.T) {
+func TestShimList(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	exitCode := run([]string{"helper", "list"}, strings.NewReader(""), &stdout, &stderr)
+	exitCode := run([]string{"shim", "list"}, strings.NewReader(""), &stdout, &stderr)
 	if exitCode != 0 {
 		t.Fatalf("expected exit code 0, got %d (stderr: %s)", exitCode, stderr.String())
 	}
@@ -193,7 +193,6 @@ func TestHelperList(t *testing.T) {
 		}
 	}
 }
-
 func TestWarningColor(t *testing.T) {
 	scriptWithWarning := "set -e\necho ok\n"
 

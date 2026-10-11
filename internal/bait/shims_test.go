@@ -255,7 +255,7 @@ func TestProcSubst(t *testing.T) {
 		{
 			"source from process substitution",
 			"source <(curl -fsSL https://example.com/install.sh)\n",
-			baitSourceHelper + "\nsource (curl -fsSL https://example.com/install.sh | psub)\n",
+			baitSourceShim + "\nsource (curl -fsSL https://example.com/install.sh | psub)\n",
 		},
 		{
 			"process substitution with variable expansion",
@@ -290,7 +290,7 @@ func TestProcSubst(t *testing.T) {
 	}
 }
 
-func TestGetoptsHelperEmitted(t *testing.T) {
+func TestGetoptsShimEmitted(t *testing.T) {
 	in := "while getopts :hqy opt \"$arg\"; do\n    echo $opt\ndone\n"
 	out, warnings, err := Translate([]byte(in))
 	if err != nil {
@@ -300,7 +300,7 @@ func TestGetoptsHelperEmitted(t *testing.T) {
 		t.Fatalf("unexpected warnings: %v", warnings)
 	}
 	if !strings.Contains(string(out), "function getopts") {
-		t.Errorf("expected getopts helper to be emitted, got: %s", string(out))
+		t.Errorf("expected getopts shim to be emitted, got: %s", string(out))
 	}
 }
 
@@ -320,7 +320,7 @@ func TestSubEmitterLocalsIsolation(t *testing.T) {
 	}
 }
 
-func TestUnaliasHelperEmitted(t *testing.T) {
+func TestUnaliasShimEmitted(t *testing.T) {
 	in := `unalias foo 2>/dev/null || true`
 	out, warnings, err := Translate([]byte(in))
 	if err != nil {
@@ -330,11 +330,11 @@ func TestUnaliasHelperEmitted(t *testing.T) {
 		t.Fatalf("unexpected warnings: %v", warnings)
 	}
 	if !strings.Contains(string(out), "function unalias") {
-		t.Errorf("expected unalias helper to be emitted, got: %s", string(out))
+		t.Errorf("expected unalias shim to be emitted, got: %s", string(out))
 	}
 }
 
-func TestUnsetHelperEmitted(t *testing.T) {
+func TestUnsetShimEmitted(t *testing.T) {
 	in := `unset foo`
 	out, warnings, err := Translate([]byte(in))
 	if err != nil {
@@ -344,11 +344,11 @@ func TestUnsetHelperEmitted(t *testing.T) {
 		t.Fatalf("unexpected warnings: %v", warnings)
 	}
 	if !strings.Contains(string(out), "function unset") {
-		t.Errorf("expected unset helper to be emitted, got: %s", string(out))
+		t.Errorf("expected unset shim to be emitted, got: %s", string(out))
 	}
 }
 
-func TestSourceHelperEmitted(t *testing.T) {
+func TestSourceShimEmitted(t *testing.T) {
 	in := `source ./sub.sh`
 	out, warnings, err := Translate([]byte(in))
 	if err != nil {
@@ -359,14 +359,14 @@ func TestSourceHelperEmitted(t *testing.T) {
 	}
 	outStr := string(out)
 	if !strings.Contains(outStr, "function source") {
-		t.Errorf("expected source helper to be emitted, got: %s", outStr)
+		t.Errorf("expected source shim to be emitted, got: %s", outStr)
 	}
 	if strings.Contains(outStr, "function .") {
-		t.Errorf("did not expect dot helper to be emitted when only source is used, got: %s", outStr)
+		t.Errorf("did not expect dot shim to be emitted when only source is used, got: %s", outStr)
 	}
 }
 
-func TestDotHelperEmitted(t *testing.T) {
+func TestDotShimEmitted(t *testing.T) {
 	in := `. ./sub.sh`
 	out, warnings, err := Translate([]byte(in))
 	if err != nil {
@@ -377,31 +377,31 @@ func TestDotHelperEmitted(t *testing.T) {
 	}
 	outStr := string(out)
 	if !strings.Contains(outStr, "function source") {
-		t.Errorf("expected source helper to be emitted for dot command, got: %s", outStr)
+		t.Errorf("expected source shim to be emitted for dot command, got: %s", outStr)
 	}
 	if !strings.Contains(outStr, "function .") {
-		t.Errorf("expected dot helper to be emitted, got: %s", outStr)
+		t.Errorf("expected dot shim to be emitted, got: %s", outStr)
 	}
 }
 
-func TestTranslateWithOptionsNoHelpers(t *testing.T) {
+func TestTranslateWithOptionsNoShims(t *testing.T) {
 	in := "source ./sub.sh\nhash ls\nwhile getopts :a opt \"$arg\"; do echo $opt; done\n"
-	outWithHelpers, _, err := Translate([]byte(in))
+	outWithShims, _, err := Translate([]byte(in))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(string(outWithHelpers), "function source") {
+	if !strings.Contains(string(outWithShims), "function source") {
 		t.Errorf("expected function source to be emitted by default")
 	}
 
-	outNoHelpers, _, err := TranslateWithOptions([]byte(in), Options{NoHelpers: true})
+	outNoShims, _, err := TranslateWithOptions([]byte(in), Options{NoShims: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	outStr := string(outNoHelpers)
-	for _, helperFunc := range []string{"function source", "function .", "function hash", "function getopts", "function unset", "function __bait_eval"} {
-		if strings.Contains(outStr, helperFunc) {
-			t.Errorf("did not expect %q to be emitted with NoHelpers=true, got: %s", helperFunc, outStr)
+	outStr := string(outNoShims)
+	for _, shimFunc := range []string{"function source", "function .", "function hash", "function getopts", "function unset", "function __bait_eval"} {
+		if strings.Contains(outStr, shimFunc) {
+			t.Errorf("did not expect %q to be emitted with NoShims=true, got: %s", shimFunc, outStr)
 		}
 	}
 	if !strings.Contains(outStr, "source ./sub.sh") {
@@ -409,7 +409,7 @@ func TestTranslateWithOptionsNoHelpers(t *testing.T) {
 	}
 }
 
-func TestHelperAPI(t *testing.T) {
+func TestShimAPI(t *testing.T) {
 	tests := []struct {
 		name     string
 		contains string
@@ -434,48 +434,48 @@ func TestHelperAPI(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			content, err := Helper(tc.name)
+			content, err := Shim(tc.name)
 			if err != nil {
-				t.Fatalf("Helper(%q) returned unexpected error: %v", tc.name, err)
+				t.Fatalf("Shim(%q) returned unexpected error: %v", tc.name, err)
 			}
 			if !strings.Contains(content, tc.contains) {
-				t.Errorf("Helper(%q) does not contain %q; got: %s", tc.name, tc.contains, content)
+				t.Errorf("Shim(%q) does not contain %q; got: %s", tc.name, tc.contains, content)
 			}
 		})
 	}
 
 	for _, invalid := range []string{"source.fish", "..fish", "getopts.fish", "words", "exec", "nonexistent"} {
-		if _, err := Helper(invalid); err == nil {
-			t.Errorf("expected error for Helper(%q), got nil", invalid)
+		if _, err := Shim(invalid); err == nil {
+			t.Errorf("expected error for Shim(%q), got nil", invalid)
 		}
 	}
 
-	helpers := Helpers()
-	if len(helpers) != len(allHelpers) {
-		t.Errorf("expected %d helpers, got %d", len(allHelpers), len(helpers))
+	shims := Shims()
+	if len(shims) != len(allShims) {
+		t.Errorf("expected %d shims, got %d", len(allShims), len(shims))
 	}
-	if slices.Contains(helpers, "eval") {
-		t.Errorf("expected Helpers() to omit alias %q", "eval")
+	if slices.Contains(shims, "eval") {
+		t.Errorf("expected Shims() to omit alias %q", "eval")
 	}
-	if !slices.Contains(helpers, "__bait_eval") {
-		t.Errorf("expected Helpers() to contain %q", "__bait_eval")
+	if !slices.Contains(shims, "__bait_eval") {
+		t.Errorf("expected Shims() to contain %q", "__bait_eval")
 	}
-	for _, h := range helpers {
-		if _, err := Helper(h); err != nil {
-			t.Errorf("Helper(%q) returned unexpected error: %v", h, err)
+	for _, h := range shims {
+		if _, err := Shim(h); err != nil {
+			t.Errorf("Shim(%q) returned unexpected error: %v", h, err)
 		}
 	}
 }
 
-// runFishHelper runs a fish script made of a helper's code plus body.
-func runFishHelper(t *testing.T, helper, body string) string {
+// runFishShim runs a fish script made of a shim's code plus body.
+func runFishShim(t *testing.T, shim, body string) string {
 	t.Helper()
 	if _, err := exec.LookPath("fish"); err != nil {
 		t.Skip("fish not installed")
 	}
-	code, err := Helper(helper)
+	code, err := Shim(shim)
 	if err != nil {
-		t.Fatalf("Helper(%q): %v", helper, err)
+		t.Fatalf("Shim(%q): %v", shim, err)
 	}
 	cmd := exec.Command("fish", "-c", code+"\n"+body)
 	out, err := cmd.CombinedOutput()
@@ -493,14 +493,14 @@ func TestUnsetReservedNames(t *testing.T) {
 		t.Run(raw, func(t *testing.T) {
 			body := fmt.Sprintf("set --global %s 1\nunset %s\nset -q %s; and echo still; or echo erased\n",
 				mangled, raw, mangled)
-			out := runFishHelper(t, "unset", body)
+			out := runFishShim(t, "unset", body)
 			if strings.TrimSpace(out) != "erased" {
 				t.Errorf("unset %s: got %q, want the mangled %s erased", raw, out, mangled)
 			}
 		})
 	}
 
-	out := runFishHelper(t, "unset", "unset never_defined_here\necho \"rc=$status\"\n")
+	out := runFishShim(t, "unset", "unset never_defined_here\necho \"rc=$status\"\n")
 	if strings.TrimSpace(out) != "rc=0" {
 		t.Errorf("unset of an undefined name: got %q, want rc=0", out)
 	}
@@ -510,7 +510,7 @@ func TestUnsetReservedNames(t *testing.T) {
 // does and a per-name loop cannot.
 func TestUnaliasAll(t *testing.T) {
 	body := "alias foo='echo hi'\nalias bar='echo bye'\nunalias -a\nfunctions -q foo; or echo foo-gone\nfunctions -q bar; or echo bar-gone\n"
-	out := runFishHelper(t, "unalias", body)
+	out := runFishShim(t, "unalias", body)
 	if strings.TrimSpace(out) != "foo-gone\nbar-gone" {
 		t.Errorf("unalias -a: got %q, want both aliases gone", out)
 	}
@@ -521,7 +521,7 @@ func TestUnaliasAll(t *testing.T) {
 func TestGetoptsTermination(t *testing.T) {
 	body := "while getopts \"a\" opt -a; echo \"opt=$opt\"; end\n" +
 		"echo \"after opt=$opt\"\nset -q OPTARG; and echo \"OPTARG set\"; or echo \"OPTARG unset\"\n"
-	out := runFishHelper(t, "getopts", body)
+	out := runFishShim(t, "getopts", body)
 	want := "opt=a\nafter opt=?\nOPTARG unset"
 	if strings.TrimSpace(out) != want {
 		t.Errorf("getopts termination: got %q, want %q", strings.TrimSpace(out), want)
@@ -539,7 +539,7 @@ func TestOSTypeMatchesKernelRelease(t *testing.T) {
 		t.Fatalf("uname -r: %v", err)
 	}
 	want := "darwin" + strings.ToLower(strings.TrimSpace(string(rel)))
-	out := runFishHelper(t, "__bait_ostype", "__bait_ostype\n")
+	out := runFishShim(t, "__bait_ostype", "__bait_ostype\n")
 	if strings.TrimSpace(out) != want {
 		t.Errorf("OSTYPE: got %q, want %q", strings.TrimSpace(out), want)
 	}
@@ -551,7 +551,7 @@ func TestBaitExecDoesNotEvalMetacharacters(t *testing.T) {
 	}
 	dir := t.TempDir()
 	outFile := filepath.Join(dir, "should_not_exist")
-	fishScript := fmt.Sprintf("%s\n__bait_exec \"printf [%%s] a | b > %s\"\n", execHelperCode(t), outFile)
+	fishScript := fmt.Sprintf("%s\n__bait_exec \"printf [%%s] a | b > %s\"\n", execShimCode(t), outFile)
 
 	cmd := exec.Command("fish", "-c", fishScript)
 	out, err := cmd.CombinedOutput()
@@ -567,7 +567,7 @@ func TestBaitExecDoesNotEvalMetacharacters(t *testing.T) {
 	}
 }
 
-func TestEvalHelperEmitted(t *testing.T) {
+func TestEvalShimEmitted(t *testing.T) {
 	in := "eval \"echo hello\"\n"
 	got, warnings, err := Translate([]byte(in))
 	if err != nil {
@@ -578,19 +578,19 @@ func TestEvalHelperEmitted(t *testing.T) {
 	}
 	gotStr := string(got)
 	if !strings.Contains(gotStr, "function __bait_eval") {
-		t.Errorf("expected __bait_eval helper to be emitted, got: %s", gotStr)
+		t.Errorf("expected __bait_eval shim to be emitted, got: %s", gotStr)
 	}
 	if !strings.Contains(gotStr, "__bait_eval \"echo hello\"") {
 		t.Errorf("expected '__bait_eval \"echo hello\"' in output, got: %s", gotStr)
 	}
 }
 
-func TestBaitEvalHelperExecution(t *testing.T) {
+func TestBaitEvalShimExecution(t *testing.T) {
 	if _, err := exec.LookPath("fish"); err != nil {
 		t.Skip("fish not installed")
 	}
 	t.Run("missing_bait_returns_127", func(t *testing.T) {
-		fishScript := fmt.Sprintf("%s\n__bait_eval \"echo 1\"\n", baitEvalHelper)
+		fishScript := fmt.Sprintf("%s\n__bait_eval \"echo 1\"\n", baitEvalShim)
 		cmd := exec.Command("fish", "-c", fishScript)
 		cmd.Env = []string{"PATH=/nonexistent"}
 		out, err := cmd.CombinedOutput()
@@ -608,7 +608,7 @@ func TestBaitEvalHelperExecution(t *testing.T) {
 	})
 
 	t.Run("empty_arguments_is_noop", func(t *testing.T) {
-		fishScript := fmt.Sprintf("%s\n__bait_eval\n", baitEvalHelper)
+		fishScript := fmt.Sprintf("%s\n__bait_eval\n", baitEvalShim)
 		cmd := exec.Command("fish", "-c", fishScript)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -623,7 +623,7 @@ func TestBaitEvalHelperExecution(t *testing.T) {
 		if err := os.WriteFile(mockBait, []byte(script), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		fishScript := fmt.Sprintf("%s\n__bait_eval \"FOO=bar\"\necho \"FOO:$FOO\"\n", baitEvalHelper)
+		fishScript := fmt.Sprintf("%s\n__bait_eval \"FOO=bar\"\necho \"FOO:$FOO\"\n", baitEvalShim)
 		cmd := exec.Command("fish", "-c", fishScript)
 		cmd.Env = []string{"PATH=" + tmpDir + ":" + os.Getenv("PATH")}
 		out, err := cmd.CombinedOutput()
@@ -636,9 +636,9 @@ func TestBaitEvalHelperExecution(t *testing.T) {
 	})
 }
 
-func TestEvalPassthroughWithWarningWhenNoHelpers(t *testing.T) {
+func TestEvalPassthroughWithWarningWhenNoShims(t *testing.T) {
 	src := "eval \"echo hello\"\n"
-	got, warnings, err := TranslateWithOptions([]byte(src), Options{NoHelpers: true})
+	got, warnings, err := TranslateWithOptions([]byte(src), Options{NoShims: true})
 	if err != nil {
 		t.Fatalf("TranslateWithOptions failed: %v", err)
 	}
@@ -657,7 +657,7 @@ func TestEvalPassthroughWithWarningWhenNoHelpers(t *testing.T) {
 	}
 }
 
-func TestEvalNoHelpersWarnings(t *testing.T) {
+func TestEvalNoShimsWarnings(t *testing.T) {
 	tests := []struct {
 		name string
 		src  string
@@ -667,7 +667,7 @@ func TestEvalNoHelpersWarnings(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, warnings, err := TranslateWithOptions([]byte(tc.src), Options{NoHelpers: true})
+			got, warnings, err := TranslateWithOptions([]byte(tc.src), Options{NoShims: true})
 			if err != nil {
 				t.Fatalf("TranslateWithOptions(%q) error: %v", tc.src, err)
 			}
@@ -686,7 +686,6 @@ func TestEvalNoHelpersWarnings(t *testing.T) {
 		})
 	}
 }
-
 func TestLeadingRedirection(t *testing.T) {
 	src := ">&2 echo hello\n"
 	got, _, err := Translate([]byte(src))
@@ -806,7 +805,7 @@ func TestNegatedDynamicCommand(t *testing.T) {
 	}
 	gotStr := string(got)
 	if !strings.Contains(gotStr, "! __bait_exec $cmd") {
-		t.Errorf("expected negation on the helper call, got:\n%s", gotStr)
+		t.Errorf("expected negation on the shim call, got:\n%s", gotStr)
 	}
 	if strings.Contains(gotStr, "__bait_exec !") {
 		t.Errorf("negation leaked into the dynamic command word, got:\n%s", gotStr)
@@ -839,7 +838,7 @@ func TestBaitExecCommandAndBuiltin(t *testing.T) {
 	}
 
 	t.Run("dispatches_command_prefix", func(t *testing.T) {
-		fishScript := fmt.Sprintf("%s\n__bait_exec \"command echo\" \"hello from command\"\n", execHelperCode(t))
+		fishScript := fmt.Sprintf("%s\n__bait_exec \"command echo\" \"hello from command\"\n", execShimCode(t))
 		cmd := exec.Command("fish", "-c", fishScript)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -851,7 +850,7 @@ func TestBaitExecCommandAndBuiltin(t *testing.T) {
 	})
 
 	t.Run("dispatches_builtin_prefix", func(t *testing.T) {
-		fishScript := fmt.Sprintf("%s\n__bait_exec \"builtin echo\" \"hello from builtin\"\n", execHelperCode(t))
+		fishScript := fmt.Sprintf("%s\n__bait_exec \"builtin echo\" \"hello from builtin\"\n", execShimCode(t))
 		cmd := exec.Command("fish", "-c", fishScript)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -863,12 +862,12 @@ func TestBaitExecCommandAndBuiltin(t *testing.T) {
 	})
 }
 
-// execHelperCode returns the __bait_exec helper with the helpers it calls.
-func execHelperCode(t *testing.T) string {
+// execShimCode returns the __bait_exec shim with the shims it calls.
+func execShimCode(t *testing.T) string {
 	t.Helper()
-	code, err := Helper("__bait_exec")
+	code, err := Shim("__bait_exec")
 	if err != nil {
-		t.Fatalf("Helper(__bait_exec): %v", err)
+		t.Fatalf("Shim(__bait_exec): %v", err)
 	}
 	return code
 }

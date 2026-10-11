@@ -154,12 +154,12 @@ func (e *emitter) forClause(s *syntax.Stmt, f *syntax.ForClause) {
 				ref = "$" + e.varName(name)
 			}
 			items[i] = "(__bait_words " + ref + ")"
-			e.needHelper(helperWords)
+			e.needShim(shimWords)
 			continue
 		}
 		if _, ok := singleBareCmdSubst(w); ok {
 			items[i] = "(__bait_words " + e.renderWordSmart(w) + ")"
-			e.needHelper(helperWords)
+			e.needShim(shimWords)
 			continue
 		}
 		items[i] = e.renderWordSmart(w)

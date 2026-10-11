@@ -22,10 +22,10 @@ type emitter struct {
 	printer           *syntax.Printer
 	warnings          []Warning
 	err               error
-	noHelpers         bool
+	noShims           bool
 	inFunction        bool
 	inSubshell        bool
-	neededHelpers     [numHelpers]bool
+	neededShims       [numShims]bool
 	funcLocals        map[string]bool
 	knownLists        map[string]bool
 	multiWordScalars  map[string]bool
@@ -47,7 +47,7 @@ type emitter struct {
 
 func (e *emitter) newSubEmitter() *emitter {
 	sub := newEmitter()
-	sub.noHelpers = e.noHelpers
+	sub.noShims = e.noShims
 	sub.inFunction = e.inFunction
 	sub.inSubshell = e.inSubshell
 	if e.funcLocals != nil {
@@ -70,9 +70,9 @@ func (e *emitter) newSubEmitter() *emitter {
 }
 
 func (e *emitter) inheritSub(sub *emitter) {
-	for k, v := range sub.neededHelpers {
+	for k, v := range sub.neededShims {
 		if v {
-			e.neededHelpers[k] = true
+			e.neededShims[k] = true
 		}
 	}
 	e.warnings = append(e.warnings, sub.warnings...)
@@ -343,19 +343,19 @@ func (e *emitter) file(f *syntax.File) {
 		e.printf("")
 	}
 
-	if !e.noHelpers {
-		wroteHelper := false
-		for _, h := range allHelpers {
-			if e.neededHelpers[h.kind] {
+	if !e.noShims {
+		wroteShim := false
+		for _, h := range allShims {
+			if e.neededShims[h.kind] {
 				e.buf.WriteString(h.code)
 				if !strings.HasSuffix(h.code, "\n") {
 					e.buf.WriteByte('\n')
 				}
 				e.buf.WriteByte('\n')
-				wroteHelper = true
+				wroteShim = true
 			}
 		}
-		if wroteHelper {
+		if wroteShim {
 			bodyBytes = bytes.TrimLeft(bodyBytes, "\n")
 		}
 	}
@@ -501,8 +501,8 @@ func (e *emitter) simple(s *syntax.Stmt) {
 		}
 		if len(c.Assigns) == 0 && len(c.Args) > 0 {
 			if _, ok := singleBareParam(c.Args[0]); ok {
-				e.needHelper(helperExec)
-				// Negation applies to the helper call, not inside the
+				e.needShim(shimExec)
+				// Negation applies to the shim call, not inside the
 				// dynamic command word: `! __bait_exec $cmd`.
 				renderStmt := s
 				prefix := ""

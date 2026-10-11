@@ -107,8 +107,8 @@ func TestArithmetic(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			// Helpers are asserted separately; pin the statement text.
-			got, warnings, err := TranslateWithOptions([]byte(tc.in), Options{NoHelpers: true})
+			// Shims are asserted separately; pin the statement text.
+			got, warnings, err := TranslateWithOptions([]byte(tc.in), Options{NoShims: true})
 			if err != nil {
 				t.Fatalf("Translate(%q) error: %v", tc.in, err)
 			}
@@ -123,16 +123,16 @@ func TestArithmetic(t *testing.T) {
 	}
 }
 
-// TestArithmeticHelpers checks that arithmetic injects the coercion
-// helpers on demand and only when they are used.
-func TestArithmeticHelpers(t *testing.T) {
+// TestArithmeticShims checks that arithmetic injects the coercion
+// shims on demand and only when they are used.
+func TestArithmeticShims(t *testing.T) {
 	got, _, err := Translate([]byte("((n += 2))\necho $((n * 2))\n"))
 	if err != nil {
 		t.Fatalf("Translate error: %v", err)
 	}
 	out := string(got)
 	if !strings.Contains(out, "function __bait_math") {
-		t.Errorf("expected __bait_math helper, got:\n%s", out)
+		t.Errorf("expected __bait_math shim, got:\n%s", out)
 	}
 	if strings.Contains(out, "function __bait_cmp") {
 		t.Errorf("__bait_cmp is unused here and should not be injected, got:\n%s", out)

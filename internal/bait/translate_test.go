@@ -916,7 +916,7 @@ func TestCommentPreservation(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, _, err := TranslateWithOptions([]byte(tc.in), Options{NoHelpers: true})
+			got, _, err := TranslateWithOptions([]byte(tc.in), Options{NoShims: true})
 			if err != nil {
 				t.Fatalf("Translate(%q) error: %v", tc.in, err)
 			}
@@ -987,7 +987,7 @@ func TestNewlinePreservation(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, _, err := TranslateWithOptions([]byte(tc.in), Options{NoHelpers: true})
+			got, _, err := TranslateWithOptions([]byte(tc.in), Options{NoShims: true})
 			if err != nil {
 				t.Fatalf("Translate(%q) error: %v", tc.in, err)
 			}
@@ -1018,16 +1018,16 @@ func TestIFSNormalization(t *testing.T) {
 	}
 }
 
-// TestUnsetHelperInVerbatimSubstitutions pins that a prefix-assigned unset
-// registers the helper even when its body is printed verbatim (backquotes,
+// TestUnsetShimInVerbatimSubstitutions pins that a prefix-assigned unset
+// registers the shim even when its body is printed verbatim (backquotes,
 // here-document pipelines, C-style loops): fish has no unset of its own.
-func TestUnsetHelperInVerbatimSubstitutions(t *testing.T) {
+func TestUnsetShimInVerbatimSubstitutions(t *testing.T) {
 	got, _, err := Translate([]byte("x=`X=1 unset v; echo hi`\n"))
 	if err != nil {
 		t.Fatalf("Translate error: %v", err)
 	}
 	if !strings.Contains(string(got), "function unset") {
-		t.Errorf("translation does not register the unset helper:\n%s", got)
+		t.Errorf("translation does not register the unset shim:\n%s", got)
 	}
 }
 

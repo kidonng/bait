@@ -57,31 +57,31 @@ curl script.sh | bait | source
 # Suppress warnings on stderr (or BAIT_QUIET=1)
 bait --quiet install.sh > install.fish
 
-# Prevent helper injection (or BAIT_NO_HELPERS=1)
-bait --no-helpers install.sh > install.fish
+# Prevent shim injection (or BAIT_NO_SHIMS=1)
+bait --no-shims install.sh > install.fish
 ```
 
 ### Advanced
 
-Load helpers to directly `source` bash scripts:
+Load shims to directly `source` bash scripts:
 
 ```sh
-bait helper source > ~/.config/fish/functions/source.fish
-bait helper . > ~/.config/fish/functions/..fish
+bait shim source > ~/.config/fish/functions/source.fish
+bait shim . > ~/.config/fish/functions/..fish
 ```
 
-Load all helpers:
+Load all shims:
 
 ```fish
-for helper in (bait helper list)
-    bait helper $helper > ~/.config/fish/functions/$helper.fish
+for shim in (bait shim list)
+    bait shim $shim > ~/.config/fish/functions/$shim.fish
 end
 ```
 
 Bind a shortcut to paste bash snippet into fish:
 
 ```fish
-bind ctrl-b 'commandline --insert (fish_clipboard_paste | bait --no-helpers)'
+bind ctrl-b 'commandline --insert (fish_clipboard_paste | bait --no-shims)'
 ```
 
 ## Docs

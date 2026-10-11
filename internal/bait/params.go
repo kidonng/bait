@@ -24,7 +24,7 @@ func (e *emitter) normalize(f *syntax.File) {
 		case *syntax.ParamExp:
 			if x.Param != nil {
 				if x.Param.Value == "OSTYPE" {
-					e.needHelper(helperOSType)
+					e.needShim(shimOSType)
 				}
 				if x.Param.Value == "IFS" {
 					// fish's default IFS lists the same separator
@@ -36,7 +36,7 @@ func (e *emitter) normalize(f *syntax.File) {
 			}
 		case *syntax.CallExpr:
 			normalizeCommandName(x)
-			e.helperDispatch(x)
+			e.shimDispatch(x)
 			if len(x.Args) > 0 && isLitWord(x.Args[0], "getopts") {
 				if len(x.Args) >= 3 {
 					if lit, ok := isBareLit(x.Args[2]); ok {
@@ -48,12 +48,12 @@ func (e *emitter) normalize(f *syntax.File) {
 				}
 			}
 			if len(x.Args) > 0 && isLitWord(x.Args[0], "eval") {
-				if e.noHelpers {
+				if e.noShims {
 					if x.Args[0].Pos().Col() > 0 {
 						e.warn(x.Args[0].Pos(), "eval executes fish syntax; incompatible bash syntax will fail at runtime; emitted verbatim")
 					}
 				} else {
-					e.needHelper(helperEval)
+					e.needShim(shimEval)
 					x.Args[0] = litWord("__bait_eval")
 				}
 			}
@@ -89,7 +89,7 @@ func (e *emitter) normalize(f *syntax.File) {
 				}
 				ref := e.paramTargetValueRef(t)
 				if multi {
-					e.needHelper(helperWords)
+					e.needShim(shimWords)
 					ref = "(__bait_words " + ref + ")"
 				}
 				x.Args[i] = litWord(ref)
@@ -210,10 +210,10 @@ func (e *emitter) rewriteParams(f *syntax.File) {
 	})
 }
 
-// helperDispatch marks the runtime helper a builtin needs. It runs once per
+// shimDispatch marks the runtime shim a builtin needs. It runs once per
 // call expression during normalize, so statements, conditions, and chain
-// leaves all resolve helpers through the same decision.
-func (e *emitter) helperDispatch(c *syntax.CallExpr) {
+// leaves all resolve shims through the same decision.
+func (e *emitter) shimDispatch(c *syntax.CallExpr) {
 	if len(c.Args) == 0 {
 		return
 	}
@@ -222,14 +222,14 @@ func (e *emitter) helperDispatch(c *syntax.CallExpr) {
 		// assignment: bodies printed verbatim (backquotes, here-document
 		// pipelines, C-style loops) keep the bare call, and fish has no
 		// unset of its own.
-		e.needHelper(helperUnset)
+		e.needShim(shimUnset)
 		return
 	}
 	switch {
 	case isLitWord(c.Args[0], "getopts"):
-		e.needHelper(helperGetopts)
+		e.needShim(shimGetopts)
 	case isLitWord(c.Args[0], "hash"):
-		e.needHelper(helperHash)
+		e.needShim(shimHash)
 		if len(c.Args) == 1 {
 			e.warn(c.Args[0].Pos(), "hash without arguments prints bash's command hash table; fish has none")
 		}
@@ -239,11 +239,11 @@ func (e *emitter) helperDispatch(c *syntax.CallExpr) {
 			}
 		}
 	case isLitWord(c.Args[0], "unalias"):
-		e.needHelper(helperUnalias)
+		e.needShim(shimUnalias)
 	case isLitWord(c.Args[0], "source"):
-		e.needHelper(helperSource)
+		e.needShim(shimSource)
 	case isLitWord(c.Args[0], "."):
-		e.needHelper(helperDot)
+		e.needShim(shimDot)
 	}
 }
 
@@ -353,7 +353,7 @@ func (e *emitter) rewriteRedirectTarget(r *syntax.Redirect) {
 	case !quoted && e.multiWordScalars[pe.Param.Value]:
 		e.warn(r.Pos(), "bash rejects a redirect target that splits into several words (%s); emitted with word splitting", pe.Param.Value)
 		ref = "(__bait_words " + ref + ")"
-		e.needHelper(helperWords)
+		e.needShim(shimWords)
 	}
 	r.Word = litWord(ref)
 }

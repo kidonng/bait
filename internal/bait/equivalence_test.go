@@ -694,7 +694,7 @@ func TestBashFishEquivalence(t *testing.T) {
 				"done\n",
 		},
 		{
-			name: "ostype helper matches bash platform identifier",
+			name: "ostype shim matches bash platform identifier",
 			src: "if [[ \"$OSTYPE\" == linux-gnu* || \"$OSTYPE\" == darwin* || \"$OSTYPE\" == linux* ]]; then\n" +
 				"    echo 'matched ostype prefix'\n" +
 				"fi\n" +

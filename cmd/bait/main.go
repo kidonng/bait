@@ -45,8 +45,8 @@ func envQuiet() bool {
 	return false
 }
 
-func envNoHelpers() bool {
-	val := strings.TrimSpace(os.Getenv("BAIT_NO_HELPERS"))
+func envNoShims() bool {
+	val := strings.TrimSpace(os.Getenv("BAIT_NO_SHIMS"))
 	if val == "" {
 		return false
 	}
@@ -70,17 +70,17 @@ func (e exitError) Error() string {
 	return fmt.Sprintf("exit code %d", e.code)
 }
 
-func newHelperListCmd() *cobra.Command {
+func newShimListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
-		Short: "list all available helper names",
+		Short: "list all available shim names",
 		Args:  cobra.NoArgs,
 		PreRun: func(cmd *cobra.Command, args []string) {
 			cmd.SilenceUsage = true
 			cmd.SilenceErrors = true
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			for _, h := range bait.Helpers() {
+			for _, h := range bait.Shims() {
 				fmt.Fprintln(cmd.OutOrStdout(), h)
 			}
 			return nil
@@ -88,11 +88,11 @@ func newHelperListCmd() *cobra.Command {
 	}
 }
 
-func newHelperCmd() *cobra.Command {
+func newShimCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "helper <name>",
-		Short: "print the content of a runtime helper",
-		Long:  "Print the content of a runtime helper.",
+		Use:   "shim <name>",
+		Short: "print the content of a runtime shim",
+		Long:  "Print the content of a runtime shim.",
 		Args:  cobra.ExactArgs(1),
 		PreRun: func(cmd *cobra.Command, args []string) {
 			cmd.SilenceUsage = true
@@ -100,7 +100,7 @@ func newHelperCmd() *cobra.Command {
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
-			code, err := bait.Helper(name)
+			code, err := bait.Shim(name)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "error: %v\n", err)
 				return exitError{code: 1}
@@ -114,15 +114,15 @@ func newHelperCmd() *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(newHelperListCmd())
+	cmd.AddCommand(newShimListCmd())
 
 	return cmd
 }
 
 func newRootCmd(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 	var (
-		quiet     bool
-		noHelpers bool
+		quiet   bool
+		noShims bool
 	)
 
 	cmd := &cobra.Command{
@@ -156,7 +156,7 @@ translation to stdout.`,
 			}
 
 			out, warnings, err := bait.TranslateWithOptions(src, bait.Options{
-				NoHelpers: noHelpers,
+				NoShims: noShims,
 			})
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", name, err)
@@ -190,9 +190,9 @@ translation to stdout.`,
 
 	flags := cmd.Flags()
 	flags.BoolVarP(&quiet, "quiet", "q", envQuiet(), "suppress translation warnings on stderr")
-	flags.BoolVar(&noHelpers, "no-helpers", envNoHelpers(), "do not inject runtime helper functions")
+	flags.BoolVar(&noShims, "no-shims", envNoShims(), "do not inject runtime shim functions")
 
-	cmd.AddCommand(newHelperCmd())
+	cmd.AddCommand(newShimCmd())
 
 	return cmd
 }
