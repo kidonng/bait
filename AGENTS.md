@@ -38,9 +38,9 @@
 ## Developer Workflows
 
 - **Run CLI**: `nix run . -- [options] [script]` or `echo '...' | nix run .`
-- **Run Unit & Equivalence Tests**: `nix run .#test`
-- **Run E2E Tests**: `nix run .#e2e`
-- **Format Code**: `nix run .#fmt`
+- **Run Unit & Equivalence Tests**: `just test`
+- **Run E2E Tests**: `just e2e`
+- **Format Code**: `just fmt`
 
 ## Repository Layout
 
@@ -48,4 +48,5 @@
 - `internal/bait/`: Core translation engine (AST parsing, normalization, pure-Fish emission, diagnostics).
 - `e2e/`: End-to-end sandbox integration tests verifying translated real-world scripts against live Fish runtimes.
 - `COMPATIBILITY.md`: Exhaustive user-facing compatibility inventory, syntax mappings, and runtime differences.
-- `flake.nix` & `flake.lock`: Hermetic Nix environment, packages, and test runners.
+- `flake.nix` & `flake.lock`: Hermetic Nix environment and packages.
+- `justfile`: Task runner recipes (`test`, `e2e`, `fmt`).

@@ -22,44 +22,19 @@
         pkgs.fish
         pkgs.go
         pkgs.goreleaser
+        pkgs.just
       ];
     in
     {
-      packages = forAllSystems (pkgs:
-        let
-          task = name: text:
-            pkgs.writeShellApplication {
-              inherit name text;
-              runtimeInputs = devTools pkgs;
-            };
-        in
-        rec {
-          default = pkgs.buildGoModule {
-            pname = "bait";
-            version = "0.5.0";
-            src = ./.;
-            subPackages = [ "cmd/bait" ];
-            vendorHash = "sha256-CHWW6PxHK1O/UDuGkr1cM+KKC9BaK/MceF2tTrSE/iE=";
-          };
-
-          test = task "test" ''
-            echo "==> Running internal unit and equivalence tests..."
-            go test ./internal/bait ./cmd/bait
-          '';
-
-          e2e = task "e2e" ''
-            echo "==> Running e2e sandbox tests..."
-            go test ./e2e
-          '';
-
-          fmt = task "fmt" ''
-            echo "==> Formatting Go files..."
-            go fmt ./...
-            echo "==> Formatting Fish files..."
-            fd --extension fish --exec-batch fish_indent --write
-          '';
-        }
-      );
+      packages = forAllSystems (pkgs: {
+        default = pkgs.buildGoModule {
+          pname = "bait";
+          version = "0.5.0";
+          src = ./.;
+          subPackages = [ "cmd/bait" ];
+          vendorHash = "sha256-CHWW6PxHK1O/UDuGkr1cM+KKC9BaK/MceF2tTrSE/iE=";
+        };
+      });
 
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShellNoCC {
