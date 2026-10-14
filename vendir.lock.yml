@@ -1,0 +1,17 @@
+apiVersion: vendir.k14s.io/v1alpha1
+directories:
+- contents:
+  - git:
+      commitTitle: Bash-5.3 distribution sources and documentation
+      sha: b8c60bc9ca365f8261fa97900b6fa939f6ebc303
+      tags:
+      - bash-5.3
+    path: bash
+  - git:
+      commitTitle: Release 4.9.3...
+      sha: 6cf31373e9468f1a261319aceb8730e5d1c47e58
+      tags:
+      - 4.9.3
+    path: fish-shell
+  path: references
+kind: LockConfig

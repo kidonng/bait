@@ -50,3 +50,5 @@
 - `COMPATIBILITY.md`: Exhaustive user-facing compatibility inventory, syntax mappings, and runtime differences.
 - `flake.nix` & `flake.lock`: Hermetic Nix environment and packages.
 - `justfile`: Task runner recipes (`test`, `e2e`, `fmt`).
+- `references/bash`: bash source
+- `references/fish-shell`: fish shell source

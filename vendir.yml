@@ -1,0 +1,15 @@
+apiVersion: vendir.k14s.io/v1alpha1
+kind: Config
+directories:
+  - path: references
+    contents:
+      - path: bash
+        git:
+          url: https://github.com/tianon/mirror-bash
+          ref: bash-5.3
+          depth: 1
+      - path: fish-shell
+        git:
+          url: https://github.com/fish-shell/fish-shell
+          ref: 4.9.3
+          depth: 1

@@ -1,5 +1,6 @@
 .direnv
 /result
+references/
 
 # Added by goreleaser init:
 dist/
