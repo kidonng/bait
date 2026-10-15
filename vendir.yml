@@ -4,11 +4,13 @@ directories:
   - path: references
     contents:
       - path: bash
+        lazy: true
         git:
           url: https://github.com/tianon/mirror-bash
           ref: bash-5.3
           depth: 1
       - path: fish-shell
+        lazy: true
         git:
           url: https://github.com/fish-shell/fish-shell
           ref: 4.9.3
