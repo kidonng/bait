@@ -34,7 +34,7 @@ jobs:
         uses: DeterminateSystems/determinate-nix-action@527f17dd63d2d60d3e5552934bc84b9a33a14d11 # v3.22.2
 
       - name: Build WASM
-        run: nix develop --command env GOOS=wasip1 GOARCH=wasm go build -trimpath -ldflags="-s -w" -o live/bait.wasm ./cmd/wasm
+        run: nix shell nixpkgs#tinygo -c tinygo build -target=wasi -opt=z -no-debug -o live/bait.wasm ./cmd/wasm
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
