@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <meta name="color-scheme" content="light dark">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Bait</title>
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/combine/npm/daisyui@5/base/properties.css,npm/daisyui@5/base/rootscrollgutter.css,npm/daisyui@5/base/scrollbar.css,npm/daisyui@5/base/rootscrolllock.css,npm/daisyui@5/base/rootcolor.css,npm/daisyui@5/base/svg.css,npm/daisyui@5/theme/light.css,npm/daisyui@5/theme/dark.css">
+        <script>
+            function applyTheme(query) {
+                const root = document.documentElement
+                if (query.matches) {
+                    root.setAttribute('data-theme', 'dark')
+                } else {
+                    root.removeAttribute('data-theme')
+                }
+            }
+
+            const query = matchMedia('(prefers-color-scheme: dark)')
+            applyTheme(query)
+            query.addEventListener('change', applyTheme)
+        </script>
+        <style>
+            [un-cloak] {
+                display: none;
+            }
+            .code-grid {
+                display: grid;
+                width: max-content;
+                min-width: 100%;
+                min-height: 100%;
+            }
+            .code-grid > * {
+                grid-area: 1 / 1;
+                margin: 0;
+                padding: 1rem;
+                border: 0;
+                font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+                font-size: 0.875rem;
+                line-height: 1.5rem;
+                tab-size: 4;
+                white-space: pre;
+                box-sizing: border-box;
+                width: 100%;
+                min-height: 100%;
+            }
+            .code-grid pre,
+            .code-grid pre.shiki {
+                margin: 0;
+                padding: 0;
+                background-color: transparent !important;
+                pointer-events: none;
+                font-family: inherit;
+                font-size: inherit;
+                line-height: inherit;
+                white-space: pre;
+            }
+            .code-grid pre code {
+                font-family: inherit;
+                font-size: inherit;
+                line-height: inherit;
+            }
+            .shiki,
+            .shiki span {
+                color: light-dark(var(--shiki-light), var(--shiki-dark));
+            }
+            .code-grid textarea {
+                color: transparent;
+                caret-color: var(--color-base-content);
+                background: transparent;
+                resize: none;
+                outline: none;
+                overflow: hidden;
+            }
+            .code-grid textarea::selection {
+                background-color: color-mix(in oklab, var(--color-primary) 25%, transparent);
+                color: transparent;
+            }
+        </style>
+        <script type="module">
+            import unocss from 'https://cdn.jsdelivr.net/npm/@unocss/runtime@66.10.5/+esm'
+            import wind4 from 'https://cdn.jsdelivr.net/npm/@unocss/preset-wind4@66.10.5/+esm'
+
+            unocss({
+                defaults: {
+                    presets: [wind4()],
+                    theme: {
+                        colors: Object.fromEntries([
+                            'base-100', 'base-200', 'base-300', 'base-content',
+                            'primary', 'primary-content', 'secondary', 'secondary-content',
+                            'accent', 'accent-content', 'neutral', 'neutral-content',
+                            'info', 'success', 'warning', 'error',
+                        ].map((n) => [n, `var(--color-${n})`])),
+                    },
+                    outputToCssLayers: true,
+                },
+            })
+        </script>
+    </head>
+    <body un-cloak class="h-dvh flex flex-col overflow-hidden bg-base-100 text-base-content">
+        <div id="app" class="h-dvh flex flex-col overflow-hidden"></div>
+        <script type="module">
+            import { h, render } from 'https://cdn.jsdelivr.net/npm/preact@11.0.0/+esm'
+            import { useState, useEffect, useMemo } from 'https://cdn.jsdelivr.net/npm/preact@11.0.0/hooks/+esm'
+            import htm from 'https://cdn.jsdelivr.net/npm/htm@3.1.1/dist/htm.module.js'
+            import { createHighlighter } from 'https://cdn.jsdelivr.net/npm/shiki@3.2.1/+esm'
+            import { WASI, File, OpenFile } from 'https://cdn.jsdelivr.net/npm/@bjorn3/browser_wasi_shim@0.4.2/+esm'
+
+            const html = htm.bind(h)
+
+            const INITIAL_BASH = `#!/usr/bin/env bash
+quote="a tropical fish yearns for snow"
+
+echo "Length:    \${#quote} characters"
+echo "Replaced:  \${quote/tropical fish/penguin}"
+echo "Uppercase: $(echo "$quote" | tr '[:lower:]' '[:upper:]')"
+
+read -ra words <<< "$quote"
+
+for word in "\${words[@]}"; do
+    if [[ "$word" == "snow" ]]; then
+        echo "Found keyword: '$word'"
+    fi
+done
+
+summarize() {
+    echo "Total words processed: $#";
+}
+summarize "\${words[@]}"`
+
+            const encoder = new TextEncoder()
+            const decoder = new TextDecoder()
+
+            async function translateWithWasm(wasmModule, input) {
+                const stdinFile = new File(encoder.encode(input))
+                const stdoutFile = new File(new Uint8Array())
+                const stderrFile = new File(new Uint8Array())
+                const wasi = new WASI(
+                    ['bait'],
+                    ['NO_COLOR=1'],
+                    [
+                        new OpenFile(stdinFile),
+                        new OpenFile(stdoutFile),
+                        new OpenFile(stderrFile),
+                    ],
+                )
+                const instance = await WebAssembly.instantiate(wasmModule, {
+                    wasi_snapshot_preview1: wasi.wasiImport,
+                })
+                wasi.start(instance)
+                return {
+                    stdout: decoder.decode(stdoutFile.data),
+                    stderr: decoder.decode(stderrFile.data),
+                }
+            }
+
+            function highlightCode(highlighter, code, lang) {
+                if (!highlighter || !code) return ''
+                const normalized = code.endsWith('\n') ? code + ' ' : code
+                return highlighter.codeToHtml(normalized, {
+                    lang,
+                    themes: {
+                        light: 'github-light',
+                        dark: 'github-dark',
+                    },
+                    defaultColor: false,
+                })
+            }
+
+            function App() {
+                const [bashCode, setBashCode] = useState(INITIAL_BASH)
+                const [fishCode, setFishCode] = useState('')
+                const [stderr, setStderr] = useState('')
+                const [wasmModule, setWasmModule] = useState(null)
+                const [highlighter, setHighlighter] = useState(null)
+
+                useEffect(() => {
+                    WebAssembly.compileStreaming(fetch('./bait.wasm'))
+                        .then(setWasmModule)
+                        .catch((err) => setStderr(String(err)))
+
+                    createHighlighter({
+                        themes: ['github-light', 'github-dark'],
+                        langs: ['bash', 'fish'],
+                    }).then(setHighlighter)
+                }, [])
+
+                useEffect(() => {
+                    if (!wasmModule) return
+                    let cancelled = false
+                    translateWithWasm(wasmModule, bashCode)
+                        .then((res) => {
+                            if (cancelled) return
+                            setFishCode(res.stdout)
+                            setStderr(res.stderr)
+                        })
+                        .catch((err) => {
+                            if (cancelled) return
+                            setStderr(String(err))
+                        })
+                    return () => {
+                        cancelled = true
+                    }
+                }, [wasmModule, bashCode])
+
+                const bashHtml = useMemo(
+                    () => highlightCode(highlighter, bashCode, 'bash'),
+                    [highlighter, bashCode],
+                )
+                const fishHtml = useMemo(
+                    () => highlightCode(highlighter, fishCode, 'fish'),
+                    [highlighter, fishCode],
+                )
+
+                return html`
+                    <header class="flex items-center justify-between px-6 py-4 border-b border-base-content/20 shrink-0">
+                        <span class="text-xl font-semibold tracking-tight">Bait</span>
+                        <a
+                            href="https://github.com/kidonng/bait"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="text-base hover:underline"
+                        >
+                            GitHub
+                        </a>
+                    </header>
+
+                    <main class="flex-1 min-h-0 flex flex-col gap-4 p-4">
+                        <div class="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <section
+                                aria-label="bash in"
+                                class="rounded-2xl border border-base-content/20 bg-base-200/40 overflow-auto relative"
+                            >
+                                <div class="code-grid">
+                                    ${bashHtml
+                                        ? html`<div dangerouslySetInnerHTML=${{ __html: bashHtml }} />`
+                                        : html`<pre><code>${bashCode.endsWith('\n') ? bashCode + ' ' : bashCode}</code></pre>`}
+                                    <textarea
+                                        aria-label="bash in"
+                                        placeholder="bash in"
+                                        spellcheck=${false}
+                                        autocapitalize="off"
+                                        autocomplete="off"
+                                        autocorrect="off"
+                                        value=${bashCode}
+                                        onInput=${(e) => setBashCode(e.currentTarget.value)}
+                                    />
+                                </div>
+                            </section>
+
+                            <section
+                                aria-label="fish out"
+                                class="rounded-2xl border border-base-content/20 bg-base-200/40 overflow-auto relative"
+                            >
+                                <div class="code-grid">
+                                    ${fishHtml
+                                        ? html`<div dangerouslySetInnerHTML=${{ __html: fishHtml }} />`
+                                        : html`<pre><code>${fishCode.endsWith('\n') ? fishCode + ' ' : fishCode}</code></pre>`}
+                                    <textarea
+                                        aria-label="fish out"
+                                        placeholder="fish out"
+                                        readOnly=${true}
+                                        spellcheck=${false}
+                                        autocapitalize="off"
+                                        autocomplete="off"
+                                        autocorrect="off"
+                                        value=${fishCode}
+                                    />
+                                </div>
+                            </section>
+                        </div>
+
+                        <section
+                            aria-label="stderr"
+                            class="h-28 shrink-0 rounded-2xl border border-base-content/20 bg-base-200/40 overflow-auto p-4 font-mono text-sm whitespace-pre-wrap"
+                        >
+                            ${stderr
+                                ? html`<span class="text-warning">${stderr}</span>`
+                                : html`<span class="text-base-content/40 select-none">stderr</span>`}
+                        </section>
+                    </main>
+                `
+            }
+
+            render(html`<${App} />`, document.getElementById('app'))
+        </script>
+    </body>
+</html>

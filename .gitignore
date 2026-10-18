@@ -4,3 +4,6 @@ references/
 
 # Added by goreleaser init:
 dist/
+
+# Generated WASM binary for live page:
+/live/bait.wasm
