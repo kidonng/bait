@@ -45,6 +45,7 @@
 ## Repository Layout
 
 - `cmd/bait/`: CLI binary entry point (streaming stdin/stdout, file translation, `--quiet` flag).
+- `cmd/wasm/`: Minimal WebAssembly entry point for the live web playground.
 - `internal/bait/`: Core translation engine (AST parsing, normalization, pure-Fish emission, diagnostics).
 - `e2e/`: End-to-end sandbox integration tests verifying translated real-world scripts against live Fish runtimes.
 - `COMPATIBILITY.md`: Exhaustive user-facing compatibility inventory, syntax mappings, and runtime differences.

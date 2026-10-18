@@ -1,6 +1,6 @@
 # Run internal unit and equivalence tests
 test:
-    go test ./internal/bait ./cmd/bait
+    go test ./internal/bait ./cmd/bait ./cmd/wasm
 
 # Run e2e sandbox tests
 e2e:
