@@ -381,6 +381,7 @@ func TestShebang(t *testing.T) {
 		{"no shebang untouched", "echo hi\n", "echo hi\n"},
 		{"fish shebang untouched", "#!/usr/bin/env fish\necho hi\n", "#!/usr/bin/env fish\necho hi\n"},
 		{"body preserved byte-exact", "#!/bin/bash\nif true; then\n\techo a\nfi\n", "#!/usr/bin/env fish\nif true\n    echo a\nend\n"},
+		{"shebang preserved when first statement dropped", "#!/usr/bin/env bash\nset -euo pipefail\n\necho hi\n", "#!/usr/bin/env fish\n\necho hi\n"},
 	}
 
 	for _, tc := range tests {

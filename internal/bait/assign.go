@@ -644,6 +644,7 @@ func (e *emitter) shiftArrayIndex(pos syntax.Pos, name string) string {
 func (e *emitter) setCmd(s *syntax.Stmt, c *syntax.CallExpr) bool {
 	args := c.Args[1:] // drop the command word
 	if len(args) == 0 {
+		e.wrapperComments(s)
 		e.warn(s.Position, "set with no arguments prints shell state; statement dropped")
 		return true
 	}
@@ -653,6 +654,7 @@ func (e *emitter) setCmd(s *syntax.Stmt, c *syntax.CallExpr) bool {
 	} else if head == "-" && len(args) > 1 {
 		args = args[1:]
 	} else if strings.HasPrefix(head, "-") || strings.HasPrefix(head, "+") {
+		e.wrapperComments(s)
 		e.warn(s.Position, "set flags have no fish equivalent; statement dropped")
 		return true
 	}
