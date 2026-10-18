@@ -3,6 +3,10 @@ name: Pages
 on:
   push:
     branches: [main]
+    paths:
+      - 'live/**'
+    tags:
+      - '*'
   workflow_dispatch:
 
 permissions:
