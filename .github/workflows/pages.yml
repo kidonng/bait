@@ -6,6 +6,7 @@ on:
     paths:
       - 'live/**'
       - 'cmd/wasm/**'
+      - 'mise.pages.*'
     tags:
       - '*'
   workflow_dispatch:
@@ -33,15 +34,22 @@ jobs:
       - name: Setup mise
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
-          install_args: go
+          mise_env: pages
+          install_args: --locked go bun tinygo github:WebAssembly/binaryen
+
+      - name: Build Live UI
+        working-directory: live
+        run: |
+          bun install --frozen-lockfile
+          bun run build
 
       - name: Build WASM
-        run: mise exec tinygo@latest github:WebAssembly/binaryen@latest -- tinygo build -target=wasi -opt=z -no-debug -o live/bait.wasm ./cmd/wasm
+        run: tinygo build -target=wasi -opt=z -no-debug -o live/dist/bait.wasm ./cmd/wasm
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
-          path: live
+          path: live/dist
 
       - name: Deploy to GitHub Pages
         id: deployment

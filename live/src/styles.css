@@ -1,0 +1,61 @@
+@import "tailwindcss";
+@plugin "daisyui";
+
+.code-grid {
+  display: grid;
+  width: max-content;
+  min-width: 100%;
+  min-height: 100%;
+}
+
+.code-grid > * {
+  grid-area: 1 / 1;
+  margin: 0;
+  padding: 1rem;
+  border: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.875rem;
+  line-height: 1.5rem;
+  tab-size: 4;
+  white-space: pre;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 100%;
+}
+
+.code-grid pre,
+.code-grid pre.shiki {
+  margin: 0;
+  padding: 0;
+  background-color: transparent !important;
+  pointer-events: none;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  white-space: pre;
+}
+
+.code-grid pre code {
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.shiki,
+.shiki span {
+  color: light-dark(var(--shiki-light), var(--shiki-dark));
+}
+
+.code-grid textarea {
+  color: transparent;
+  caret-color: var(--color-base-content);
+  background: transparent;
+  resize: none;
+  outline: none;
+  overflow: hidden;
+}
+
+.code-grid textarea::selection {
+  background-color: color-mix(in oklab, var(--color-primary) 25%, transparent);
+  color: transparent;
+}

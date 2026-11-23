@@ -3,5 +3,6 @@ references/
 # Added by goreleaser init:
 dist/
 
-# Generated WASM binary for live page:
+# Live playground build & dependencies:
 /live/bait.wasm
+/live/node_modules/

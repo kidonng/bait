@@ -1,0 +1,4 @@
+[tools]
+bun = "latest"
+"github:WebAssembly/binaryen" = "latest"
+tinygo = "latest"
