@@ -33,10 +33,10 @@ https://github.com/user-attachments/assets/d23f56dc-42a6-425b-9de0-432306c8ec47
     mkdir -p ~/.local/bin && curl --location "https://github.com/kidonng/bait/releases/latest/download/bait_$(uname -s)_$(uname -m | sed 's/aarch64/arm64/').tar.gz" | tar -xz -C ~/.local/bin bait
     ```
 
-- [Nix](https://nixos.org/)
+- [mise](https://mise.jdx.dev/)
 
     ```sh
-    nix profile install github:kidonng/bait
+    mise use --global github:kidonng/bait
     ```
 
 ## Usage

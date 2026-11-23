@@ -1300,7 +1300,9 @@ func TestBashFishEquivalence(t *testing.T) {
 			run := func(shell, path string) (string, string, int) {
 				cmd := exec.Command(shell, append([]string{path}, tc.args...)...)
 				cmd.Dir = dir
-				cmd.Env = append(os.Environ(), tc.env...)
+				// Align PWD with cmd.Dir to avoid macOS bash-static getcwd failures
+				// (https://github.com/robxu9/bash-static/issues/63).
+				cmd.Env = append(os.Environ(), append([]string{"PWD=" + dir}, tc.env...)...)
 				var stdout, stderr bytes.Buffer
 				cmd.Stdout = &stdout
 				cmd.Stderr = &stderr

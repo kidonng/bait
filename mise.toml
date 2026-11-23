@@ -1,0 +1,20 @@
+[tools]
+"aqua:fish-shell/fish-shell" = "latest"
+"github:robxu9/bash-static" = "latest"
+go = "latest"
+goreleaser = "latest"
+
+[tasks.test]
+description = "Run internal unit and equivalence tests"
+run = "go test ./internal/bait ./cmd/bait ./cmd/wasm"
+
+[tasks.e2e]
+description = "Run e2e sandbox tests"
+run = "go test ./e2e"
+
+[tasks.fmt]
+description = "Format Go and Fish source files"
+run = [
+  "go fmt ./...",
+  "find . \\( -path ./references -o -path ./.git \\) -prune -o -name '*.fish' -exec fish_indent --write {} +",
+]

@@ -25,11 +25,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install Nix
-        uses: DeterminateSystems/determinate-nix-action@527f17dd63d2d60d3e5552934bc84b9a33a14d11 # v3.22.2
+      - name: Setup mise
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
 
       - name: Run unit tests
-        run: nix develop --command just test
+        run: mise run test
 
       - name: Run e2e tests
-        run: nix develop --command just e2e
+        run: mise run e2e

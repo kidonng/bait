@@ -24,8 +24,8 @@
    - When encountering unsupported constructs or those with no faithful Fish equivalent (e.g. namerefs, unsupported builtins, untranslated C-style loops), emit the construct verbatim and print a diagnostic warning to stderr with source coordinates.
    - Never silently truncate or generate invalid scripts.
 
-4. **Hermetic Development & Differential Testing**
-   - All tools and shell versions are hermetically pinned via `flake.nix`.
+4. **Reproducible Development & Differential Testing**
+   - Development tools and target shells (`bash`, `fish`) are managed via `mise.toml`.
    - **Differential Equivalence (`internal/bait`)**: Validate translations by executing original scripts under GNU Bash and translated outputs under Fish sequentially, asserting identical stdout, stderr, and exit status.
    - **Sandbox E2E Suite (`e2e`)**: Continuously verify against complex real-world scripts in isolated environments.
 
@@ -37,10 +37,10 @@
 
 ## Developer Workflows
 
-- **Run CLI**: `nix run . -- [options] [script]` or `echo '...' | nix run .`
-- **Run Unit & Equivalence Tests**: `just test`
-- **Run E2E Tests**: `just e2e`
-- **Format Code**: `just fmt`
+- **Run CLI**: `go run ./cmd/bait [options] [script]` or `echo '...' | go run ./cmd/bait`
+- **Run Unit & Equivalence Tests**: `mise run test`
+- **Run E2E Tests**: `mise run e2e`
+- **Format Code**: `mise run fmt`
 
 ## Repository Layout
 
@@ -49,7 +49,6 @@
 - `internal/bait/`: Core translation engine (AST parsing, normalization, pure-Fish emission, diagnostics).
 - `e2e/`: End-to-end sandbox integration tests verifying translated real-world scripts against live Fish runtimes.
 - `COMPATIBILITY.md`: Exhaustive user-facing compatibility inventory, syntax mappings, and runtime differences.
-- `flake.nix` & `flake.lock`: Hermetic Nix environment and packages.
-- `justfile`: Task runner recipes (`test`, `e2e`, `fmt`).
+- `mise.toml`: Managed development tools and task definitions (`test`, `e2e`, `fmt`).
 - `references/bash`: bash source
 - `references/fish-shell`: fish shell source

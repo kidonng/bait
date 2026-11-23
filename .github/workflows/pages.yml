@@ -30,11 +30,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install Nix
-        uses: DeterminateSystems/determinate-nix-action@527f17dd63d2d60d3e5552934bc84b9a33a14d11 # v3.22.2
+      - name: Setup mise
+        uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
+        with:
+          install_args: go
 
       - name: Build WASM
-        run: nix shell nixpkgs#tinygo -c tinygo build -target=wasi -opt=z -no-debug -o live/bait.wasm ./cmd/wasm
+        run: mise exec tinygo@latest github:WebAssembly/binaryen@latest -- tinygo build -target=wasi -opt=z -no-debug -o live/bait.wasm ./cmd/wasm
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
