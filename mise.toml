@@ -3,6 +3,7 @@
 "github:robxu9/bash-static" = "latest"
 go = "latest"
 goreleaser = "latest"
+vendir = "latest"
 
 [tasks.test]
 description = "Run internal unit and equivalence tests"

@@ -41,6 +41,7 @@
 - **Run Unit & Equivalence Tests**: `mise run test`
 - **Run E2E Tests**: `mise run e2e`
 - **Format Code**: `mise run fmt`
+- **Sync References**: `vendir sync`
 
 ## Repository Layout
 

@@ -159,3 +159,49 @@ checksum = "sha256:ef69177888fd7f4048a101f3cca8cc62a56b05b246201798fca5214304ba6
 url = "https://github.com/goreleaser/goreleaser/releases/download/v2.20.3/goreleaser_Windows_x86_64.zip"
 url_api = "https://api.github.com/repos/goreleaser/goreleaser/releases/assets/770449693"
 provenance = "github-attestations"
+
+[[tools.vendir]]
+version = "0.47.0"
+backend = "aqua:carvel-dev/vendir"
+specifiers = ["latest"]
+
+[tools.vendir."platforms.linux-arm64"]
+checksum = "sha256:60b5331f0f68e374df3e283744ca7b28b69015d388c432a4dbd14d3202ec6fce"
+checksum_source = "mise-versions"
+url = "https://github.com/carvel-dev/vendir/releases/download/v0.47.0/vendir-linux-arm64"
+url_api = "https://api.github.com/repos/carvel-dev/vendir/releases/assets/754191088"
+
+[tools.vendir."platforms.linux-arm64-musl"]
+checksum = "sha256:60b5331f0f68e374df3e283744ca7b28b69015d388c432a4dbd14d3202ec6fce"
+checksum_source = "mise-versions"
+url = "https://github.com/carvel-dev/vendir/releases/download/v0.47.0/vendir-linux-arm64"
+url_api = "https://api.github.com/repos/carvel-dev/vendir/releases/assets/754191088"
+
+[tools.vendir."platforms.linux-x64"]
+checksum = "sha256:9d1099f48f04882a716934178bb9ba8f2373c96b0bea536540106757bc4081e3"
+checksum_source = "mise-versions"
+url = "https://github.com/carvel-dev/vendir/releases/download/v0.47.0/vendir-linux-amd64"
+url_api = "https://api.github.com/repos/carvel-dev/vendir/releases/assets/754191176"
+
+[tools.vendir."platforms.linux-x64-musl"]
+checksum = "sha256:9d1099f48f04882a716934178bb9ba8f2373c96b0bea536540106757bc4081e3"
+checksum_source = "mise-versions"
+url = "https://github.com/carvel-dev/vendir/releases/download/v0.47.0/vendir-linux-amd64"
+url_api = "https://api.github.com/repos/carvel-dev/vendir/releases/assets/754191176"
+
+[tools.vendir."platforms.macos-arm64"]
+checksum = "sha256:08749252b25280e4fce50d23036caf562ac7c3cfa600eed7c134f4762a6b5cde"
+url = "https://github.com/carvel-dev/vendir/releases/download/v0.47.0/vendir-darwin-arm64"
+url_api = "https://api.github.com/repos/carvel-dev/vendir/releases/assets/754191092"
+
+[tools.vendir."platforms.macos-x64"]
+checksum = "sha256:01d5009eef5ccd074b29acaf4d6037ac8e02849f55fc409e7e020cb75da60eec"
+checksum_source = "mise-versions"
+url = "https://github.com/carvel-dev/vendir/releases/download/v0.47.0/vendir-darwin-amd64"
+url_api = "https://api.github.com/repos/carvel-dev/vendir/releases/assets/754191091"
+
+[tools.vendir."platforms.windows-x64"]
+checksum = "sha256:08544ac06810c4a5e2ad67e86e1a7a32a1775caf198fb34136d1ef96bc450935"
+checksum_source = "mise-versions"
+url = "https://github.com/carvel-dev/vendir/releases/download/v0.47.0/vendir-windows-amd64.exe"
+url_api = "https://api.github.com/repos/carvel-dev/vendir/releases/assets/754191093"
