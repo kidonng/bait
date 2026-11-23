@@ -1320,6 +1320,43 @@ func TestBashFishEquivalence(t *testing.T) {
 				"}\n" +
 				"read_redir_block\n",
 		},
+		{
+			name: "command prefix on builtins and external commands",
+			files: map[string]string{
+				"hello.txt": "world\n",
+				"input.txt": "local-val\nglobal-val\n",
+			},
+			src: "printf() { echo \"shadowed-printf\"; }\n" +
+				"cd() { echo \"shadowed-cd\"; }\n" +
+				"echo() { command printf '%s\\n' \"shadowed-echo\"; }\n" +
+				"command printf 'a=%s\\n' \"ok\"\n" +
+				"command -p printf 'b=%s\\n' \"ok\"\n" +
+				"command printf -- 'p=%s\\n' \"dash\"\n" +
+				"printf -- 'q=%s\\n' \"dash\"\n" +
+				"command -- echo 'c=ok'\n" +
+				"command -- cat hello.txt\n" +
+				"mkdir -p sub\n" +
+				"command cd sub && command pwd | awk -F/ '{print $NF}'\n" +
+				"command cd ..\n" +
+				"unset -f printf echo cd\n" +
+				"big=$(head -c 200000 /dev/zero | tr '\\0' 'a')\n" +
+				"command printf '%s\\n' \"$big\" | wc -c | tr -d ' '\n" +
+				"read_cmd() {\n" +
+				"    local loc\n" +
+				"    {\n" +
+				"        command read -r loc\n" +
+				"        command read -r glob\n" +
+				"    } < input.txt\n" +
+				"    command printf 'loc=%s\\n' \"$loc\"\n" +
+				"}\n" +
+				"read_cmd\n" +
+				"command printf 'glob=%s\\n' \"$glob\"\n" +
+				"x=keep\n" +
+				"command unset x\n" +
+				"command printf 'x=%s\\n' \"${x:-unset}\"\n" +
+				"command set -- p1 p2\n" +
+				"command printf 'args=%s,%s\\n' \"$1\" \"$2\"\n",
+		},
 	}
 
 	for _, tc := range tests {

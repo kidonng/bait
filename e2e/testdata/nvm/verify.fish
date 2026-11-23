@@ -49,6 +49,9 @@ end
 echo "installed node version: $node_ver"
 
 # 6. Verify .nvmrc resolution via paired high-FD redirection
+# nvm_npm runs `cd /` inside a subshell `(...)`, which loses directory
+# isolation in Fish; return to the sandbox root before writing .nvmrc.
+cd "$HOME"
 echo "lts/*" >.nvmrc
 nvm use
 if test $status -ne 0

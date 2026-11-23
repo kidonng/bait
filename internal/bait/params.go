@@ -14,6 +14,14 @@ import (
 func (e *emitter) normalize(f *syntax.File) {
 	e.escapeLiteralDollars(f)
 	e.expandBraceSequences(f)
+	syntax.Walk(f, func(n syntax.Node) bool {
+		if c, ok := n.(*syntax.CallExpr); ok {
+			normalizeCommandName(c)
+			normalizeCommandBuiltin(c)
+			normalizePrintfCmd(c)
+		}
+		return true
+	})
 	e.analyzeVariables(f)
 	syntax.Walk(f, func(n syntax.Node) bool {
 		switch x := n.(type) {
@@ -35,7 +43,6 @@ func (e *emitter) normalize(f *syntax.File) {
 				}
 			}
 		case *syntax.CallExpr:
-			normalizeCommandName(x)
 			e.shimDispatch(x)
 			if len(x.Args) > 0 && isLitWord(x.Args[0], "getopts") {
 				if len(x.Args) >= 3 {

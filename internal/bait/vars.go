@@ -327,26 +327,31 @@ func (e *emitter) analyzeVariables(f *syntax.File) {
 				e.noteName(iter.Name.Value, iter.Name.Pos())
 			}
 		}
-		if c, ok := n.(*syntax.CallExpr); ok && len(c.Args) > 0 &&
-			(isLitWord(c.Args[0], "unset") || isLitWord(c.Args[0], "read")) {
-			// These builtins name their variables as plain words, which
-			// the parameter walk never sees. unset -f names a function.
-			funcMode := false
-			for _, a := range c.Args[1:] {
-				if lit, ok := isBareLit(a); ok {
-					if lit == "-f" {
-						funcMode = true
+		if c, ok := n.(*syntax.CallExpr); ok {
+			args := c.Args
+			if len(args) >= 2 && isLitWord(args[0], "builtin") {
+				args = args[1:]
+			}
+			if len(args) > 0 && (isLitWord(args[0], "unset") || isLitWord(args[0], "read")) {
+				// These builtins name their variables as plain words, which
+				// the parameter walk never sees. unset -f names a function.
+				funcMode := false
+				for _, a := range args[1:] {
+					if lit, ok := isBareLit(a); ok {
+						if lit == "-f" {
+							funcMode = true
+							continue
+						}
+						if strings.HasPrefix(lit, "-") {
+							continue
+						}
+					}
+					if funcMode {
 						continue
 					}
-					if strings.HasPrefix(lit, "-") {
-						continue
+					if lit, ok := staticWordValue(a); ok {
+						e.noteName(lit, a.Pos())
 					}
-				}
-				if funcMode {
-					continue
-				}
-				if lit, ok := staticWordValue(a); ok {
-					e.noteName(lit, a.Pos())
 				}
 			}
 		}

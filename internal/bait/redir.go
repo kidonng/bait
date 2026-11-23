@@ -326,7 +326,7 @@ func (e *emitter) normalizeLoopFD(s *syntax.Stmt, w *syntax.WhileClause) {
 	}
 	cond := w.Cond[0]
 	c, ok := cond.Cmd.(*syntax.CallExpr)
-	if !ok || len(c.Args) == 0 || !isLitWord(c.Args[0], "read") {
+	if !ok || readCmdIndex(c) < 0 {
 		return
 	}
 	fd, ok := readFDOption(c.Args)
@@ -425,8 +425,22 @@ func readOptionTakesArg(ch byte) bool {
 //  7. Appends REPLY when no target word survives option parsing, matching
 //     bash's default variable, and warns when -d is given at most one
 //     target, whose fish meaning diverges.
+func readCmdIndex(c *syntax.CallExpr) int {
+	if c == nil || len(c.Args) == 0 {
+		return -1
+	}
+	if isLitWord(c.Args[0], "read") {
+		return 0
+	}
+	if len(c.Args) >= 2 && isLitWord(c.Args[0], "builtin") && isLitWord(c.Args[1], "read") {
+		return 1
+	}
+	return -1
+}
+
 func (e *emitter) normalizeReadCmd(s *syntax.Stmt, c *syntax.CallExpr) {
-	if len(c.Args) == 0 || !isLitWord(c.Args[0], "read") {
+	readIdx := readCmdIndex(c)
+	if readIdx < 0 {
 		return
 	}
 	var targets []string
@@ -434,7 +448,7 @@ func (e *emitter) normalizeReadCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 	// bash's `read "$v"` assigns the variable the value names, which
 	// fish's `read "$v"` reproduces, so a dynamic word is a target.
 	targetWords := 0
-	filtered := []*syntax.Word{c.Args[0]}
+	filtered := append([]*syntax.Word{}, c.Args[:readIdx+1]...)
 	addTarget := func(w *syntax.Word) {
 		targetWords++
 		lit, ok := isBareLit(w)
@@ -457,7 +471,7 @@ func (e *emitter) normalizeReadCmd(s *syntax.Stmt, c *syntax.CallExpr) {
 	}
 	var delimPos syntax.Pos
 	inOptions := true
-	for i := 1; i < len(c.Args); i++ {
+	for i := readIdx + 1; i < len(c.Args); i++ {
 		w := c.Args[i]
 		lit, isLit := isBareLit(w)
 		if inOptions && isLit && lit == "--" {
@@ -592,6 +606,10 @@ func (e *emitter) applyReadScope(c *syntax.CallExpr) {
 	if !e.inFunction || c == nil {
 		return
 	}
+	readIdx := readCmdIndex(c)
+	if readIdx < 0 {
+		return
+	}
 	targets := e.readTargets[c]
 	if len(targets) == 0 {
 		return
@@ -606,7 +624,11 @@ func (e *emitter) applyReadScope(c *syntax.CallExpr) {
 			return
 		}
 	}
-	c.Args = append([]*syntax.Word{c.Args[0], litWord("--global")}, c.Args[1:]...)
+	args := make([]*syntax.Word, 0, len(c.Args)+1)
+	args = append(args, c.Args[:readIdx+1]...)
+	args = append(args, litWord("--global"))
+	args = append(args, c.Args[readIdx+1:]...)
+	c.Args = args
 }
 
 func isBareLit(w *syntax.Word) (string, bool) {
@@ -713,6 +735,116 @@ func normalizeCommandName(c *syntax.CallExpr) {
 		if isCmdChar(val[1]) {
 			lit.Value = val[1:]
 		}
+	}
+}
+
+// bashAndFishBuiltins lists Bash builtins that are also Fish builtins and
+// accept Fish's `builtin <cmd>` decorator. In Bash, `command <builtin>` still
+// executes the builtin (only suppressing function lookup), whereas in Fish
+// `command <name>` skips builtins and runs external binaries.
+var bashAndFishBuiltins = map[string]bool{
+	":": true, "[": true, "bg": true, "break": true, "cd": true,
+	"continue": true, "disown": true, "echo": true, "exit": true,
+	"false": true, "fg": true, "history": true, "jobs": true,
+	"printf": true, "pwd": true, "read": true, "return": true,
+	"test": true, "true": true, "type": true, "ulimit": true,
+	"wait": true,
+}
+
+// unwrapCommandBuiltins lists Bash builtins implemented via bait rewrites/shims,
+// Fish decorator keywords, or Fish autoloaded functions where Fish's `builtin`
+// keyword does not apply and `command` must be unwrapped.
+var unwrapCommandBuiltins = map[string]bool{
+	".": true, "alias": true, "builtin": true, "command": true,
+	"dirs": true, "eval": true, "exec": true, "getopts": true,
+	"hash": true, "popd": true, "pushd": true, "set": true,
+	"shift": true, "source": true, "umask": true, "unalias": true,
+	"unset": true,
+}
+
+// normalizeCommandBuiltin adapts Bash's `command` builtin invocations to Fish:
+//   - Query modes (-v, -V) and unrecognized flags are left untouched.
+//   - `command [options] <builtin>` for shared Bash/Fish builtins becomes
+//     `builtin <builtin>` so Fish runs its builtin instead of looking up an
+//     external binary (which would fail on missing binaries like cd or hit
+//     execve limits on /usr/bin/printf).
+//   - `command [options] <shimmed-or-keyword-builtin>` unwraps `command` so
+//     bait's normalizers, shims, or Fish functions handle it.
+//   - `command -- <external>` strips `--`, which Fish's `command` decorator
+//     does not accept before an external command name.
+func normalizeCommandBuiltin(c *syntax.CallExpr) {
+	for len(c.Args) > 0 && isLitWord(c.Args[0], "command") {
+		targetIdx := 1
+		hasDashDash := false
+		hasP := false
+		for targetIdx < len(c.Args) {
+			lit, ok := isBareLit(c.Args[targetIdx])
+			if !ok || !strings.HasPrefix(lit, "-") || lit == "-" {
+				break
+			}
+			if lit == "--" {
+				hasDashDash = true
+				targetIdx++
+				break
+			}
+			for _, ch := range lit[1:] {
+				switch ch {
+				case 'v', 'V':
+					return
+				case 'p':
+					hasP = true
+				default:
+					return
+				}
+			}
+			targetIdx++
+		}
+		if targetIdx >= len(c.Args) {
+			return
+		}
+		targetWord := c.Args[targetIdx]
+		if target, ok := staticWordValue(targetWord); ok {
+			tw := targetWord
+			if _, bare := isBareLit(tw); !bare {
+				tw = litWord(target)
+			}
+			if bashAndFishBuiltins[target] {
+				// Mutate c.Args[0] in place when literal to preserve Pos().
+				if lit, ok := c.Args[0].Parts[0].(*syntax.Lit); ok {
+					lit.Value = "builtin"
+				} else {
+					c.Args[0] = litWord("builtin")
+				}
+				c.Args = append([]*syntax.Word{c.Args[0], tw}, c.Args[targetIdx+1:]...)
+				return
+			}
+			if unwrapCommandBuiltins[target] {
+				c.Args = append([]*syntax.Word{tw}, c.Args[targetIdx+1:]...)
+				continue
+			}
+		}
+		if hasDashDash && !hasP {
+			if lit, ok := isBareLit(targetWord); !ok || !strings.HasPrefix(lit, "-") {
+				c.Args = append([]*syntax.Word{c.Args[0]}, c.Args[targetIdx:]...)
+			}
+		}
+		return
+	}
+}
+
+// normalizePrintfCmd strips a leading `--` option terminator from `printf`
+// (and `builtin printf`): Bash's printf accepts `--` before a format string,
+// whereas Fish's printf has no option parser and treats `--` itself as the
+// format string.
+func normalizePrintfCmd(c *syntax.CallExpr) {
+	idx := 0
+	if len(c.Args) >= 2 && isLitWord(c.Args[0], "builtin") && isLitWord(c.Args[1], "printf") {
+		idx = 1
+	} else if len(c.Args) == 0 || !isLitWord(c.Args[0], "printf") {
+		return
+	}
+	if len(c.Args) > idx+1 && isLitWord(c.Args[idx+1], "--") {
+		c.Args = append(c.Args[:idx+1], c.Args[idx+2:]...)
 	}
 }
 

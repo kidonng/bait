@@ -81,6 +81,8 @@ The following constructs are currently untranslated by `bait` or lack direct Fis
 | `>&2 cmd`, `>out cmd` | `cmd >& 2`, `cmd >out` | Leading redirections are normalized to statement tails to match Fish syntax |
 | `#!/bin/bash`, `#!/usr/bin/env bash`, `sh`, `ash`, `dash` | `#!/usr/bin/env fish` | Shebang rewritten; interpreter flags dropped |
 | `\cmd` | `cmd` | Bash alias-bypass syntax normalized to plain command name |
+| `command <builtin>` | `builtin <builtin>` | Shared Bash/Fish builtins use Fish's `builtin` decorator (Fish's `command` skips builtins and runs external binaries); shimmed/keyword builtins unwrap `command`, and `command -- <ext>` drops `--` |
+| `printf -- <fmt> …` | `printf <fmt> …` | Drops `--` option terminator (Fish's `printf` treats `--` as the format string) |
 
 ### Conditionals & Tests (`[ ... ]` and `[[ ... ]]`)
 

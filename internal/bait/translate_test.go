@@ -1254,3 +1254,96 @@ func TestHeredocInChainAndCmdSubst(t *testing.T) {
 		})
 	}
 }
+
+func TestCommandBuiltinNormalization(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "command printf becomes builtin printf",
+			in:   "command printf '%s\\n' \"$1\"\n",
+			want: "builtin printf '%s\\n' \"$argv[1]\"\n",
+		},
+		{
+			name: "printf -- strips option terminator",
+			in:   "printf -- '%s\\n' hi\n",
+			want: "printf '%s\\n' hi\n",
+		},
+		{
+			name: "command printf -- becomes builtin printf without --",
+			in:   "command printf -- '%s\\n' hi\n",
+			want: "builtin printf '%s\\n' hi\n",
+		},
+		{
+			name: "command cd becomes builtin cd",
+			in:   "command cd /tmp\n",
+			want: "builtin cd /tmp\n",
+		},
+		{
+			name: "command with -- and builtin becomes builtin",
+			in:   "command -- echo hi\n",
+			want: "builtin echo hi\n",
+		},
+		{
+			name: "command -p with builtin becomes builtin",
+			in:   "command -p printf hi\n",
+			want: "builtin printf hi\n",
+		},
+		{
+			name: "command -- with external strips --",
+			in:   "command -- ls -la\n",
+			want: "command ls -la\n",
+		},
+		{
+			name: "command with query flag -v is preserved",
+			in:   "command -v printf\n",
+			want: "command -v printf\n",
+		},
+		{
+			name: "command with query flag -pv is preserved",
+			in:   "command -pv ls\n",
+			want: "command -pv ls\n",
+		},
+		{
+			name: "command read normalizes read flags and scope",
+			in:   "f() { command read -r line; }\n",
+			want: "function f\n    builtin read --global line\nend\n",
+		},
+		{
+			name: "command external command stays command",
+			in:   "command awk '{print $1}'\n",
+			want: "command awk '{print $1}'\n",
+		},
+		{
+			name: "command non-bash builtin stays command",
+			in:   "command realpath .\n",
+			want: "command realpath .\n",
+		},
+		{
+			name: "command set unwraps to set argv",
+			in:   "command set -- a b\n",
+			want: "set argv a b\n",
+		},
+		{
+			name: "nested command command printf unwraps",
+			in:   "command command printf hi\n",
+			want: "builtin printf hi\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, warnings, err := TranslateWithOptions([]byte(tc.in), Options{NoShims: true})
+			if err != nil {
+				t.Fatalf("Translate(%q) error: %v", tc.in, err)
+			}
+			if len(warnings) > 0 {
+				t.Errorf("unexpected warnings: %v", warnings)
+			}
+			if string(got) != tc.want {
+				t.Errorf("mismatch\n in:   %q\n got:  %q\n want: %q", tc.in, string(got), tc.want)
+			}
+		})
+	}
+}
