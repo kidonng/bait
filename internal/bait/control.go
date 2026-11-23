@@ -19,7 +19,7 @@ func (e *emitter) condText(cond []*syntax.Stmt) string {
 		texts = append(texts, e.stmtText(st))
 	}
 	if len(texts) == 1 {
-		lines := nonEmptyLines(texts[0])
+		lines := nonEmptyTopLevelLines(texts[0])
 		if len(lines) == 0 {
 			return "true"
 		}
@@ -30,7 +30,7 @@ func (e *emitter) condText(cond []*syntax.Stmt) string {
 	var inline []string
 	needsBlock := false
 	for _, t := range texts {
-		lines := nonEmptyLines(t)
+		lines := nonEmptyTopLevelLines(t)
 		if len(lines) != 1 {
 			needsBlock = true
 		}
@@ -70,6 +70,11 @@ func hasCommentLine(lines []string) bool {
 }
 
 func (e *emitter) ifClause(s *syntax.Stmt, f *syntax.IfClause) {
+	if hasStdinRedir(s.Redirs) {
+		savedStdin := e.inStdinRedir
+		e.inStdinRedir = true
+		defer func() { e.inStdinRedir = savedStdin }()
+	}
 	sc := e.prepareStmt(s)
 	tail := e.tails(s)
 	e.printf("if %s", e.condText(f.Cond))
@@ -110,6 +115,11 @@ func (e *emitter) ifClause(s *syntax.Stmt, f *syntax.IfClause) {
 }
 
 func (e *emitter) whileClause(s *syntax.Stmt, w *syntax.WhileClause) {
+	if hasStdinRedir(s.Redirs) {
+		savedStdin := e.inStdinRedir
+		e.inStdinRedir = true
+		defer func() { e.inStdinRedir = savedStdin }()
+	}
 	sc := e.prepareStmt(s)
 	tail := e.tails(s)
 	cond := e.condText(w.Cond)
@@ -126,6 +136,11 @@ func (e *emitter) whileClause(s *syntax.Stmt, w *syntax.WhileClause) {
 }
 
 func (e *emitter) forClause(s *syntax.Stmt, f *syntax.ForClause) {
+	if hasStdinRedir(s.Redirs) {
+		savedStdin := e.inStdinRedir
+		e.inStdinRedir = true
+		defer func() { e.inStdinRedir = savedStdin }()
+	}
 	iter, ok := f.Loop.(*syntax.WordIter)
 	if !ok || f.Select {
 		e.warn(f.ForPos, "%s has no fish equivalent; emitted verbatim",
@@ -186,6 +201,11 @@ func (e *emitter) forClause(s *syntax.Stmt, f *syntax.ForClause) {
 }
 
 func (e *emitter) caseClause(s *syntax.Stmt, cl *syntax.CaseClause) {
+	if hasStdinRedir(s.Redirs) {
+		savedStdin := e.inStdinRedir
+		e.inStdinRedir = true
+		defer func() { e.inStdinRedir = savedStdin }()
+	}
 	tail := e.tails(s)
 	sc := e.prepareStmt(s)
 	if pred, ifItem, elseItem, ok := evalInteractiveCase(cl); ok {
@@ -584,7 +604,7 @@ func (e *emitter) renderCasePattern(p *syntax.Word) string {
 	tokens, ok := tokenizePattern(p)
 	if !ok {
 		rendered := e.renderWordSmart(p)
-		if hasUnquotedWildcard(p) && !strings.HasPrefix(rendered, `"`) && !strings.HasPrefix(rendered, `'`) {
+		if hasUnquotedWildcard(p) {
 			var sb strings.Builder
 			sb.WriteByte('"')
 			for _, part := range p.Parts {

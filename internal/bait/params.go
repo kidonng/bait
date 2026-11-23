@@ -155,8 +155,8 @@ func stmtHasCommand(st *syntax.Stmt) bool {
 // rewriteParams rewrites parameter expansions that fish spells
 // differently: special parameters ($? $$ $! $# $0), positional
 // parameters, and redundant braces around plain variables.
-func (e *emitter) rewriteParams(f *syntax.File) {
-	syntax.Walk(f, func(n syntax.Node) bool {
+func (e *emitter) rewriteParams(root syntax.Node) {
+	syntax.Walk(root, func(n syntax.Node) bool {
 		switch node := n.(type) {
 		case *syntax.CaseClause:
 			if isDollarDash(node.Word) {
@@ -393,12 +393,7 @@ func (e *emitter) spliceParts(parts []syntax.WordPart) []syntax.WordPart {
 			prevEnd = p.End()
 			prevExpand = true
 		case *syntax.ArithmExp:
-			if txt, ok := e.arithmText(p.X); ok {
-				out = append(out, e.mathSubst(txt))
-			} else {
-				e.warn(p.Pos(), "arithmetic uses an operator without a fish math equivalent; left untranslated")
-				out = append(out, p)
-			}
+			out = append(out, e.translateArithmExp(p))
 			prevEnd = p.End()
 			prevExpand = true
 		case *syntax.Lit:
@@ -484,13 +479,7 @@ func (e *emitter) spliceQuoted(dq *syntax.DblQuoted) []syntax.WordPart {
 			isExpansion = true
 			endsInName = expansionEndsInName(appended)
 		case *syntax.ArithmExp:
-			txt, ok := e.arithmText(p.X)
-			if !ok {
-				e.warn(p.Pos(), "arithmetic uses an operator without a fish math equivalent; left untranslated")
-				appended = []syntax.WordPart{p}
-			} else {
-				appended = []syntax.WordPart{e.mathSubst(txt)}
-			}
+			appended = []syntax.WordPart{e.translateArithmExp(p)}
 			isExpansion = true
 		case *syntax.CmdSubst, *syntax.ProcSubst:
 			appended = []syntax.WordPart{p}

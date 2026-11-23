@@ -25,6 +25,7 @@ type emitter struct {
 	noShims           bool
 	inFunction        bool
 	inSubshell        bool
+	inStdinRedir      bool
 	neededShims       [numShims]bool
 	funcLocals        map[string]bool
 	knownLists        map[string]bool
@@ -50,6 +51,7 @@ func (e *emitter) newSubEmitter() *emitter {
 	sub.noShims = e.noShims
 	sub.inFunction = e.inFunction
 	sub.inSubshell = e.inSubshell
+	sub.inStdinRedir = e.inStdinRedir
 	if e.funcLocals != nil {
 		sub.funcLocals = make(map[string]bool, len(e.funcLocals))
 		for k, v := range e.funcLocals {
@@ -611,23 +613,150 @@ func (e *emitter) stmtText(s *syntax.Stmt) string {
 	sub.stmt(s)
 	e.inheritSub(sub)
 	text := strings.TrimRight(sub.buf.String(), "\n")
-	pad := strings.Repeat(indentUnit, e.depth)
-	lines := strings.Split(text, "\n")
-	for i := 1; i < len(lines); i++ {
-		lines[i] = pad + lines[i]
-	}
-	return strings.Join(lines, "\n")
+	return padUnquotedLines(text, strings.Repeat(indentUnit, e.depth), 1)
 }
 
-// nonEmptyLines splits text into trimmed, non-empty lines.
-func nonEmptyLines(text string) []string {
-	var lines []string
-	for _, l := range strings.Split(text, "\n") {
-		if trimmed := strings.TrimSpace(l); trimmed != "" {
-			lines = append(lines, trimmed)
+func isFishCommentBoundary(b byte) bool {
+	switch b {
+	case ' ', '\t', '\n', ';', '&', '|', '(', ')', '{', '}', '<', '>':
+		return true
+	}
+	return false
+}
+
+func fishInQuote(stack []byte) bool {
+	if len(stack) == 0 {
+		return false
+	}
+	top := stack[len(stack)-1]
+	return top == '\'' || top == '"'
+}
+
+// stepFishState advances one token/escape step in emitted Fish source while
+// tracking single quotes, double quotes, command-substitution parens, and comments.
+func stepFishState(s string, i int, stack *[]byte, inComment *bool) int {
+	if *inComment {
+		if s[i] == '\n' {
+			*inComment = false
 		}
+		return i + 1
+	}
+	top := byte(0)
+	if len(*stack) > 0 {
+		top = (*stack)[len(*stack)-1]
+	}
+	switch top {
+	case '\'':
+		if s[i] == '\\' && i+1 < len(s) && (s[i+1] == '\'' || s[i+1] == '\\') {
+			return i + 2
+		}
+		if s[i] == '\'' {
+			*stack = (*stack)[:len(*stack)-1]
+		}
+		return i + 1
+	case '"':
+		if s[i] == '\\' && i+1 < len(s) {
+			return i + 2
+		}
+		if s[i] == '"' {
+			*stack = (*stack)[:len(*stack)-1]
+			return i + 1
+		}
+		if s[i] == '$' && i+1 < len(s) && s[i+1] == '(' {
+			*stack = append(*stack, '(')
+			return i + 2
+		}
+		return i + 1
+	default:
+		if s[i] == '\\' && i+1 < len(s) {
+			return i + 2
+		}
+		if s[i] == '#' && (i == 0 || isFishCommentBoundary(s[i-1])) {
+			*inComment = true
+			return i + 1
+		}
+		switch s[i] {
+		case '\'':
+			*stack = append(*stack, '\'')
+		case '"':
+			*stack = append(*stack, '"')
+		case '(':
+			*stack = append(*stack, '(')
+		case ')':
+			if top == '(' {
+				*stack = (*stack)[:len(*stack)-1]
+			}
+		}
+		return i + 1
+	}
+}
+
+// padUnquotedLines prepends pad to unquoted lines starting at startLine
+// (0-indexed), leaving lines inside single or double quotes untouched.
+func padUnquotedLines(text, pad string, startLine int) string {
+	if pad == "" || text == "" {
+		return text
+	}
+	var b strings.Builder
+	b.Grow(len(text) + len(pad)*4)
+	var stack []byte
+	inComment := false
+	line := 0
+	if startLine == 0 && text[0] != '\n' {
+		b.WriteString(pad)
+	}
+	for i := 0; i < len(text); {
+		if text[i] == '\n' {
+			inComment = false
+			b.WriteByte('\n')
+			i++
+			line++
+			if line >= startLine && i < len(text) && text[i] != '\n' && !fishInQuote(stack) {
+				b.WriteString(pad)
+			}
+			continue
+		}
+		next := stepFishState(text, i, &stack, &inComment)
+		b.WriteString(text[i:next])
+		i = next
+	}
+	return b.String()
+}
+
+// nonEmptyTopLevelLines splits text on unquoted top-level newlines into
+// trimmed, non-empty chunks so multi-line quoted literals stay intact.
+func nonEmptyTopLevelLines(text string) []string {
+	var lines []string
+	var stack []byte
+	inComment := false
+	start := 0
+	for i := 0; i < len(text); {
+		if text[i] == '\n' && len(stack) == 0 {
+			inComment = false
+			if trimmed := strings.TrimSpace(text[start:i]); trimmed != "" {
+				lines = append(lines, trimmed)
+			}
+			i++
+			start = i
+			continue
+		}
+		i = stepFishState(text, i, &stack, &inComment)
+	}
+	if trimmed := strings.TrimSpace(text[start:]); trimmed != "" {
+		lines = append(lines, trimmed)
 	}
 	return lines
+}
+
+// hasTrailingFishComment reports whether the final line of text ends inside
+// an unquoted Fish comment.
+func hasTrailingFishComment(text string) bool {
+	var stack []byte
+	inComment := false
+	for i := 0; i < len(text); {
+		i = stepFishState(text, i, &stack, &inComment)
+	}
+	return inComment
 }
 
 // synthCmdSubst wraps statements the translator generated inside a command
@@ -748,7 +877,7 @@ func (e *emitter) chainSideText(st *syntax.Stmt) string {
 // force a multi-line block, since a `#` cannot share a line.
 func (e *emitter) chainLeaf(st *syntax.Stmt) string {
 	text := e.stmtText(st)
-	lines := nonEmptyLines(text)
+	lines := nonEmptyTopLevelLines(text)
 	if len(lines) == 0 {
 		return "true"
 	}
@@ -818,8 +947,10 @@ func (e *emitter) funcDecl(s *syntax.Stmt, fd *syntax.FuncDecl) {
 	e.advanceLine(fd.Pos().Line())
 	saved := e.inFunction
 	savedLocals := e.funcLocals
+	savedStdin := e.inStdinRedir
 	e.inFunction = true
 	e.funcLocals = make(map[string]bool)
+	e.inStdinRedir = hasStdinRedir(s.Redirs) || (fd.Body != nil && hasStdinRedir(fd.Body.Redirs))
 	if bodyTails != "" {
 		// Redirections attached to a definition apply whenever the
 		// function is invoked, so they wrap the body, not the definition.
@@ -831,6 +962,7 @@ func (e *emitter) funcDecl(s *syntax.Stmt, fd *syntax.FuncDecl) {
 	}
 	e.inFunction = saved
 	e.funcLocals = savedLocals
+	e.inStdinRedir = savedStdin
 	e.printEnd("", sc.trailing)
 	if op == 0 || rhs == nil {
 		return
@@ -859,7 +991,12 @@ func (e *emitter) group(s *syntax.Stmt, stmts []*syntax.Stmt, last []syntax.Comm
 		e.printf("{")
 	}
 	e.advanceLine(s.Pos().Line())
+	savedStdin := e.inStdinRedir
+	if hasStdinRedir(s.Redirs) {
+		e.inStdinRedir = true
+	}
 	e.body(stmts, last)
+	e.inStdinRedir = savedStdin
 	e.printBraceClose(tail, sc.trailing)
 }
 

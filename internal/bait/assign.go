@@ -84,6 +84,14 @@ func (e *emitter) assignStmt(s *syntax.Stmt, c *syntax.CallExpr) {
 			lines = append(lines, fmt.Sprintf("set %s%s%s", scopePrefix(curScope), name, args))
 
 		default:
+			if e.inStdinRedir && len(s.Redirs) == 0 {
+				if cs, ok := singleCmdSubstAssign(a.Value); ok && len(cs.Stmts) > 0 {
+					if rlines, rok := e.stdinRedirAssignLines(curScope, name, cs); rok {
+						lines = append(lines, rlines...)
+						continue
+					}
+				}
+			}
 			lines = append(lines, setLineText(curScope, name, e.assignValue(a)))
 		}
 	}
@@ -148,6 +156,51 @@ func scopePrefix(scope string) string {
 		return ""
 	}
 	return scope + " "
+}
+
+func singleCmdSubstAssign(w *syntax.Word) (*syntax.CmdSubst, bool) {
+	if w == nil || len(w.Parts) != 1 {
+		return nil, false
+	}
+	switch p := w.Parts[0].(type) {
+	case *syntax.CmdSubst:
+		return p, true
+	case *syntax.DblQuoted:
+		if len(p.Parts) == 1 {
+			if cs, ok := p.Parts[0].(*syntax.CmdSubst); ok {
+				return cs, true
+			}
+		}
+	}
+	return nil, false
+}
+
+// stdinRedirAssignLines translates `name=$(cmd)` inside a stdin-redirected
+// compound statement into a direct pipeline into `read --null`, because fish
+// command substitutions do not inherit an enclosing block's stdin redirection.
+func (e *emitter) stdinRedirAssignLines(scope, name string, cs *syntax.CmdSubst) ([]string, bool) {
+	body, ok := e.cmdSubstBody(cs, 0)
+	if !ok || body == "" {
+		return nil, false
+	}
+	var lhs string
+	topLines := nonEmptyTopLevelLines(body)
+	if len(topLines) <= 1 && !hasTrailingFishComment(body) && !hasCommentLine(topLines) {
+		lhs = "{ " + body + "; }"
+	} else {
+		if !(strings.HasPrefix(body, "begin\n") && strings.HasSuffix(body, "\nend")) {
+			body = "begin\n" + padUnquotedLines(body, indentUnit, 0) + "\nend"
+		}
+		lhs = padUnquotedLines(body, strings.Repeat(indentUnit, e.depth), 1)
+	}
+	readCmd := "IFS=\"\" read --null " + scopePrefix(scope) + name
+	trimCmd := setLineText(scope, name, "\"$(string replace --regex -- '\\n+$' '' \"$"+name+"\")\"")
+	return []string{
+		lhs + " | " + readCmd,
+		"set --local __bait_st $pipestatus[-2]",
+		trimCmd,
+		"test $__bait_st -eq 0",
+	}, true
 }
 
 // maxArrayFill bounds how many empty elements a sparse array literal may

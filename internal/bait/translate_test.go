@@ -1169,3 +1169,88 @@ func TestExecChainTailsAndSingleRender(t *testing.T) {
 		t.Errorf("capture rendered more than once:\n%s", got)
 	}
 }
+
+func TestHeredocInChainAndCmdSubst(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "heredoc in || chain",
+			in: "nvm_record_lts_status << EOF || :\n" +
+				"$VERSION_LIST\n" +
+				"EOF\n",
+			want: "printf '%s\\n' \"$VERSION_LIST\" | nvm_record_lts_status || :\n",
+		},
+		{
+			name: "multiline heredoc in nested chain keeps quotes intact",
+			in: "if true; then\n" +
+				"    cat <<EOF || :\n" +
+				"line 1\n" +
+				"  line 2\n" +
+				"\n" +
+				"# keep hash\n" +
+				"EOF\n" +
+				"fi\n",
+			want: "if true\n" +
+				"    printf '%s\\n' \"line 1\n" +
+				"  line 2\n" +
+				"\n" +
+				"# keep hash\" | cat || :\n" +
+				"end\n",
+		},
+		{
+			name: "herestring in && chain",
+			in:   "cat <<< \"hello\" && echo ok\n",
+			want: "printf '%s\\n' \"hello\" | cat && echo ok\n",
+		},
+		{
+			name: "heredoc inside command substitution",
+			in: "if true; then\n" +
+				"    x=$(awk '\n" +
+				"      NF { print $0 }\n" +
+				"    ' <<EOF\n" +
+				"a\n" +
+				"b\n" +
+				"EOF\n" +
+				"    )\n" +
+				"fi\n",
+			want: "if true\n" +
+				"    set x $(printf '%s\\n' \"a\n" +
+				"b\" | awk '\n" +
+				"      NF { print $0 }\n" +
+				"    ')\n" +
+				"end\n",
+		},
+		{
+			name: "leading redirection with heredoc",
+			in:   ">&2 cat <<EOF\nerr\nEOF\n",
+			want: "printf '%s\\n' \"err\" | cat >& 2\n",
+		},
+		{
+			name: "braced parameter inside command substitution in arithmetic expansion",
+			in:   "n=$((n - $(printf '%s' \"${OUT}\" | wc -c)))\n",
+			want: "set n $(__bait_math \"$n - $(printf '%s' \"$OUT\" | wc -c)\")\n",
+		},
+		{
+			name: "case pattern with quoted expansion prefix and unquoted wildcard",
+			in:   "case \"$1\" in\n  \"$(dir)\"/*) echo ok ;;\nesac\n",
+			want: "switch \"$argv[1]\"\ncase \"$(dir)/*\"\n    echo ok\nend\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, warnings, err := TranslateWithOptions([]byte(tc.in), Options{NoShims: true})
+			if err != nil {
+				t.Fatalf("Translate(%q) error: %v", tc.in, err)
+			}
+			if len(warnings) > 0 {
+				t.Errorf("unexpected warnings: %v", warnings)
+			}
+			if string(got) != tc.want {
+				t.Errorf("mismatch\n in:   %q\n got:  %q\n want: %q", tc.in, string(got), tc.want)
+			}
+		})
+	}
+}

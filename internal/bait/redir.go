@@ -82,6 +82,18 @@ func hasHighFDTargetRedir(redirs []*syntax.Redirect) bool {
 	return false
 }
 
+// hasStdinRedir reports whether redirs redirects standard input (fd 0) from a
+// path, where fish command substitutions inside the statement's body would not
+// inherit the redirection.
+func hasStdinRedir(redirs []*syntax.Redirect) bool {
+	for _, r := range redirs {
+		if r.Op == syntax.RdrIn && (r.N == nil || r.N.Value == "0") {
+			return true
+		}
+	}
+	return false
+}
+
 func stmtHasHighFDTargetRedir(st *syntax.Stmt) bool {
 	if st == nil {
 		return false
@@ -738,10 +750,10 @@ func (e *emitter) emitHdoc(s *syntax.Stmt, hdoc *syntax.Redirect, rest []*syntax
 	origRedirs := s.Redirs
 	s.Redirs = rest
 	var cmdText string
-	if hasStructural(s) {
+	if hasStructural(s) || e.stmtNeedsRewrite(s) || e.hasStructuralCmdSubst(s) {
 		cmdText = e.stmtText(s)
 	} else {
-		cmdText = e.render(s)
+		cmdText = padUnquotedLines(e.render(s), strings.Repeat(indentUnit, e.depth), 1)
 	}
 	s.Redirs = origRedirs
 	s.Comments = origComments
@@ -761,16 +773,7 @@ func (e *emitter) emitHdoc(s *syntax.Stmt, hdoc *syntax.Redirect, rest []*syntax
 	if sc.headerTrailing != nil {
 		trailing = append([]syntax.Comment{*sc.headerTrailing}, trailing...)
 	}
-	if strings.Contains(cmdText, "\n") {
-		lines := strings.Split(cmdText, "\n")
-		e.printf("%s | %s", prefix, lines[0])
-		for _, l := range lines[1 : len(lines)-1] {
-			e.printf("%s", l)
-		}
-		e.printLineWithTrailing(lines[len(lines)-1], trailing)
-	} else {
-		e.printLineWithTrailing(fmt.Sprintf("%s | %s", prefix, cmdText), trailing)
-	}
+	e.printLineWithTrailing(fmt.Sprintf("%s | %s", prefix, cmdText), trailing)
 }
 
 func isQuotedHdocWord(w *syntax.Word) bool {

@@ -1266,6 +1266,60 @@ func TestBashFishEquivalence(t *testing.T) {
 				"\techo \"got:$line\"\n" +
 				"done\n",
 		},
+		{
+			name: "heredoc and herestring inside chains and substitutions",
+			src: "f() {\n" +
+				"    cat <<EOF || :\n" +
+				"first\n" +
+				"  indented\n" +
+				"\n" +
+				"# hash-line\n" +
+				"EOF\n" +
+				"    false || cat <<< \"from-herestring\"\n" +
+				"    local out\n" +
+				"    out=\"$(awk '\n" +
+				"        NF { print NR \":\" $0 }\n" +
+				"    ' <<EOF\n" +
+				"alpha\n" +
+				"beta\n" +
+				"EOF\n" +
+				"    )\"\n" +
+				"    echo \"$out\"\n" +
+				"    echo ignored | cat <<EOF\n" +
+				"from-pipe-hdoc\n" +
+				"EOF\n" +
+				"    cat <<EOF | grep -q two && echo pipe-ok\n" +
+				"one\n" +
+				"two\n" +
+				"EOF\n" +
+				"    if grep -q two <<EOF; then\n" +
+				"# not-a-comment\n" +
+				"two\n" +
+				"EOF\n" +
+				"        echo cond-ok\n" +
+				"    fi\n" +
+				"    local v=\"123\"\n" +
+				"    local total=10\n" +
+				"    total=$((total - $(printf '%s' \"${v}\" | wc -c)))\n" +
+				"    echo \"total=$total\"\n" +
+				"    case \"/tmp/sub/file\" in\n" +
+				"        \"$(echo /tmp)\"/*) echo case-matched ;;\n" +
+				"        *) echo case-missed ;;\n" +
+				"    esac\n" +
+				"}\n" +
+				"f\n" +
+				"printf 'line1\\n  line2 \\n' > redir_in.txt\n" +
+				"read_redir_block() {\n" +
+				"    local content\n" +
+				"    {\n" +
+				"        content=\"$(command cat)\"\n" +
+				"        if [ -n \"$content\" ]; then\n" +
+				"            printf 'read=[%s]\\n' \"$content\"\n" +
+				"        fi\n" +
+				"    } < redir_in.txt\n" +
+				"}\n" +
+				"read_redir_block\n",
+		},
 	}
 
 	for _, tc := range tests {

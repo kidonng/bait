@@ -33,7 +33,7 @@ func (e *emitter) hasStructuralCmdSubst(n syntax.Node) bool {
 
 // stmtNeedsRewrite reports whether a statement contains something the
 // translator must rewrite (assignments, set/shift builtins, test -v,
-// command-name indirection, leading or high-fd redirections).
+// command-name indirection, leading, high-fd, or here-doc/string redirections).
 func (e *emitter) stmtNeedsRewrite(st *syntax.Stmt) bool {
 	if st == nil || e.synthStmts[st] {
 		return false
@@ -42,6 +42,9 @@ func (e *emitter) stmtNeedsRewrite(st *syntax.Stmt) bool {
 		return true
 	}
 	if hasLeadingRedir(st) || hasHighFDTargetRedir(st.Redirs) {
+		return true
+	}
+	if hdoc, _ := extractHdoc(st.Redirs); hdoc != nil {
 		return true
 	}
 	switch c := st.Cmd.(type) {
@@ -157,11 +160,12 @@ func (e *emitter) renderWordFish(w *syntax.Word) (string, bool) {
 	return b.String(), true
 }
 
-// cmdSubstText renders a command substitution as $( ... ) with the body
-// emitted through the statement translator.
-func (e *emitter) cmdSubstText(cs *syntax.CmdSubst) (string, bool) {
+// cmdSubstBody renders a command substitution's inner Fish body without the
+// surrounding $( ... ), indented for the given nesting depth.
+func (e *emitter) cmdSubstBody(cs *syntax.CmdSubst, depth int) (string, bool) {
 	sub := e.newSubEmitter()
 	sub.inSubshell = true
+	sub.inStdinRedir = false
 	for _, st := range cs.Stmts {
 		sub.newline(stmtStartPos(st))
 		sub.stmt(st)
@@ -187,17 +191,26 @@ func (e *emitter) cmdSubstText(cs *syntax.CmdSubst) (string, bool) {
 		// subshell; the block keeps fish's --local sets from outliving it.
 		text = "begin\n" + text + "\nend"
 	}
-	if lines := strings.Split(text, "\n"); strings.Contains(lines[len(lines)-1], "#") {
+	pad := strings.Repeat(indentUnit, depth)
+	return padUnquotedLines(text, pad, 1), true
+}
+
+// cmdSubstText renders a command substitution as $( ... ) with the body
+// emitted through the statement translator.
+func (e *emitter) cmdSubstText(cs *syntax.CmdSubst) (string, bool) {
+	text, ok := e.cmdSubstBody(cs, e.depth)
+	if !ok {
+		return "", false
+	}
+	if text == "" {
+		return "", true
+	}
+	if hasTrailingFishComment(text) {
 		// A trailing comment would swallow the closing paren; end the body
 		// with a newline instead.
 		text += "\n"
 	}
-	pad := strings.Repeat(indentUnit, e.depth)
-	lines := strings.Split(text, "\n")
-	for i := 1; i < len(lines); i++ {
-		lines[i] = pad + lines[i]
-	}
-	return "$(" + strings.Join(lines, "\n") + ")", true
+	return "$(" + text + ")", true
 }
 
 // cmdSubstAssigns reports whether a command substitution's body assigns a
@@ -266,6 +279,7 @@ func (e *emitter) procSubstText(ps *syntax.ProcSubst) (string, bool) {
 	}
 	sub := e.newSubEmitter()
 	sub.inSubshell = true
+	sub.inStdinRedir = false
 	for _, st := range ps.Stmts {
 		sub.newline(stmtStartPos(st))
 		sub.stmt(st)
@@ -290,10 +304,6 @@ func (e *emitter) procSubstText(ps *syntax.ProcSubst) (string, bool) {
 		return "(" + text + " | psub)", true
 	}
 	pad := strings.Repeat(indentUnit, e.depth+1)
-	lines := strings.Split(text, "\n")
-	for i := range lines {
-		lines[i] = pad + lines[i]
-	}
 	endPad := strings.Repeat(indentUnit, e.depth)
-	return "({\n" + strings.Join(lines, "\n") + "\n" + endPad + "} | psub)", true
+	return "({\n" + padUnquotedLines(text, pad, 0) + "\n" + endPad + "} | psub)", true
 }

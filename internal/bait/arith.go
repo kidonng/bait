@@ -10,8 +10,8 @@ import (
 // with set/test/math equivalents, so conditions and bodies alike see the
 // translated node. Comma expressions are flattened into sequential set
 // statements in statement lists.
-func (e *emitter) rewriteArithmetic(f *syntax.File) {
-	syntax.Walk(f, func(n syntax.Node) bool {
+func (e *emitter) rewriteArithmetic(root syntax.Node) {
+	syntax.Walk(root, func(n syntax.Node) bool {
 		switch x := n.(type) {
 		case *syntax.File:
 			x.Stmts = e.flattenStmts(x.Stmts)
@@ -279,7 +279,7 @@ func wordOf(parts ...syntax.WordPart) *syntax.Word {
 func (e *emitter) arithmText(n syntax.ArithmExpr) (string, bool) {
 	switch a := n.(type) {
 	case *syntax.Word:
-		s := e.render(a)
+		s := e.renderWordSmart(a)
 		if isDigits(s) || strings.HasPrefix(s, "$") {
 			return s, true
 		}
@@ -323,6 +323,19 @@ func bareArithName(n syntax.ArithmExpr) (string, bool) {
 		return "", false
 	}
 	return l.Value, true
+}
+
+// translateArithmExp normalizes nested expansions inside an arithmetic
+// expansion before converting it to __bait_math, so command substitutions
+// inside $((...)) never freeze unrewritten bash syntax like ${VAR}.
+func (e *emitter) translateArithmExp(p *syntax.ArithmExp) syntax.WordPart {
+	e.rewriteParams(p.X)
+	e.rewriteArithmetic(p.X)
+	if txt, ok := e.arithmText(p.X); ok {
+		return e.mathSubst(txt)
+	}
+	e.warn(p.Pos(), "arithmetic uses an operator without a fish math equivalent; left untranslated")
+	return p
 }
 
 // mathSubst renders an arithmetic payload as a call to __bait_math, which
